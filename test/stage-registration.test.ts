@@ -1,0 +1,483 @@
+/**
+ * Named regression tests for the frame contract.
+ *
+ * Three things are being pinned, and none of them is visible to `tsc` or to
+ * `pnpm check:deps`:
+ *
+ *   - plan.md §2.3-1 / §2.3-3 — what is declared. Both rules are violated with
+ *     STRINGS rather than with imports, so only a test can see it.
+ *   - the stages move frames and do not read them. plan.md §3.14 confines this
+ *     repository to transport and protocol, and DN-9 records what the reference
+ *     implementation lost by not holding that line.
+ *   - `canSend` is finally called. Finding M4 (`test/preview-findings.test.ts`)
+ *     measured that the invariant "frames may only be sent from `Connected`" was
+ *     expressible and unexpressed; `multiplayer:outbound` is where it is now
+ *     expressed. M4's own pins stay green — they describe `sendMessage`, which
+ *     this change deliberately does not touch.
+ */
+import { describe, expect, it } from '@effect/vitest'
+import { Effect, Either, Queue, Ref } from 'effect'
+import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../domain/codec'
+import { canSend, type ConnectionState } from '../domain/connection'
+import {
+  DeltaTimeSecs,
+  StageId,
+  type GameModule,
+  type StageRegistration,
+} from '../domain/frame-contract'
+import {
+  BlockPlace,
+  Chat,
+  PlayerId,
+  PlayerMove,
+  PROTOCOL_VERSION,
+  WorldId,
+  type NetworkMessage,
+} from '../domain/protocol'
+import {
+  makeLoopbackPair,
+  TransportPort,
+  type TransportService,
+} from '../domain/transport'
+import {
+  makeMultiplayerFrameState,
+  makeMultiplayerStages,
+  makeMultiplayerStagesForPreview,
+  multiplayerModule,
+  multiplayerStages,
+  NO_NETWORK_FRAMES,
+  type MultiplayerFrameState,
+} from '../stages/registration'
+import {
+  EXPERIENCE_MODULE_STAGE_PREFIXES,
+  MULTIPLAYER_STAGE_IDS,
+  OWN_STAGE_PREFIX,
+  UPSTREAM_STAGE_IDS,
+} from '../stages/stage-ids'
+
+const ZERO_DT = DeltaTimeSecs(0)
+const ONE_FRAME = DeltaTimeSecs(1 / 60)
+
+const alice = PlayerId.make('alice')
+
+const chat: NetworkMessage = Chat.make({ player: alice, text: 'hello' })
+const move: NetworkMessage = PlayerMove.make({
+  player: alice,
+  at: { x: 1, y: 2, z: 3 },
+  facing: { yawRadians: 0.5, pitchRadians: -0.25 },
+})
+
+const connected: ConnectionState = {
+  _tag: 'Connected',
+  player: alice,
+  world: WorldId.make('overworld'),
+}
+
+/**
+ * A registered pair of stages plus both ends of the wire.
+ *
+ * `left` is the side the stages are registered against; `peer` is the far end,
+ * used to put frames on the wire and to read what came off it.
+ */
+const registered = Effect.gen(function* () {
+  const [left, peer] = yield* makeLoopbackPair
+  const { state, stages } = yield* makeMultiplayerStagesForPreview.pipe(
+    Effect.provideService(TransportPort, left),
+  )
+  const byId = new Map(stages.map((stage) => [stage.id, stage]))
+  return {
+    state,
+    stages,
+    peer,
+    inbound: byId.get(MULTIPLAYER_STAGE_IDS.inbound),
+    outbound: byId.get(MULTIPLAYER_STAGE_IDS.outbound),
+  }
+})
+
+const runStage = (stage: StageRegistration | undefined, dt = ONE_FRAME): Effect.Effect<void> =>
+  stage?.run(dt) ?? Effect.void
+
+const drainPeer = (peer: TransportService): Effect.Effect<ReadonlyArray<string>> =>
+  Effect.map(Queue.takeAll(peer.inbound), (frames) => Array.from(frames))
+
+const countersOf = (state: MultiplayerFrameState) => Ref.get(state.counters)
+
+const allAfterEdges = (stages: ReadonlyArray<StageRegistration>): ReadonlyArray<string> =>
+  stages.flatMap((stage) => [...(stage.after ?? [])])
+
+describe('§2.3-1 zero edges between experience modules', () => {
+  it.effect(
+    'REGRESSION: no `after` edge names another experience module, even though remote state feeds gameplay and the HUD',
+    () =>
+      Effect.gen(function* () {
+        const { stages } = yield* registered
+        const foreign = allAfterEdges(stages).filter((edge) =>
+          EXPERIENCE_MODULE_STAGE_PREFIXES.some(
+            (prefix) => prefix !== OWN_STAGE_PREFIX && edge.startsWith(prefix),
+          ),
+        )
+
+        // A peer's `BlockBreak` ends up changing what mx-gameplay simulates and
+        // what mx-ui draws, so an edge to `gameplay:interactions` or
+        // `ui:hud-sync` would read as obviously correct. It would also pass
+        // `pnpm check:deps` — it is a string — while coupling this repository's
+        // frame position to a sibling's existence. §2.3-1 forbids it and the
+        // total order is mc-compose's (§2.3-3).
+        expect(foreign).toStrictEqual([])
+      }),
+  )
+
+  it.effect('REGRESSION: every declared upstream stage belongs to a foundation repository', () =>
+    Effect.sync(() => {
+      for (const id of Object.values(UPSTREAM_STAGE_IDS)) {
+        const isSibling = EXPERIENCE_MODULE_STAGE_PREFIXES.some(
+          (prefix) => prefix !== OWN_STAGE_PREFIX && id.startsWith(prefix),
+        )
+        expect(isSibling).toBe(false)
+      }
+      // mc-sim is this repository's one declared parent (plan.md §2.1), so it is
+      // the only repository whose stages may legally appear here at all.
+      expect(Object.values(UPSTREAM_STAGE_IDS)).toStrictEqual([StageId('sim:physics')])
+    }),
+  )
+})
+
+describe('§2.3-3 the total order belongs to mc-compose', () => {
+  it.effect('registers `multiplayer:inbound` and `multiplayer:outbound`, with the edges argued for in stage-ids.ts', () =>
+    Effect.gen(function* () {
+      const { stages } = yield* registered
+      const byId = new Map(stages.map((stage) => [stage.id, stage]))
+
+      expect(stages.map((stage) => stage.id)).toStrictEqual([
+        MULTIPLAYER_STAGE_IDS.inbound,
+        MULTIPLAYER_STAGE_IDS.outbound,
+      ])
+
+      // `inbound` must run BEFORE `sim:physics`, and `StageRegistration` has no
+      // `before`. So it declares nothing and its position is the skeleton's to
+      // give — `render:input`'s situation exactly. The property is ABSENT rather
+      // than `undefined`: `exactOptionalPropertyTypes` is on and mc-compose's
+      // roster manifest transcribes the distinction.
+      const inbound = byId.get(MULTIPLAYER_STAGE_IDS.inbound)
+      expect(Object.keys(inbound ?? {}).sort()).toStrictEqual(['id', 'run'])
+      expect('after' in (inbound ?? {})).toBe(false)
+
+      // `outbound` publishes the position the simulation resolved this frame.
+      expect(byId.get(MULTIPLAYER_STAGE_IDS.outbound)?.after).toStrictEqual([
+        UPSTREAM_STAGE_IDS.simPhysics,
+      ])
+    }),
+  )
+
+  it.effect('REGRESSION: the two stages declare no edge to EACH OTHER', () =>
+    Effect.gen(function* () {
+      const { stages } = yield* registered
+      const ownEdges = allAfterEdges(stages).filter((edge) => edge.startsWith(OWN_STAGE_PREFIX))
+
+      // They belong to different phases, so once mc-compose has phases for them
+      // the skeleton chain orders them and an edge here would be redundant — and
+      // a redundant edge is a claim about the global order (mx-gameplay's
+      // stages/stage-ids.ts:50-58). Neither stage's correctness depends on the
+      // other: they touch disjoint state.
+      expect(ownEdges).toStrictEqual([])
+    }),
+  )
+
+  it.effect('REGRESSION: a registration carries constraints and nothing else — no priority, no index', () =>
+    Effect.gen(function* () {
+      const { stages } = yield* registered
+      for (const stage of stages) {
+        for (const key of Object.keys(stage)) {
+          expect(['id', 'after', 'run']).toContain(key)
+        }
+      }
+    }),
+  )
+
+  it.effect('StageId rejects a blank id', () =>
+    Effect.sync(() => {
+      expect(() => StageId('  ')).toThrow()
+      expect(StageId('multiplayer:inbound')).toBe('multiplayer:inbound')
+    }),
+  )
+})
+
+describe('multiplayer:inbound — decode, do not interpret', () => {
+  it.effect('drains everything the transport had and hands the decoded messages to the seam', () =>
+    Effect.gen(function* () {
+      const { state, peer, inbound } = yield* registered
+
+      for (const message of [chat, move]) {
+        yield* Either.match(encodeFrame(message), {
+          onLeft: () => Effect.void,
+          onRight: (frame) => peer.send(frame),
+        })
+      }
+
+      yield* runStage(inbound)
+
+      // Value equality, not identity: the messages genuinely went to text and
+      // back through the codec, which is what makes a loopback a real test
+      // double rather than a pass-through (domain/transport.ts's header).
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([chat, move])
+      expect((yield* countersOf(state)).received).toBe(2)
+    }),
+  )
+
+  it.effect('REGRESSION: `takeAll`, not `take` — an empty queue must not block the frame', () =>
+    Effect.gen(function* () {
+      const { state, inbound } = yield* registered
+
+      // If this stage used `Queue.take` the test would hang rather than fail,
+      // which is the worst way for a frame stage to be wrong: a blocked stage
+      // stops the whole frame and every later stage looks broken.
+      yield* runStage(inbound, ZERO_DT)
+
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([])
+      expect(yield* countersOf(state)).toStrictEqual(NO_NETWORK_FRAMES)
+    }),
+  )
+
+  it.effect('REGRESSION: a malformed frame is dropped and counted, and does not take the good ones with it', () =>
+    Effect.gen(function* () {
+      const { state, peer, inbound } = yield* registered
+
+      yield* peer.send('{not json')
+      yield* Either.match(encodeFrame(chat), {
+        onLeft: () => Effect.void,
+        onRight: (frame) => peer.send(frame),
+      })
+
+      yield* runStage(inbound)
+
+      const counters = yield* countersOf(state)
+      expect(counters.malformed).toBe(1)
+      expect(counters.received).toBe(1)
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([chat])
+    }),
+  )
+
+  it.effect('REGRESSION: a version mismatch is counted APART from a malformed frame (DN-1)', () =>
+    Effect.gen(function* () {
+      const { state, peer, inbound } = yield* registered
+
+      yield* Either.match(encodeFrameAsVersion(PROTOCOL_VERSION + 1, chat), {
+        onLeft: () => Effect.void,
+        onRight: (frame) => peer.send(frame),
+      })
+
+      yield* runStage(inbound)
+
+      // The two need different handling — drop the frame vs drop the PEER and
+      // tell the user — so a single counter would make a rolling upgrade
+      // indistinguishable from corruption, which is the defect the versioned
+      // envelope exists to fix.
+      const counters = yield* countersOf(state)
+      expect(counters.versionMismatched).toBe(1)
+      expect(counters.malformed).toBe(0)
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([])
+    }),
+  )
+
+  it.effect('REGRESSION: a block name this build does not know reaches the seam untouched (DN-6)', () =>
+    Effect.gen(function* () {
+      const { state, peer, inbound } = yield* registered
+      const fromNewerPeer: NetworkMessage = BlockPlace.make({
+        player: alice,
+        at: { x: 0, y: 0, z: 0 },
+        block: 'SCULK_SHRIEKER_FROM_A_NEWER_BUILD',
+      })
+
+      yield* Either.match(encodeFrame(fromNewerPeer), {
+        onLeft: () => Effect.void,
+        onRight: (frame) => peer.send(frame),
+      })
+      yield* runStage(inbound)
+
+      // "Your client is older than mine" must not become a parse error, and the
+      // stage must not be the thing that decides an unknown block is a problem —
+      // that judgement belongs to whoever owns the block vocabulary. Carried
+      // verbatim is the whole behaviour.
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([fromNewerPeer])
+    }),
+  )
+})
+
+describe('multiplayer:outbound — the first caller of canSend', () => {
+  it.effect('sends the outbox when the connection is Connected, and the far end can decode it', () =>
+    Effect.gen(function* () {
+      const { state, peer, outbound } = yield* registered
+
+      yield* Ref.set(state.connection, connected)
+      yield* Ref.set(state.outbox, [chat, move])
+      yield* runStage(outbound)
+
+      const onTheWire = yield* drainPeer(peer)
+      expect(onTheWire).toHaveLength(2)
+      expect(onTheWire.map((frame) => decodeFrame(frame))).toStrictEqual([
+        Either.right(chat),
+        Either.right(move),
+      ])
+      expect((yield* countersOf(state)).sent).toBe(2)
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([])
+    }),
+  )
+
+  it.effect(
+    'REGRESSION (finding M4): a frame is NOT sent from Connecting — `canSend` is consulted, and this is the first place it is',
+    () =>
+      Effect.gen(function* () {
+        const { state, peer, outbound } = yield* registered
+        const connecting: ConnectionState = { _tag: 'Connecting', attempt: 1 }
+
+        expect(canSend(connecting)).toBe(false)
+
+        yield* Ref.set(state.connection, connecting)
+        yield* Ref.set(state.outbox, [chat])
+        yield* runStage(outbound)
+
+        // `sendMessage` still delivers from `Connecting` — M4's pins say so and
+        // this change does not touch it. What is new is that the FRAME does not
+        // call `sendMessage` blind: the stage holds the state and the messages,
+        // so it can refuse without a Port learning about a state machine.
+        expect(yield* drainPeer(peer)).toStrictEqual([])
+        expect((yield* countersOf(state)).droppedWhileNotConnected).toBe(1)
+      }),
+  )
+
+  it.effect('REGRESSION: nothing is sent from Closed either, and the default state sends nothing', () =>
+    Effect.gen(function* () {
+      const { state, peer, outbound } = yield* registered
+
+      // `Disconnected` — the state a freshly-registered module is in.
+      yield* Ref.set(state.outbox, [chat])
+      yield* runStage(outbound)
+
+      yield* Ref.set(state.connection, { _tag: 'Closed', reason: 'closed' })
+      yield* Ref.set(state.outbox, [move])
+      yield* runStage(outbound)
+
+      expect(yield* drainPeer(peer)).toStrictEqual([])
+      expect((yield* countersOf(state)).droppedWhileNotConnected).toBe(2)
+    }),
+  )
+
+  it.effect(
+    'REGRESSION: a message queued while disconnected is DROPPED, not replayed on the frame after reconnection',
+    () =>
+      Effect.gen(function* () {
+        const { state, peer, outbound } = yield* registered
+
+        yield* Ref.set(state.outbox, [move])
+        yield* runStage(outbound) // Disconnected: the frame is discarded.
+
+        yield* Ref.set(state.connection, connected)
+        yield* runStage(outbound) // Connected, and the outbox is empty.
+
+        // Holding it would replay a stale world: every position the player
+        // passed through, in order, as fast as the socket allows. This
+        // repository cannot tell a stale message from a durable one without
+        // reading it (plan.md §3.14), so the policy has to be
+        // content-independent — and of the two content-independent policies,
+        // only "drop" cannot produce a replay. Same argument as mc-sim's
+        // dropping frame queue.
+        expect(yield* drainPeer(peer)).toStrictEqual([])
+        expect((yield* countersOf(state)).sent).toBe(0)
+      }),
+  )
+
+  it.effect('an empty outbox on a connected session sends nothing and fails nothing', () =>
+    Effect.gen(function* () {
+      const { state, peer, outbound } = yield* registered
+
+      yield* Ref.set(state.connection, connected)
+      yield* runStage(outbound, ZERO_DT)
+
+      expect(yield* drainPeer(peer)).toStrictEqual([])
+      expect(yield* countersOf(state)).toStrictEqual(NO_NETWORK_FRAMES)
+    }),
+  )
+})
+
+describe('the stages are re-entrant and hold nothing globally', () => {
+  it.effect('each call to makeMultiplayerFrameState yields independent state', () =>
+    Effect.gen(function* () {
+      // `apps/preview-two-clients` runs two sessions in one process on purpose.
+      // A shared outbox would not be a subtle bug — it would be one client
+      // sending the other's frames.
+      const first = yield* makeMultiplayerFrameState
+      const second = yield* makeMultiplayerFrameState
+
+      yield* Ref.set(first.outbox, [chat])
+
+      expect(yield* Ref.get(second.outbox)).toStrictEqual([])
+      expect(yield* Ref.get(second.connection)).toStrictEqual({ _tag: 'Disconnected' })
+    }),
+  )
+
+  it.effect('two registrations over one transport do not share a seam', () =>
+    Effect.gen(function* () {
+      const [left, peer] = yield* makeLoopbackPair
+      const first = yield* makeMultiplayerStagesForPreview.pipe(
+        Effect.provideService(TransportPort, left),
+      )
+      const second = yield* makeMultiplayerStagesForPreview.pipe(
+        Effect.provideService(TransportPort, left),
+      )
+
+      yield* Either.match(encodeFrame(chat), {
+        onLeft: () => Effect.void,
+        onRight: (frame) => peer.send(frame),
+      })
+      yield* runStage(first.stages[0])
+
+      // The first registration drained the queue, so the second sees nothing —
+      // which is the honest consequence of one transport and two consumers, and
+      // is why a host builds one module rather than two.
+      yield* runStage(second.stages[0])
+
+      expect(yield* Ref.get(first.state.inbound)).toStrictEqual([chat])
+      expect(yield* Ref.get(second.state.inbound)).toStrictEqual([])
+    }),
+  )
+})
+
+describe('mx-multiplayer is a real GameModule', () => {
+  it.effect('REGRESSION: exports a GameModule whose RRegister is TransportPort and whose ROut is never', () =>
+    Effect.gen(function* () {
+      // The clearest case in the roster for `RRegister` being its own parameter:
+      // mc-render acquires a service it PROVIDES, this repository acquires one
+      // it merely DEFINES. `ROut` stays `never` — a Layer here would be this
+      // repository shipping a socket.
+      const module: GameModule<never, never, never, TransportPort> = multiplayerModule
+      const [left] = yield* makeLoopbackPair
+
+      const stages = yield* module.frameStages.pipe(Effect.provideService(TransportPort, left))
+
+      expect(stages.map((stage) => stage.id)).toStrictEqual(Object.values(MULTIPLAYER_STAGE_IDS))
+    }),
+  )
+
+  it.effect('its frameStages IS the registration Effect this file already exported, and is re-entrant', () =>
+    Effect.gen(function* () {
+      expect(multiplayerModule.frameStages).toBe(makeMultiplayerStages)
+
+      const [left] = yield* makeLoopbackPair
+      const first = yield* makeMultiplayerStages.pipe(Effect.provideService(TransportPort, left))
+      const second = yield* makeMultiplayerStages.pipe(Effect.provideService(TransportPort, left))
+      expect(first).not.toBe(second)
+    }),
+  )
+
+  it.effect('multiplayerStages is callable directly with a transport, for a preview that owns one', () =>
+    Effect.gen(function* () {
+      const [left] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+
+      expect(multiplayerStages(state, left).map((stage) => stage.id)).toStrictEqual([
+        MULTIPLAYER_STAGE_IDS.inbound,
+        MULTIPLAYER_STAGE_IDS.outbound,
+      ])
+    }),
+  )
+})

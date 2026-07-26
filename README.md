@@ -106,8 +106,13 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0(`corepack` 推奨)
 
 - **メッセージ集合は代表的な 9 種のみ。** 参照実装の 18 種は再現していない
   ([docs/porting.md](./docs/porting.md) 参照)
-- **`GameModule` / `StageRegistration` の実装がまだ無い。** mc-kernel の契約型
-  (特に `FrameServices`)がプレースホルダのため
+- **`GameModule` / `StageRegistration` は実装済み**（[stages/](./stages/)）。
+  `multiplayer:inbound` と `multiplayer:outbound` の 2 本を登録する。
+  ただし **mc-compose の標準 stage 骨格に `multiplayer:` を拾うフェーズが 1 つも無い**ため、
+  今日この 2 本は**フレームの末尾、HUD の後ろ**に落ちる（実測値と、必要なフェーズ 2 つの
+  位置は [stages/stage-ids.ts](./stages/stage-ids.ts) 冒頭）。骨格は plan.md §2.3-3 により
+  mc-compose の唯一の所有物なので、ここからは直せない。
+  契約型は `domain/frame-contract.ts` に暫定ミラーを置いている（mc-kernel 公開時に削除）
 - **mc-sim への状態反映がまだ無い。** mc-sim 公開後
 - **実 WebSocket アダプタが無い。** `TransportPort` の実装はプラットフォーム層に置く。
   現在あるのはループバック(テスト用)と `disconnectedTransport` のみ

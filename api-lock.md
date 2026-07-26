@@ -13,8 +13,8 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 58
-supporting declarations: 3
+exported declarations: 70
+supporting declarations: 10
 
 ## Exported
 
@@ -129,6 +129,12 @@ type ConnectionState = {
 };
 ```
 
+### EXPERIENCE_MODULE_STAGE_PREFIXES  `const`
+
+```ts
+const EXPERIENCE_MODULE_STAGE_PREFIXES: readonly ["gameplay:", "redstone:", "ui:", "multiplayer:"];
+```
+
 ### Frame  `const`
 
 ```ts
@@ -202,6 +208,46 @@ const LoopbackTransportLayer: (service: TransportService) => Layer.Layer<Transpo
 const MESSAGE_TAGS: readonly ["PlayerJoin", "PlayerLeave", "PlayerMove", "BlockPlace", "BlockBreak", "Chat", "WorldInfo", "Ping", "Pong"];
 ```
 
+### MULTIPLAYER_STAGE_IDS  `const`
+
+```ts
+const MULTIPLAYER_STAGE_IDS: {
+    readonly inbound: StageId;
+    readonly outbound: StageId;
+};
+```
+
+### MultiplayerFrameState  `type`
+
+```ts
+type MultiplayerFrameState = {
+    readonly connection: Ref.Ref<ConnectionState>;
+    readonly outbox: Ref.Ref<ReadonlyArray<NetworkMessage>>;
+    readonly inbound: Ref.Ref<ReadonlyArray<NetworkMessage>>;
+    readonly counters: Ref.Ref<NetworkFrameCounters>;
+};
+```
+
+### NO_NETWORK_FRAMES  `const`
+
+```ts
+const NO_NETWORK_FRAMES: NetworkFrameCounters;
+```
+
+### NetworkFrameCounters  `type`
+
+```ts
+type NetworkFrameCounters = {
+    readonly received: number;
+    readonly malformed: number;
+    readonly versionMismatched: number;
+    readonly sent: number;
+    readonly unencodable: number;
+    readonly sendFailed: number;
+    readonly droppedWhileNotConnected: number;
+};
+```
+
 ### NetworkMessage  `const`
 
 ```ts
@@ -258,6 +304,12 @@ const NetworkMessage: Schema.Union<[Schema.TaggedStruct<"PlayerJoin", {
 
 ```ts
 type NetworkMessage = typeof NetworkMessage.Type;
+```
+
+### OWN_STAGE_PREFIX  `const`
+
+```ts
+const OWN_STAGE_PREFIX = "multiplayer:";
 ```
 
 ### Orientation  `const`
@@ -438,6 +490,14 @@ type TransportService = {
 };
 ```
 
+### UPSTREAM_STAGE_IDS  `const`
+
+```ts
+const UPSTREAM_STAGE_IDS: {
+    readonly simPhysics: StageId;
+};
+```
+
 ### Vec3  `const`
 
 ```ts
@@ -535,6 +595,39 @@ const isSettled: (state: ConnectionState) => boolean;
 const makeLoopbackPair: Effect.Effect<readonly [TransportService, TransportService]>;
 ```
 
+### makeMultiplayerFrameState  `const`
+
+```ts
+const makeMultiplayerFrameState: Effect.Effect<MultiplayerFrameState>;
+```
+
+### makeMultiplayerStages  `const`
+
+```ts
+const makeMultiplayerStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, TransportPort>;
+```
+
+### makeMultiplayerStagesForPreview  `const`
+
+```ts
+const makeMultiplayerStagesForPreview: Effect.Effect<{
+    readonly state: MultiplayerFrameState;
+    readonly stages: ReadonlyArray<StageRegistration>;
+}, never, TransportPort>;
+```
+
+### multiplayerModule  `const`
+
+```ts
+const multiplayerModule: GameModule<never, never, never, TransportPort>;
+```
+
+### multiplayerStages  `const`
+
+```ts
+const multiplayerStages: (state: MultiplayerFrameState, transport: TransportService) => ReadonlyArray<StageRegistration>;
+```
+
 ### receiveMessage  `const`
 
 ```ts
@@ -568,12 +661,61 @@ Not exported from the barrel, but named by the signatures above, so a
 consumer is exposed to them. `Context.Tag` service classes emit their real
 type onto one of these.
 
+### DeltaTimeSecs  `const`
+
+```ts
+const DeltaTimeSecs: Brand.Brand.Constructor<DeltaTimeSecs>;
+```
+
+### DeltaTimeSecs  `type`
+
+```ts
+type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>;
+```
+
+### FrameServices  `type`
+
+```ts
+type FrameServices = never;
+```
+
+### GameModule  `interface`
+
+```ts
+interface GameModule<ROut, E, RIn, RRegister = never> {
+    readonly layers: Layer.Layer<ROut, E, RIn>;
+    readonly frameStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, RRegister>;
+}
+```
+
 ### ProtocolError_base  `const`
 
 ```ts
 const ProtocolError_base: new <A extends Record<string, any> = {}>(args: import("effect/Types").VoidIfEmpty<{ readonly [P in keyof A as P extends "_tag" ? never : P]: A[P]; }>) => import("effect/Cause").YieldableError & {
     readonly _tag: "ProtocolError";
 } & Readonly<A>;
+```
+
+### StageId  `const`
+
+```ts
+const StageId: Brand.Brand.Constructor<StageId>;
+```
+
+### StageId  `type`
+
+```ts
+type StageId = string & Brand.Brand<'StageId'>;
+```
+
+### StageRegistration  `interface`
+
+```ts
+interface StageRegistration {
+    readonly id: StageId;
+    readonly after?: ReadonlyArray<StageId>;
+    readonly run: (dt: DeltaTimeSecs) => Effect.Effect<void, never, FrameServices>;
+}
 ```
 
 ### TransportError_base  `const`

@@ -121,9 +121,30 @@ const disconnectedTransport: Effect<TransportService>
 
 | 未実装 | 追加時期 |
 | --- | --- |
-| `GameModule` / `StageRegistration` の実装 | mc-kernel の契約型が確定してから |
-| mc-sim サービスへの反映 | mc-sim 公開後 |
+| ~~`GameModule` / `StageRegistration` の実装~~ | **実装済み**（`stages/`)。下記参照 |
+| mc-sim サービスへの反映 | mc-sim 公開後。接ぎ目は `MultiplayerFrameState.inbound` にある |
 | 実 WebSocket アダプタ | プラットフォーム層の所在が決まってから |
+| **mc-compose 側の `multiplayer:` フェーズ** | **mc-compose の作業**。無いあいだ 2 stage は HUD の後ろで走る |
+
+### 6.1 stage 登録
+
+```ts
+const MULTIPLAYER_STAGE_IDS: { inbound: StageId; outbound: StageId }   // multiplayer:inbound / multiplayer:outbound
+const UPSTREAM_STAGE_IDS: { simPhysics: StageId }                      // sim:physics — outbound の唯一の after
+const multiplayerModule: GameModule<never, never, never, TransportPort>
+const makeMultiplayerStages: Effect<ReadonlyArray<StageRegistration>, never, TransportPort>
+const makeMultiplayerStagesForPreview: Effect<{ state; stages }, never, TransportPort>
+```
+
+`RRegister` が `TransportPort` で `ROut` が `never` である点が、ロスターの中でこのリポジトリだけの
+形である。mc-render は自分が**提供する** `InputService` を acquire するが、ここで acquire する
+`TransportPort` は自分が**定義するだけ**で提供しないもの（実アダプタはプラットフォーム層）。
+つまり `RRegister` は外から満たされねばならない本物の要求であり、
+`RRegister` を `RIn` に畳めない理由の最も分かりやすい実例になっている。
+
+**骨格の欠落については [responsibility.md](./responsibility.md) §2.1 と
+`stages/stage-ids.ts` 冒頭を読むこと。** ここに書いていないのは、これが
+mc-compose に対する要求であって本リポジトリの公開 API ではないからである。
 
 **API ロックファイルはこの表から外れた。** plan.md §9 の未決事項
 「API ロックファイルのツール選定（api-extractor 相当の Effect-TS 互換手段）」は決着し、

@@ -860,9 +860,13 @@ const relativeFromRoot = (absolutePath: string): string => toPosix(path.relative
 const isTypeScriptSource = (filePath: string): boolean =>
   filePath.endsWith('.ts') && !filePath.endsWith('.d.ts')
 
-/** Shipped source is `index.ts` and everything under `domain/`. */
+/** Shipped source is `index.ts` and everything under `domain/` and `stages/`. */
 export const isToolingOrTestPath = (relativePath: string): boolean =>
-  !(relativePath === 'index.ts' || relativePath.startsWith('domain/'))
+  !(
+    relativePath === 'index.ts' ||
+    relativePath.startsWith('domain/') ||
+    relativePath.startsWith('stages/')
+  )
 
 const collectFrom = async (absolutePath: string): Promise<ReadonlyArray<string>> => {
   const entries = await readdir(absolutePath, { withFileTypes: true }).catch(() => undefined)

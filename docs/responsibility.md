@@ -13,8 +13,27 @@
 | 障害分類 | `ProtocolError`(再送無意味)/ `TransportError`(再送が正解) | `domain/errors.ts` |
 | 接続ライフサイクル | 明示的な状態機械。合法遷移の表 | `domain/connection.ts` |
 | トランスポート Port | `TransportPort` とループバック実装 | `domain/transport.ts` |
-| 状態同期 | mc-sim のサービスへの書き込み(受信 → 反映) | **未実装**。mc-sim 公開後 |
-| stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | **未実装**。mc-kernel 公開後 |
+| 状態同期 | mc-sim のサービスへの書き込み(受信 → 反映) | **接ぎ目のみ**。`stages/registration.ts` の `state.inbound` が受け口。mc-sim 公開後に置き換える |
+| stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | 実装済 `stages/registration.ts`。**ただし下記の骨格欠落を読むこと** |
+
+### 2.1 登録した 2 stage と、mc-compose 側に空いている穴
+
+`multiplayer:inbound` と `multiplayer:outbound` の 2 本。分けた理由は順序要求が逆だからである
+——受信は**シミュレーションが読む前**に、送信は**シミュレーションが書いた後**に走らねばならず、
+1 本ではどちらかに 1 フレームの遅れが恒久的に埋め込まれる。
+
+`after` は `outbound` の `sim:physics` **1 本だけ**。`inbound` は 1 本も宣言しない
+——必要なのは「`sim:physics` の**前**」であり、`StageRegistration` に `before` は無いからである。
+
+**その結果、今日この 2 本は HUD より後ろで走る。** mc-compose の
+`domain/stage-skeleton.ts` は stage 名(id の最後のコロンより後ろ)でフェーズを判定するが、
+`inbound` / `outbound` / `multiplayer:` を拾うフェーズが 1 つも無い。実測(mc-compose の
+resolver に現ロスター + `sim:physics` を通したもの)では両者が 14 番・15 番、
+`ui:overlay-sync` の後ろに落ち、`unmatchedPhase` に両方が報告される。
+
+必要なのは mc-compose 側のフェーズ 2 つで、位置と `members` は
+[`stages/stage-ids.ts`](../stages/stage-ids.ts) の冒頭に書いてある。
+**plan.md §2.3-3 により骨格は mc-compose の唯一の所有物なので、ここからは直せない。**
 
 ## 3. 持たないもの ― mx-ui との境界線
 

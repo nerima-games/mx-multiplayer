@@ -30,6 +30,7 @@
   "files": [
     "index.ts",
     "domain",
+    "stages",
     "tsconfig.base.json",
     "LICENSE",
     "README.md"
@@ -44,8 +45,8 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.build.json --pretty false && tsc -p tsconfig.test.json --pretty false && tsc -p tsconfig.preview.json --pretty false",
-    "lint": "oxlint --deny-warnings index.ts domain scripts test apps",
-    "lint:fix": "oxlint --fix index.ts domain scripts test apps",
+    "lint": "oxlint --deny-warnings index.ts domain stages scripts test apps",
+    "lint:fix": "oxlint --fix index.ts domain stages scripts test apps",
     "preview": "tsx apps/preview-two-clients/main.ts",
     "test": "vitest run",
     "test:watch": "vitest",

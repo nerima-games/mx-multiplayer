@@ -20,3 +20,21 @@ export * from './domain/connection'
 export * from './domain/errors'
 export * from './domain/protocol'
 export * from './domain/transport'
+
+// --- Stages: this repository's contribution to the frame ---------------------
+//
+// `multiplayerModule` is what a host merges; `MULTIPLAYER_STAGE_IDS` is what a
+// consumer names. Read `stages/stage-ids.ts` before either: mc-compose's
+// standard stage skeleton has no phase that claims a `multiplayer:` id, so both
+// stages currently resolve to the END of the frame, after the HUD.
+export * from './stages/registration'
+export * from './stages/stage-ids'
+
+// `domain/frame-contract.ts` is a temporary local stand-in for
+// @nerima-games/mc-kernel and is NOT re-exported: it carries a deletion date
+// (see its "WHY THIS FILE EXISTS AND WHEN IT DIES" header), and re-exporting it
+// would make `StageId`, `DeltaTimeSecs` and `StageRegistration` part of THIS
+// package's published surface — so a consumer would still be importing them
+// from here on the day the file is deleted. They appear in `api-lock.md`'s
+// "supporting declarations" section instead: not exported, but named by an
+// export. mx-gameplay and mx-redstone make the same call for the same reason.

@@ -42,10 +42,36 @@ describe('public API surface', () => {
         'makeLoopbackPair',
         'LoopbackTransportLayer',
         'disconnectedTransport',
+        // stages — what mc-compose merges and what a consumer names
+        'MULTIPLAYER_STAGE_IDS',
+        'UPSTREAM_STAGE_IDS',
+        'EXPERIENCE_MODULE_STAGE_PREFIXES',
+        'OWN_STAGE_PREFIX',
+        'multiplayerModule',
+        'multiplayerStages',
+        'makeMultiplayerStages',
+        'makeMultiplayerStagesForPreview',
+        'makeMultiplayerFrameState',
+        'NO_NETWORK_FRAMES',
       ]
 
       for (const name of expected) {
         expect(Object.keys(multiplayer)).toContain(name)
+      }
+    }),
+  )
+
+  // REGRESSION: `domain/frame-contract.ts` is a stand-in for mc-kernel and
+  // carries a deletion date. Re-exporting it would put `StageId`,
+  // `DeltaTimeSecs` and `StageRegistration` into THIS package's published
+  // surface, so a consumer would still be importing them from here on the day
+  // the file is deleted — and two `StageId` brands with one name are one type to
+  // TypeScript however differently they validate. mx-gameplay and mx-redstone
+  // make the same call; this pins it.
+  it.effect('does not re-export the local mc-kernel stand-in', () =>
+    Effect.sync(() => {
+      for (const name of ['StageId', 'DeltaTimeSecs', 'StageRegistration', 'GameModule']) {
+        expect(Object.keys(multiplayer)).not.toContain(name)
       }
     }),
   )
