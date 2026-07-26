@@ -13,6 +13,14 @@
 | [testing.md](./testing.md) | テスト戦略。何をどのレイヤで検証するか | 実装者・レビュアー |
 | [versioning.md](./versioning.md) | 0.x → 1.0.0 の条件、GitHub Packages 公開、プロトコルバージョンとの関係 | リリース担当 |
 
+## 表記
+
+| 表記 | 意味 |
+| --- | --- |
+| `<reference-impl>` | **参照実装のチェックアウトのルート**。凍結された `takeokunn/ts-minecraft` の作業コピーを指す。本ドキュメント群では `<reference-impl>/packages/…` の形か、単に `packages/…`（同じくルート相対）で引用する。手元のどこに clone してあっても読み替えられるようにするためのプレースホルダである |
+| plan.md | リポジトリ構成仕様書（16 リポジトリ、確定済み）。**非公開**であり、公開読者は開けない。だから本ドキュメント群は「plan.md を読まなくても追える」ことを要件にしている —— plan.md の主張を引くときは必ず原文を引用し、参照実装での裏づけを file:line で添える |
+| `nerima-games/<repo>` | 同 org の兄弟リポジトリ。リンクは GitHub の URL で張る |
+
 ## 読む順番
 
 1. **architecture.md** — このリポジトリがグラフのどこにいて、なぜ mc-sim にしか依存しないか

@@ -13,7 +13,7 @@ plan.md §3.14 は移植元を「`packages/network`(1.7k)」と記している�
 測定日: 2026-07-26。測定コマンド:
 
 ```console
-$ cd /Users/take/ghq/github.com/takeokunn/ts-minecraft
+$ cd <reference-impl>
 $ find packages/network -name '*.ts' -not -name '*.test.ts' -not -path '*/test/*' | xargs wc -l
 ```
 
