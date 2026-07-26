@@ -88,9 +88,10 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0(`corepack` 推奨)
 
 | コマンド | 内容 |
 | --- | --- |
-| `pnpm typecheck` | `tsconfig.build.json` と `tsconfig.test.json` の両方を型検査 |
+| `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）/ `tsconfig.test.json`（テスト + スクリプト）/ `tsconfig.preview.json`（`apps/`）の 3 プロジェクトを型検査 |
 | `pnpm lint` | oxlint(このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない)。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
+| `pnpm preview` | 内蔵プレビュー(ローカル 2 クライアント + フォールトインジェクション)。**`pnpm verify` には入らない**。[apps/preview-two-clients/README.md](./apps/preview-two-clients/README.md) |
 | `pnpm test` | vitest(`@effect/vitest` の `it.effect` が主 API) |
 | `pnpm test:watch` | vitest watch |
 | `pnpm test:coverage` | カバレッジ計測(閾値は未設定) |
@@ -110,11 +111,22 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0(`corepack` 推奨)
 - **mc-sim への状態反映がまだ無い。** mc-sim 公開後
 - **実 WebSocket アダプタが無い。** `TransportPort` の実装はプラットフォーム層に置く。
   現在あるのはループバック(テスト用)と `disconnectedTransport` のみ
+- **プレビューは動く。** `pnpm preview`（[apps/preview-two-clients/](./apps/preview-two-clients/README.md)）。
+  1 プロセスの中で 2 つのピアを `makeLoopbackPair` で配線し、15 ステップのハンドシェイクを
+  1 キーストロークずつ進めながら、フレーム・状態遷移・**フォールト注入**を見せる。
+  ソケットは 1 つも開かず、`mc-playground-kit` も新規依存も使っていない。
+  `pnpm preview --stats` は初回実行（2026-07-27）で **4 件**の finding を出し、
+  4 件とも `test/preview-findings.test.ts` に assertion として固定してある。
+  うち 3 件（M1 / M3 / M4）は既存 107 本のテストが 1 つも捕まえていなかった
 - **ビルド / publish がまだ無い。** `package.json` の `exports` は TypeScript ソースを直接指している
 - **カバレッジ閾値は未設定。** 99% ゲートは完成条件到達時に有効化する
 
 確定しているのは**仕組み**のほうである: バージョン付きエンベロープ、テキストで止まるコーデック、
 `ProtocolError` と `TransportError` の分離、リトライ方針を持たない接続状態機械。
+
+ただし**エンベロープの検査順序は仕組みどおりになっていない** —— バージョンはエンベロープに載っているが、
+`domain/codec.ts` はメッセージ形状を先にパースしてからバージョンを見る。
+プレビューの M1 がそれで、[docs/testing.md](./docs/testing.md) §9 に詳細がある。
 
 ## License
 

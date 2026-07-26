@@ -1,0 +1,23 @@
+{
+  // The dev preview under apps/preview-two-clients.
+  //
+  // A SEPARATE project on purpose. tsconfig.build.json proves that the shipped
+  // protocol layer is platform-free — it inherits `types: []` and a `lib`
+  // without "DOM", so a Node global or a browser type leaking into `domain/`
+  // fails the build. That proof is DN-4: it is what makes "a protocol change
+  // cannot quietly acquire a platform dependency" a mechanical fact rather than
+  // a promise, and it would be destroyed by adding `apps/**` to that project's
+  // `include`.
+  //
+  // NOTE what this file does NOT do: it does not add "DOM" to `lib`. The
+  // preview renders to a terminal, so it needs Node's stdio and nothing from a
+  // browser. If a future preview ever needs "DOM" here, that is the moment to
+  // ask whether it still belongs in this repository at all — see
+  // apps/preview-two-clients/main.ts.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["apps/**/*.ts", "index.ts", "domain/**/*.ts"],
+  "exclude": ["node_modules", "coverage", "dist"]
+}
