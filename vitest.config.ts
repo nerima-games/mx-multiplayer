@@ -13,7 +13,7 @@ export default defineConfig({
         singleFork: false,
       },
     },
-    include: ['test/**/*.{test,spec}.ts'],
+    include: ['test/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/coverage/**', '**/.git/**'],
     testTimeout: 10000,
     hookTimeout: 10000,
@@ -28,7 +28,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       enabled: false,
-      include: ['index.ts', 'domain/**/*.ts'],
+      include: ['index.ts', 'domain/**/*.ts', 'stages/**/*.ts'],
       exclude: ['**/*.d.ts', '**/*.config.ts', '**/*.test.ts', '**/*.spec.ts'],
       all: true,
       reporter: ['text', 'json', 'html', 'lcov'],
@@ -48,7 +48,7 @@ export default defineConfig({
     },
   },
   esbuild: {
-    target: 'node22',
+    target: 'node24',
     format: 'esm',
     platform: 'node',
   },
