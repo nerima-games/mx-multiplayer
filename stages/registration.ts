@@ -48,7 +48,13 @@
  */
 import { Chunk, Effect, Either, Layer, Queue, Ref } from 'effect'
 import { decodeFrame, encodeFrame } from '../domain/codec'
-import { canSend, initialConnectionState, type ConnectionState } from '../domain/connection'
+import {
+  canSend,
+  initialConnectionState,
+  transition,
+  type ConnectionEvent,
+  type ConnectionState,
+} from '../domain/connection'
 import type { ProtocolError } from '../domain/errors'
 import type { GameModule, StageRegistration } from '../domain/frame-contract'
 import type { NetworkMessage } from '../domain/protocol'
@@ -377,3 +383,71 @@ export const makeMultiplayerStagesForPreview: Effect.Effect<
   const state = yield* makeMultiplayerFrameState
   return { state, stages: multiplayerStages(state, transport) }
 })
+
+/**
+ * The capability-limited integration seam for a platform host.
+ *
+ * Unlike `makeMultiplayerStagesForPreview`, this does not expose the backing
+ * `Ref`s. A host may observe and advance the connection lifecycle, enqueue
+ * local messages, and drain messages that genuinely crossed the transport,
+ * but it cannot replace an inbox or fabricate counters. Returned collections
+ * are snapshots, so retaining one cannot mutate a later frame.
+ */
+export type MultiplayerHost = {
+  /** The stages bound to the transport acquired when this host was built. */
+  readonly stages: ReadonlyArray<StageRegistration>
+  /** A module suitable for hosts that compose modules rather than raw stages. */
+  readonly module: GameModule<never, never, never, never>
+  /** Atomically take every message decoded by completed inbound stages. */
+  readonly drainInbound: Effect.Effect<ReadonlyArray<NetworkMessage>>
+  /** Append one local message for the next outbound stage. */
+  readonly enqueueOutbound: (message: NetworkMessage) => Effect.Effect<void>
+  /** Read an immutable snapshot of the current connection state. */
+  readonly connectionSnapshot: Effect.Effect<ConnectionState>
+  /** Advance the lifecycle, returning `undefined` without mutation when illegal. */
+  readonly transitionConnection: (
+    event: ConnectionEvent,
+  ) => Effect.Effect<ConnectionState | undefined>
+  /** Read an immutable snapshot of the accumulated frame counters. */
+  readonly countersSnapshot: Effect.Effect<NetworkFrameCounters>
+}
+
+/**
+ * Build the production host seam around exactly one transport and state set.
+ *
+ * Transport acquisition happens once. In particular, `module.frameStages`
+ * returns the already-bound stages instead of rebuilding state or acquiring a
+ * second transport, which keeps one socket paired with one inbox and outbox.
+ */
+export const makeMultiplayerHost: Effect.Effect<MultiplayerHost, never, TransportPort> =
+  Effect.gen(function* () {
+    const transport = yield* TransportPort
+    const state = yield* makeMultiplayerFrameState
+    const stages = multiplayerStages(state, transport)
+
+    const drainInbound = Ref.getAndSet(state.inbound, []).pipe(
+      Effect.map((messages) => [...messages]),
+    )
+    const enqueueOutbound = (message: NetworkMessage): Effect.Effect<void> =>
+      Ref.update(state.outbox, (pending) => [...pending, message])
+    const transitionConnection = (
+      event: ConnectionEvent,
+    ): Effect.Effect<ConnectionState | undefined> =>
+      Ref.modify(state.connection, (current) => {
+        const next = transition(current, event)
+        return [next, next ?? current]
+      })
+
+    return {
+      stages,
+      module: {
+        layers: Layer.empty,
+        frameStages: Effect.succeed(stages),
+      },
+      drainInbound,
+      enqueueOutbound,
+      connectionSnapshot: Ref.get(state.connection),
+      transitionConnection,
+      countersSnapshot: Ref.get(state.counters),
+    }
+  })

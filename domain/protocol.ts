@@ -111,6 +111,8 @@ export type PlayerLeave = typeof PlayerLeave.Type
 
 export const PlayerMove = Schema.TaggedStruct('PlayerMove', {
   player: PlayerId,
+  /** Optional for protocol-v1 peers; authoritative servers should include it. */
+  world: Schema.optional(WorldId),
   at: Vec3,
   facing: Orientation,
 })
@@ -118,6 +120,8 @@ export type PlayerMove = typeof PlayerMove.Type
 
 export const BlockPlace = Schema.TaggedStruct('BlockPlace', {
   player: PlayerId,
+  /** Optional for protocol-v1 peers; authoritative servers should include it. */
+  world: Schema.optional(WorldId),
   at: BlockPos,
   /**
    * A block type name, kept as an opaque non-empty string on the wire.
@@ -134,6 +138,8 @@ export type BlockPlace = typeof BlockPlace.Type
 
 export const BlockBreak = Schema.TaggedStruct('BlockBreak', {
   player: PlayerId,
+  /** Optional for protocol-v1 peers; authoritative servers should include it. */
+  world: Schema.optional(WorldId),
   at: BlockPos,
 })
 export type BlockBreak = typeof BlockBreak.Type
@@ -150,6 +156,68 @@ export const WorldInfo = Schema.TaggedStruct('WorldInfo', {
   seed: Schema.Number.pipe(Schema.int()),
 })
 export type WorldInfo = typeof WorldInfo.Type
+
+/** A player as observed in an authoritative world snapshot. */
+export const PlayerSnapshot = Schema.Struct({
+  player: PlayerId,
+  name: PlayerName,
+  world: WorldId,
+  at: Vec3,
+  facing: Orientation,
+})
+export type PlayerSnapshot = typeof PlayerSnapshot.Type
+
+/**
+ * The latest authoritative value of one block position.
+ *
+ * `null` records a break relative to the generated world. Keeping breaks in
+ * the snapshot is necessary because the seed alone would otherwise restore
+ * the generated block when a client reconnects.
+ */
+export const BlockMutationSnapshot = Schema.Struct({
+  world: WorldId,
+  at: BlockPos,
+  block: Schema.NullOr(Schema.String.pipe(Schema.minLength(1))),
+})
+export type BlockMutationSnapshot = typeof BlockMutationSnapshot.Type
+
+/**
+ * Complete state needed by a late joiner or reconnecting client.
+ *
+ * The revision is monotonic within a server process. A client can ignore an
+ * older snapshot delivered after newer live traffic without relying on wall
+ * clock time.
+ */
+export const WorldSnapshot = Schema.TaggedStruct('WorldSnapshot', {
+  world: WorldId,
+  seed: Schema.Number.pipe(Schema.int()),
+  revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  players: Schema.Array(PlayerSnapshot),
+  blocks: Schema.Array(BlockMutationSnapshot),
+})
+export type WorldSnapshot = typeof WorldSnapshot.Type
+
+/** Stable machine-readable reasons an authoritative server may reject a mutation. */
+export const BlockMutationRejectionReason = Schema.Literal(
+  'unauthorized-player',
+  'unknown-block',
+  'occupied',
+  'missing-block',
+  'out-of-bounds',
+  'stale-revision',
+)
+export type BlockMutationRejectionReason = typeof BlockMutationRejectionReason.Type
+
+/** A block mutation was not applied; the client should retain server state. */
+export const BlockMutationRejected = Schema.TaggedStruct('BlockMutationRejected', {
+  player: PlayerId,
+  world: WorldId,
+  at: BlockPos,
+  operation: Schema.Literal('place', 'break'),
+  reason: BlockMutationRejectionReason,
+  revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+})
+export type BlockMutationRejected = typeof BlockMutationRejected.Type
 
 /**
  * Liveness probe.
@@ -184,6 +252,8 @@ export const NetworkMessage = Schema.Union(
   BlockBreak,
   Chat,
   WorldInfo,
+  WorldSnapshot,
+  BlockMutationRejected,
   Ping,
   Pong,
 )
@@ -198,6 +268,8 @@ export const MESSAGE_TAGS = [
   'BlockBreak',
   'Chat',
   'WorldInfo',
+  'WorldSnapshot',
+  'BlockMutationRejected',
   'Ping',
   'Pong',
 ] as const satisfies ReadonlyArray<NetworkMessage['_tag']>

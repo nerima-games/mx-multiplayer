@@ -41,6 +41,7 @@ import {
 } from '../domain/transport'
 import {
   makeMultiplayerFrameState,
+  makeMultiplayerHost,
   makeMultiplayerStages,
   makeMultiplayerStagesForPreview,
   multiplayerModule,
@@ -438,6 +439,84 @@ describe('the stages are re-entrant and hold nothing globally', () => {
 
       expect(yield* Ref.get(first.state.inbound)).toStrictEqual([chat])
       expect(yield* Ref.get(second.state.inbound)).toStrictEqual([])
+    }),
+  )
+})
+
+describe('production host integration seam', () => {
+  it.effect('drains only messages processed by the inbound stage, once', () =>
+    Effect.gen(function* () {
+      const [left, peer] = yield* makeLoopbackPair
+      const host = yield* makeMultiplayerHost.pipe(
+        Effect.provideService(TransportPort, left),
+      )
+
+      yield* Either.match(encodeFrame(chat), {
+        onLeft: () => Effect.void,
+        onRight: (frame) => peer.send(frame),
+      })
+      expect(yield* host.drainInbound).toStrictEqual([])
+
+      const inbound = host.stages.find((stage) => stage.id === MULTIPLAYER_STAGE_IDS.inbound)
+      yield* runStage(inbound)
+
+      const snapshot = yield* host.drainInbound
+      expect(snapshot).toStrictEqual([chat])
+      expect(yield* host.drainInbound).toStrictEqual([])
+    }),
+  )
+
+  it.effect('sends host-enqueued messages on the next outbound stage', () =>
+    Effect.gen(function* () {
+      const [left, peer] = yield* makeLoopbackPair
+      const host = yield* makeMultiplayerHost.pipe(
+        Effect.provideService(TransportPort, left),
+      )
+
+      expect(
+        yield* host.transitionConnection({ _tag: 'ConnectRequested' }),
+      ).toStrictEqual({ _tag: 'Connecting', attempt: 1 })
+      expect(
+        yield* host.transitionConnection({
+          _tag: 'HandshakeSucceeded',
+          player: alice,
+          world: WorldId.make('overworld'),
+        }),
+      ).toStrictEqual(connected)
+      expect(yield* host.connectionSnapshot).toStrictEqual(connected)
+
+      yield* host.enqueueOutbound(chat)
+      expect(yield* drainPeer(peer)).toStrictEqual([])
+
+      const outbound = host.stages.find((stage) => stage.id === MULTIPLAYER_STAGE_IDS.outbound)
+      yield* runStage(outbound)
+      expect((yield* drainPeer(peer)).map((frame) => decodeFrame(frame))).toStrictEqual([
+        Either.right(chat),
+      ])
+      expect((yield* host.countersSnapshot).sent).toBe(1)
+    }),
+  )
+
+  it.effect('rejects an illegal lifecycle transition without changing the snapshot', () =>
+    Effect.gen(function* () {
+      const [left] = yield* makeLoopbackPair
+      const host = yield* makeMultiplayerHost.pipe(
+        Effect.provideService(TransportPort, left),
+      )
+
+      expect(yield* host.transitionConnection({ _tag: 'PeerClosed' })).toBeUndefined()
+      expect(yield* host.connectionSnapshot).toStrictEqual({ _tag: 'Disconnected' })
+    }),
+  )
+
+  it.effect('binds module.frameStages to the same stage instances and needs no second transport', () =>
+    Effect.gen(function* () {
+      const [left] = yield* makeLoopbackPair
+      const host = yield* makeMultiplayerHost.pipe(
+        Effect.provideService(TransportPort, left),
+      )
+
+      expect(yield* host.module.frameStages).toBe(host.stages)
     }),
   )
 })

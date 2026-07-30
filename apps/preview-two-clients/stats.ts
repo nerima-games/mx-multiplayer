@@ -70,6 +70,31 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   BlockBreak: { _tag: 'BlockBreak', player: ALICE, at: { x: -1, y: 0, z: -3 } },
   Chat: { _tag: 'Chat', player: ALICE, text: 'hello 世界' },
   WorldInfo: { _tag: 'WorldInfo', world: OVERWORLD, seed: -1_234_567 },
+  WorldSnapshot: {
+    _tag: 'WorldSnapshot',
+    world: OVERWORLD,
+    seed: -1_234_567,
+    revision: 1,
+    players: [
+      {
+        player: ALICE,
+        name: PlayerName.make('Alice'),
+        world: OVERWORLD,
+        at: { x: 8.5, y: 65, z: -12.25 },
+        facing: { yawRadians: 3.14159, pitchRadians: -1.5 },
+      },
+    ],
+    blocks: [{ world: OVERWORLD, at: { x: 1, y: 2, z: 3 }, block: 'stone' }],
+  },
+  BlockMutationRejected: {
+    _tag: 'BlockMutationRejected',
+    player: ALICE,
+    world: OVERWORLD,
+    at: { x: 1, y: 2, z: 3 },
+    operation: 'place',
+    reason: 'occupied',
+    revision: 1,
+  },
   Ping: { _tag: 'Ping', nonce: 7 },
   Pong: { _tag: 'Pong', nonce: 7 },
 }

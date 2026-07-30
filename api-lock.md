@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 70
+exported declarations: 82
 supporting declarations: 10
 
 ## Exported
@@ -23,6 +23,7 @@ supporting declarations: 10
 ```ts
 const BlockBreak: Schema.TaggedStruct<"BlockBreak", {
     player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
     at: Schema.Struct<{
         x: Schema.filter<typeof Schema.Number>;
         y: Schema.filter<typeof Schema.Number>;
@@ -37,11 +38,67 @@ const BlockBreak: Schema.TaggedStruct<"BlockBreak", {
 type BlockBreak = typeof BlockBreak.Type;
 ```
 
+### BlockMutationRejected  `const`
+
+```ts
+const BlockMutationRejected: Schema.TaggedStruct<"BlockMutationRejected", {
+    player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+    at: Schema.Struct<{
+        x: Schema.filter<typeof Schema.Number>;
+        y: Schema.filter<typeof Schema.Number>;
+        z: Schema.filter<typeof Schema.Number>;
+    }>;
+    operation: Schema.Literal<["place", "break"]>;
+    reason: Schema.Literal<["unauthorized-player", "unknown-block", "occupied", "missing-block", "out-of-bounds", "stale-revision"]>;
+    revision: Schema.filter<Schema.filter<typeof Schema.Number>>;
+}>;
+```
+
+### BlockMutationRejected  `type`
+
+```ts
+type BlockMutationRejected = typeof BlockMutationRejected.Type;
+```
+
+### BlockMutationRejectionReason  `const`
+
+```ts
+const BlockMutationRejectionReason: Schema.Literal<["unauthorized-player", "unknown-block", "occupied", "missing-block", "out-of-bounds", "stale-revision"]>;
+```
+
+### BlockMutationRejectionReason  `type`
+
+```ts
+type BlockMutationRejectionReason = typeof BlockMutationRejectionReason.Type;
+```
+
+### BlockMutationSnapshot  `const`
+
+```ts
+const BlockMutationSnapshot: Schema.Struct<{
+    world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+    at: Schema.Struct<{
+        x: Schema.filter<typeof Schema.Number>;
+        y: Schema.filter<typeof Schema.Number>;
+        z: Schema.filter<typeof Schema.Number>;
+    }>;
+    block: Schema.NullOr<Schema.filter<typeof Schema.String>>;
+}>;
+```
+
+### BlockMutationSnapshot  `type`
+
+```ts
+type BlockMutationSnapshot = typeof BlockMutationSnapshot.Type;
+```
+
 ### BlockPlace  `const`
 
 ```ts
 const BlockPlace: Schema.TaggedStruct<"BlockPlace", {
     player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
     at: Schema.Struct<{
         x: Schema.filter<typeof Schema.Number>;
         y: Schema.filter<typeof Schema.Number>;
@@ -152,6 +209,7 @@ const Frame: Schema.Struct<{
         player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
     }>, Schema.TaggedStruct<"PlayerMove", {
         player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+        world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
         at: Schema.Struct<{
             x: Schema.filter<typeof Schema.Number>;
             y: Schema.filter<typeof Schema.Number>;
@@ -163,6 +221,7 @@ const Frame: Schema.Struct<{
         }>;
     }>, Schema.TaggedStruct<"BlockPlace", {
         player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+        world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
         at: Schema.Struct<{
             x: Schema.filter<typeof Schema.Number>;
             y: Schema.filter<typeof Schema.Number>;
@@ -171,6 +230,7 @@ const Frame: Schema.Struct<{
         block: Schema.filter<typeof Schema.String>;
     }>, Schema.TaggedStruct<"BlockBreak", {
         player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+        world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
         at: Schema.Struct<{
             x: Schema.filter<typeof Schema.Number>;
             y: Schema.filter<typeof Schema.Number>;
@@ -182,6 +242,44 @@ const Frame: Schema.Struct<{
     }>, Schema.TaggedStruct<"WorldInfo", {
         world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
         seed: Schema.filter<typeof Schema.Number>;
+    }>, Schema.TaggedStruct<"WorldSnapshot", {
+        world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+        seed: Schema.filter<typeof Schema.Number>;
+        revision: Schema.filter<Schema.filter<typeof Schema.Number>>;
+        players: Schema.Array$<Schema.Struct<{
+            player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+            name: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerName">;
+            world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+            at: Schema.Struct<{
+                x: Schema.filter<typeof Schema.Number>;
+                y: Schema.filter<typeof Schema.Number>;
+                z: Schema.filter<typeof Schema.Number>;
+            }>;
+            facing: Schema.Struct<{
+                yawRadians: Schema.filter<typeof Schema.Number>;
+                pitchRadians: Schema.filter<typeof Schema.Number>;
+            }>;
+        }>>;
+        blocks: Schema.Array$<Schema.Struct<{
+            world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+            at: Schema.Struct<{
+                x: Schema.filter<typeof Schema.Number>;
+                y: Schema.filter<typeof Schema.Number>;
+                z: Schema.filter<typeof Schema.Number>;
+            }>;
+            block: Schema.NullOr<Schema.filter<typeof Schema.String>>;
+        }>>;
+    }>, Schema.TaggedStruct<"BlockMutationRejected", {
+        player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+        world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+        at: Schema.Struct<{
+            x: Schema.filter<typeof Schema.Number>;
+            y: Schema.filter<typeof Schema.Number>;
+            z: Schema.filter<typeof Schema.Number>;
+        }>;
+        operation: Schema.Literal<["place", "break"]>;
+        reason: Schema.Literal<["unauthorized-player", "unknown-block", "occupied", "missing-block", "out-of-bounds", "stale-revision"]>;
+        revision: Schema.filter<Schema.filter<typeof Schema.Number>>;
     }>, Schema.TaggedStruct<"Ping", {
         nonce: Schema.filter<typeof Schema.Number>;
     }>, Schema.TaggedStruct<"Pong", {
@@ -205,7 +303,7 @@ const LoopbackTransportLayer: (service: TransportService) => Layer.Layer<Transpo
 ### MESSAGE_TAGS  `const`
 
 ```ts
-const MESSAGE_TAGS: readonly ["PlayerJoin", "PlayerLeave", "PlayerMove", "BlockPlace", "BlockBreak", "Chat", "WorldInfo", "Ping", "Pong"];
+const MESSAGE_TAGS: readonly ["PlayerJoin", "PlayerLeave", "PlayerMove", "BlockPlace", "BlockBreak", "Chat", "WorldInfo", "WorldSnapshot", "BlockMutationRejected", "Ping", "Pong"];
 ```
 
 ### MULTIPLAYER_STAGE_IDS  `const`
@@ -225,6 +323,20 @@ type MultiplayerFrameState = {
     readonly outbox: Ref.Ref<ReadonlyArray<NetworkMessage>>;
     readonly inbound: Ref.Ref<ReadonlyArray<NetworkMessage>>;
     readonly counters: Ref.Ref<NetworkFrameCounters>;
+};
+```
+
+### MultiplayerHost  `type`
+
+```ts
+type MultiplayerHost = {
+    readonly stages: ReadonlyArray<StageRegistration>;
+    readonly module: GameModule<never, never, never, never>;
+    readonly drainInbound: Effect.Effect<ReadonlyArray<NetworkMessage>>;
+    readonly enqueueOutbound: (message: NetworkMessage) => Effect.Effect<void>;
+    readonly connectionSnapshot: Effect.Effect<ConnectionState>;
+    readonly transitionConnection: (event: ConnectionEvent) => Effect.Effect<ConnectionState | undefined>;
+    readonly countersSnapshot: Effect.Effect<NetworkFrameCounters>;
 };
 ```
 
@@ -263,6 +375,7 @@ const NetworkMessage: Schema.Union<[Schema.TaggedStruct<"PlayerJoin", {
     player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
 }>, Schema.TaggedStruct<"PlayerMove", {
     player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
     at: Schema.Struct<{
         x: Schema.filter<typeof Schema.Number>;
         y: Schema.filter<typeof Schema.Number>;
@@ -274,6 +387,7 @@ const NetworkMessage: Schema.Union<[Schema.TaggedStruct<"PlayerJoin", {
     }>;
 }>, Schema.TaggedStruct<"BlockPlace", {
     player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
     at: Schema.Struct<{
         x: Schema.filter<typeof Schema.Number>;
         y: Schema.filter<typeof Schema.Number>;
@@ -282,6 +396,7 @@ const NetworkMessage: Schema.Union<[Schema.TaggedStruct<"PlayerJoin", {
     block: Schema.filter<typeof Schema.String>;
 }>, Schema.TaggedStruct<"BlockBreak", {
     player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
     at: Schema.Struct<{
         x: Schema.filter<typeof Schema.Number>;
         y: Schema.filter<typeof Schema.Number>;
@@ -293,6 +408,44 @@ const NetworkMessage: Schema.Union<[Schema.TaggedStruct<"PlayerJoin", {
 }>, Schema.TaggedStruct<"WorldInfo", {
     world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
     seed: Schema.filter<typeof Schema.Number>;
+}>, Schema.TaggedStruct<"WorldSnapshot", {
+    world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+    seed: Schema.filter<typeof Schema.Number>;
+    revision: Schema.filter<Schema.filter<typeof Schema.Number>>;
+    players: Schema.Array$<Schema.Struct<{
+        player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+        name: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerName">;
+        world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+        at: Schema.Struct<{
+            x: Schema.filter<typeof Schema.Number>;
+            y: Schema.filter<typeof Schema.Number>;
+            z: Schema.filter<typeof Schema.Number>;
+        }>;
+        facing: Schema.Struct<{
+            yawRadians: Schema.filter<typeof Schema.Number>;
+            pitchRadians: Schema.filter<typeof Schema.Number>;
+        }>;
+    }>>;
+    blocks: Schema.Array$<Schema.Struct<{
+        world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+        at: Schema.Struct<{
+            x: Schema.filter<typeof Schema.Number>;
+            y: Schema.filter<typeof Schema.Number>;
+            z: Schema.filter<typeof Schema.Number>;
+        }>;
+        block: Schema.NullOr<Schema.filter<typeof Schema.String>>;
+    }>>;
+}>, Schema.TaggedStruct<"BlockMutationRejected", {
+    player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+    at: Schema.Struct<{
+        x: Schema.filter<typeof Schema.Number>;
+        y: Schema.filter<typeof Schema.Number>;
+        z: Schema.filter<typeof Schema.Number>;
+    }>;
+    operation: Schema.Literal<["place", "break"]>;
+    reason: Schema.Literal<["unauthorized-player", "unknown-block", "occupied", "missing-block", "out-of-bounds", "stale-revision"]>;
+    revision: Schema.filter<Schema.filter<typeof Schema.Number>>;
 }>, Schema.TaggedStruct<"Ping", {
     nonce: Schema.filter<typeof Schema.Number>;
 }>, Schema.TaggedStruct<"Pong", {
@@ -398,6 +551,7 @@ type PlayerLeave = typeof PlayerLeave.Type;
 ```ts
 const PlayerMove: Schema.TaggedStruct<"PlayerMove", {
     player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    world: Schema.optional<Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">>;
     at: Schema.Struct<{
         x: Schema.filter<typeof Schema.Number>;
         y: Schema.filter<typeof Schema.Number>;
@@ -426,6 +580,31 @@ const PlayerName: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerName"
 
 ```ts
 type PlayerName = typeof PlayerName.Type;
+```
+
+### PlayerSnapshot  `const`
+
+```ts
+const PlayerSnapshot: Schema.Struct<{
+    player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+    name: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerName">;
+    world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+    at: Schema.Struct<{
+        x: Schema.filter<typeof Schema.Number>;
+        y: Schema.filter<typeof Schema.Number>;
+        z: Schema.filter<typeof Schema.Number>;
+    }>;
+    facing: Schema.Struct<{
+        yawRadians: Schema.filter<typeof Schema.Number>;
+        pitchRadians: Schema.filter<typeof Schema.Number>;
+    }>;
+}>;
+```
+
+### PlayerSnapshot  `type`
+
+```ts
+type PlayerSnapshot = typeof PlayerSnapshot.Type;
 ```
 
 ### Pong  `const`
@@ -547,6 +726,45 @@ const WorldInfo: Schema.TaggedStruct<"WorldInfo", {
 type WorldInfo = typeof WorldInfo.Type;
 ```
 
+### WorldSnapshot  `const`
+
+```ts
+const WorldSnapshot: Schema.TaggedStruct<"WorldSnapshot", {
+    world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+    seed: Schema.filter<typeof Schema.Number>;
+    revision: Schema.filter<Schema.filter<typeof Schema.Number>>;
+    players: Schema.Array$<Schema.Struct<{
+        player: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerId">;
+        name: Schema.brand<Schema.filter<typeof Schema.String>, "PlayerName">;
+        world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+        at: Schema.Struct<{
+            x: Schema.filter<typeof Schema.Number>;
+            y: Schema.filter<typeof Schema.Number>;
+            z: Schema.filter<typeof Schema.Number>;
+        }>;
+        facing: Schema.Struct<{
+            yawRadians: Schema.filter<typeof Schema.Number>;
+            pitchRadians: Schema.filter<typeof Schema.Number>;
+        }>;
+    }>>;
+    blocks: Schema.Array$<Schema.Struct<{
+        world: Schema.brand<Schema.filter<typeof Schema.String>, "WorldId">;
+        at: Schema.Struct<{
+            x: Schema.filter<typeof Schema.Number>;
+            y: Schema.filter<typeof Schema.Number>;
+            z: Schema.filter<typeof Schema.Number>;
+        }>;
+        block: Schema.NullOr<Schema.filter<typeof Schema.String>>;
+    }>>;
+}>;
+```
+
+### WorldSnapshot  `type`
+
+```ts
+type WorldSnapshot = typeof WorldSnapshot.Type;
+```
+
 ### canSend  `const`
 
 ```ts
@@ -599,6 +817,12 @@ const makeLoopbackPair: Effect.Effect<readonly [TransportService, TransportServi
 
 ```ts
 const makeMultiplayerFrameState: Effect.Effect<MultiplayerFrameState>;
+```
+
+### makeMultiplayerHost  `const`
+
+```ts
+const makeMultiplayerHost: Effect.Effect<MultiplayerHost, never, TransportPort>;
 ```
 
 ### makeMultiplayerStages  `const`

@@ -1,6 +1,6 @@
 {
   "name": "@nerima-games/mx-multiplayer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Network synchronisation for the nerima-games Minecraft-clone rebuild: wire protocol, frame codec, connection state machine and the transport Port. Transport and protocol only — multiplayer screens belong to mx-ui.",
   "homepage": "https://github.com/nerima-games/mx-multiplayer#readme",
