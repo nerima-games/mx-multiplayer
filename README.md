@@ -89,7 +89,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11(`corepack` 推奨)を�
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）/ `tsconfig.test.json`（テスト + スクリプト）/ `tsconfig.preview.json`（`apps/`）の 3 プロジェクトを型検査 |
-| `pnpm lint` | oxlint(このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない)。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
+| `pnpm lint` | oxlint(このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない)。設定ファイルは `.oxlintrc.json`(oxlint が自動検出する唯一のファイル名。旧 `oxlint.json` は無視され、実際には一度も読み込まれていなかった)。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`.oxlintrc.json` は 5 カテゴリすべてと個別 50 ルールが `warn`、`error` は `no-eval` / `no-implied-eval` / `no-restricted-imports` の 3 つだけ。このフラグが無かった頃は実質その 3 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
 | `pnpm preview` | 内蔵プレビュー(ローカル 2 クライアント + フォールトインジェクション)。**`pnpm verify` には入らない**。[apps/preview-two-clients/README.md](./apps/preview-two-clients/README.md) |
 | `pnpm test` | vitest(`@effect/vitest` の `it.effect` が主 API) |

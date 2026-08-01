@@ -1,0 +1,149 @@
+{
+  "$schema": "https://oxc-project.github.io/oxc/schema/linter.json",
+  // oxlint is the ONLY lint/format configuration in this repository.
+  // There is deliberately no prettier, no biome and no .editorconfig.
+  //
+  // NOTE on the `Date.now()` ban (see README 現状):
+  // oxlint 0.12 does not implement `no-restricted-syntax` or `no-restricted-properties`,
+  // and while `no-restricted-globals` is listed by `oxlint --rules` it is not implemented
+  // either (no checkmark). Verified empirically against oxlint 0.12.0: a file containing
+  // `Date.now()` produces 0 diagnostics under all three rules.
+  // `scripts/check-dependency-whitelist.ts`, which used to enforce this ban, was removed
+  // org-wide in favour of oxlint's `no-restricted-imports` (DEPENDENCY_POLICY.md §5). oxlint
+  // has no replacement rule for a raw wall-clock read yet, so per DEPENDENCY_POLICY.md §5
+  // ("各リポジトリの裁量とします") this repository does not carry a substitute script; the
+  // ban is currently unenforced by tooling. When oxlint gains `no-restricted-syntax`, add it
+  // here.
+  "env": {
+    "es2022": true,
+    "node": true
+  },
+  "settings": {
+    "typescript": {
+      "version": "5.9"
+    }
+  },
+  "plugins": [],
+  "categories": {
+    "correctness": "warn",
+    "suspicious": "warn",
+    "perf": "warn",
+    "style": "warn",
+    "restriction": "warn"
+  },
+  "rules": {
+    // TypeScript-specific rules
+    // Prefer `type` over `interface` for pure data types (Schema.Struct pattern).
+    "@typescript-eslint/consistent-type-definitions": ["warn", "type"],
+    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/no-unused-vars": "warn",
+    "@typescript-eslint/no-floating-promises": "warn",
+    "@typescript-eslint/no-misused-new": "warn",
+    "@typescript-eslint/no-unnecessary-type-assertion": "warn",
+    "@typescript-eslint/no-var-requires": "warn",
+    "@typescript-eslint/prefer-enum-initializers": "warn",
+    "@typescript-eslint/prefer-for-of": "warn",
+    "@typescript-eslint/prefer-literal-enum-member": "warn",
+
+    // Correctness
+    "no-array-constructor": "warn",
+    "no-empty": "warn",
+    "no-eq-null": "warn",
+    "no-extra-boolean-cast": "warn",
+    "no-fallthrough": "warn",
+    "no-irregular-whitespace": "warn",
+    "no-self-compare": "warn",
+    "no-throw-literal": "warn",
+    "no-unreachable": "warn",
+    "use-isnan": "warn",
+    "valid-typeof": "warn",
+
+    // Suspicious
+    "no-console": "warn",
+    "no-debugger": "warn",
+    "no-empty-function": "warn",
+    "no-empty-pattern": "warn",
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-redeclare": "warn",
+    "no-shadow": "warn",
+    "no-unreachable-loop": "warn",
+    "no-unused-private-class-members": "warn",
+
+    // Performance
+    "no-await-in-loop": "warn",
+    "no-loop-func": "warn",
+    "no-promise-executor-return": "warn",
+    "no-sync": "warn",
+
+    // Style
+    // NOTE (found while fixing the oxlint.json -> .oxlintrc.json discovery bug):
+    // this repository's config was never actually loaded by oxlint before this
+    // fix (see git history), so the ~29 pure formatting/ESLint-stylistic rules
+    // that used to live in this section (array-bracket-spacing, block-spacing,
+    // brace-style, camelcase, comma-dangle, comma-spacing, comma-style,
+    // computed-property-spacing, eol-last, func-call-spacing, indent,
+    // key-spacing, keyword-spacing, linebreak-style, lines-between-class-members,
+    // no-mixed-spaces-and-tabs, no-new-object, no-tabs, no-trailing-spaces,
+    // no-whitespace-before-property, object-curly-spacing, one-var,
+    // operator-linebreak, padded-blocks, quote-props, semi-spacing,
+    // space-before-blocks, space-infix-ops, space-unary-ops, spaced-comment)
+    // were never actually validated against a real oxlint run. Verified
+    // empirically against oxlint 1.76.0: every one of those rule names fails
+    // to parse with "Rule '<name>' not found in plugin 'eslint'" (oxlint has
+    // dropped ESLint's pure-stylistic rule set; there is no "style" plugin to
+    // enable instead). They have been removed here only to make this config
+    // parseable; the header comment's premise ("oxlint is the ONLY lint/format
+    // configuration ... no prettier, no biome") is therefore no longer true in
+    // practice for source formatting and needs a separate follow-up decision
+    // (adopt a real formatter, or accept oxlint no longer covers this).
+    "no-array-method-this-argument": "warn",
+    "no-bitwise": "warn",
+
+    // Restriction
+    "default-case": "warn",
+    "default-case-last": "warn",
+    "no-empty-character-class": "warn",
+    // Declared for intent and for the day oxlint implements it; inert in 1.76.0.
+    "no-restricted-globals": ["warn", "name", "open", "close", "event"],
+    // Enforcement mechanism for DEPENDENCY_POLICY.md §5 (Tier boundaries). The
+    // old scripts/check-dependency-whitelist.ts was removed org-wide in favour
+    // of this rule; `pnpm lint` now absorbs the role of the old `check:deps`.
+    // Both restriction styles ("paths" for the bare "effect" import, "patterns"
+    // for the @nerima-games/* Tier3 edges) must live inside ONE options object
+    // — oxlint (like eslint) does not accept multiple positional option objects.
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "effect",
+            "message": "Please use named imports from 'effect' package",
+            "importNames": ["default"]
+          }
+        ],
+        "patterns": [
+          {
+            "regex": "^@nerima-games/(mx-gameplay|mx-redstone|mx-ui)(/.*)?$",
+            "message": "Tier3 experience modules do not depend on each other laterally (DEPENDENCY_POLICY.md §2). Talk through mc-sim instead."
+          },
+          {
+            "regex": "^@nerima-games/(mc-worldgen|mc-render|mc-meshing|mc-noise|mc-physics|mc-save|mc-audio|mc-playground-kit|mc-compose|mc-dev-meta)(/.*)?$",
+            "message": "mx-multiplayer (Tier3, DEPENDENCY_POLICY.md) may depend only on mc-sim and mc-kernel."
+          }
+        ]
+      }
+    ],
+    "prefer-template": "warn",
+
+    // Disabled rules (conflict with project style)
+    "@typescript-eslint/explicit-function-return-type": "off",
+    "@typescript-eslint/explicit-module-boundary-types": "off",
+    "@typescript-eslint/no-non-null-assertion": "off",
+    "no-case-declarations": "off",
+    "no-constant-condition": "off",
+    "no-param-reassign": "off",
+    "no-plusplus": "off"
+  },
+  "ignorePatterns": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"]
+}

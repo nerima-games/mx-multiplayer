@@ -19,7 +19,7 @@
  * see?". A measurement with no such answer is a number, not a check.
  */
 import { Effect, Either, Queue } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../domain/codec'
+import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
   canSend,
   initialConnectionState,
@@ -27,13 +27,13 @@ import {
   transition,
   type ConnectionEvent,
   type ConnectionState,
-} from '../../domain/connection'
+} from '../../src/domain/connection'
 import {
   disconnectedTransport,
   LoopbackTransportLayer,
   makeLoopbackPair,
   sendMessage,
-} from '../../domain/transport'
+} from '../../src/domain/transport'
 import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
@@ -41,7 +41,7 @@ import {
   PlayerName,
   WorldId,
   type NetworkMessage,
-} from '../../domain/protocol'
+} from '../../src/domain/protocol'
 
 const pad = (text: string, width: number): string =>
   text.length >= width ? text : text + ' '.repeat(width - text.length)
