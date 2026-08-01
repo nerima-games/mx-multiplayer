@@ -1,5 +1,5 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - '@nerima-games/mc-kernel@0.2.8'
-  - '@nerima-games/mc-sim@0.1.24'
+  - '@nerima-games/mc-kernel@0.2.8 || 0.2.9'
+  - '@nerima-games/mc-sim@0.1.24 || 0.1.25'
