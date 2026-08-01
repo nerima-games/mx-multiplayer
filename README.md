@@ -2,7 +2,7 @@
 
 ## 責務
 
-ネットワーク同期の **トランスポートとプロトコルだけ** を持つ(plan.md §3.14)。
+ネットワーク同期の **トランスポート、プロトコル、受信スナップショット補間** を持つ(plan.md §3.14)。
 
 サーバ一覧・接続ダイアログ・ロスター表示といったマルチプレイヤー**画面**は mx-ui の所有物であり、
 ここには無い。詳細は [docs/responsibility.md](./docs/responsibility.md)。
@@ -99,6 +99,17 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11(`corepack` 推奨)を�
 | `pnpm api:check` | `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了（[`docs/public-api.md`](./docs/public-api.md) §6） |
 | `pnpm api:update` | `api-lock.md` を書き直す。公開面を変える PR は結果を同じ PR に含める |
 | `pnpm verify` | `typecheck && lint && check:deps && api:check && test`。CI と同じ内容 |
+
+### スナップショット補間
+
+`SnapshotInterpolator` はプレイヤーごとに sequence/tick 順の受信履歴を保持し、描画 tick の
+決定的な姿勢を返す。重複・遅延・逆順パケットは破棄し、履歴長は設定値で上限を持つ。
+大きな位置差は補間せず、設定した teleport 距離でスナップする。切断時は `disconnect` で
+対象プレイヤー、または全履歴を削除する。
+
+これは protocol v1 の wire format を変更しない受信側コンポーネントである。sequence と tick は
+サーバや上位の同期処理がスナップショットへ付与する。API と利用例は
+[docs/public-api.md](./docs/public-api.md) を参照。
 
 ## 現状
 

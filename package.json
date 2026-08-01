@@ -1,8 +1,8 @@
 {
   "name": "@nerima-games/mx-multiplayer",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
-  "description": "Network synchronisation for the nerima-games Minecraft-clone rebuild: wire protocol, frame codec, connection state machine and the transport Port. Transport and protocol only — multiplayer screens belong to mx-ui.",
+  "description": "Network synchronisation for the nerima-games Minecraft-clone rebuild: wire protocol, frame codec, connection state machine, snapshot interpolation and the transport Port. Multiplayer screens belong to mx-ui.",
   "homepage": "https://github.com/nerima-games/mx-multiplayer#readme",
   "repository": {
     "type": "git",

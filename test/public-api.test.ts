@@ -42,6 +42,8 @@ describe('public API surface', () => {
         'makeLoopbackPair',
         'LoopbackTransportLayer',
         'disconnectedTransport',
+        // deterministic client-side snapshot interpolation
+        'SnapshotInterpolator',
         // stages — what mc-compose merges and what a consumer names
         'MULTIPLAYER_STAGE_IDS',
         'UPSTREAM_STAGE_IDS',
