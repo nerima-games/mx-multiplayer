@@ -6,6 +6,7 @@ import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
   CommandId,
+  EntityId,
   PlayerId,
   PlayerName,
   WorldTimeWeatherAction,
@@ -18,6 +19,8 @@ const overworld = WorldId.make('overworld')
 const commandId = CommandId.make('command-1')
 const commandHeader = { commandId, player: alice, world: overworld, expectedRevision: 12 }
 const item = { item: 'stone', count: 2 }
+const entityId = EntityId.make('entity-1')
+const living = { _tag: 'living' as const, entityId, entityType: 'zombie', at: { x: 1, y: 64, z: 1 }, health: 20, maxHealth: 20 }
 
 /**
  * One sample per message tag. `SAMPLES` is keyed by tag so that the
@@ -73,7 +76,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     _tag: 'AuthoritativeSnapshot', world: overworld, revision: 12,
     inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }],
     vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }],
-    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [],
+    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [living],
   },
   PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: overworld, revision: 13, player: alice, state: { slots: [item], selectedSlot: 0 } },
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: overworld, revision: 13, player: alice, state: { health: 19, hunger: 18, experience: 1 } },
@@ -81,12 +84,18 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'chest:1', slots: [item] } },
   FurnaceDelta: { _tag: 'FurnaceDelta', world: overworld, revision: 13, state: { furnaceId: 'furnace:1', input: item, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
   VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: overworld, revision: 13, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [item], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
+  EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: overworld, revision: 13, entity: living },
+  EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: overworld, revision: 13, entity: { ...living, health: 19 } },
+  EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: overworld, revision: 13, entityId },
   PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 2 } },
   PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...commandHeader, action: { _tag: 'activity', activity: 'swim', amount: 3 } },
   WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 6000 } },
   ContainerCommand: { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'open' } },
   FurnaceCommand: { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 3 }, count: 1 } },
   VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...commandHeader, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
+  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...commandHeader, entityId },
+  EntityPickupCommand: { _tag: 'EntityPickupCommand', ...commandHeader, entityId },
+  VehicleCommand: { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', at: { x: 2, y: 64, z: 2 } } },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, world: overworld, revision: 13 },
   AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, world: overworld, revision: 12, reason: 'stale-revision', resyncRequired: true },
   AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', world: overworld, lastKnownRevision: 12 },

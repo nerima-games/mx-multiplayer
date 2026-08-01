@@ -65,6 +65,10 @@ export type WorldId = typeof WorldId.Type
 export const CommandId = Schema.String.pipe(Schema.minLength(1), Schema.brand('CommandId'))
 export type CommandId = typeof CommandId.Type
 
+/** Stable identity of a server-owned world entity. */
+export const EntityId = Schema.String.pipe(Schema.minLength(1), Schema.brand('EntityId'))
+export type EntityId = typeof EntityId.Type
+
 export const Revision = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
 export type Revision = typeof Revision.Type
 
@@ -274,6 +278,31 @@ const VillagerTradeState = Schema.Struct({
   ),
 })
 
+export const LivingEntityState = Schema.TaggedStruct('living', {
+  entityId: EntityId,
+  entityType: Schema.String.pipe(Schema.minLength(1)),
+  at: Vec3,
+  health: Schema.Number.pipe(Schema.finite(), Schema.positive()),
+  maxHealth: Schema.Number.pipe(Schema.finite(), Schema.positive()),
+})
+export const ItemDropEntityState = Schema.TaggedStruct('item-drop', {
+  entityId: EntityId,
+  at: Vec3,
+  stack: ItemStack,
+})
+export const VehicleEntityState = Schema.TaggedStruct('vehicle', {
+  entityId: EntityId,
+  vehicleType: Schema.String.pipe(Schema.minLength(1)),
+  at: Vec3,
+  occupant: Schema.NullOr(PlayerId),
+})
+export const AuthoritativeEntityState = Schema.Union(
+  LivingEntityState,
+  ItemDropEntityState,
+  VehicleEntityState,
+)
+export type AuthoritativeEntityState = typeof AuthoritativeEntityState.Type
+
 /** Complete server state used for initial connection and reconnect recovery. */
 export const AuthoritativeSnapshot = Schema.TaggedStruct('AuthoritativeSnapshot', {
   world: WorldId,
@@ -284,6 +313,7 @@ export const AuthoritativeSnapshot = Schema.TaggedStruct('AuthoritativeSnapshot'
   containers: Schema.Array(ContainerState),
   furnaces: Schema.Array(FurnaceState),
   villagerTrades: Schema.Array(VillagerTradeState),
+  entities: Schema.optional(Schema.Array(AuthoritativeEntityState)),
 })
 export type AuthoritativeSnapshot = typeof AuthoritativeSnapshot.Type
 
@@ -314,6 +344,18 @@ export const VillagerTradeDelta = Schema.TaggedStruct('VillagerTradeDelta', {
   ...DeltaHeader,
   state: VillagerTradeState,
 })
+export const EntitySpawnDelta = Schema.TaggedStruct('EntitySpawnDelta', {
+  ...DeltaHeader,
+  entity: AuthoritativeEntityState,
+})
+export const EntityUpdateDelta = Schema.TaggedStruct('EntityUpdateDelta', {
+  ...DeltaHeader,
+  entity: AuthoritativeEntityState,
+})
+export const EntityDespawnDelta = Schema.TaggedStruct('EntityDespawnDelta', {
+  ...DeltaHeader,
+  entityId: EntityId,
+})
 export const AuthoritativeDelta = Schema.Union(
   PlayerInventoryDelta,
   PlayerVitalsDelta,
@@ -321,6 +363,9 @@ export const AuthoritativeDelta = Schema.Union(
   ContainerDelta,
   FurnaceDelta,
   VillagerTradeDelta,
+  EntitySpawnDelta,
+  EntityUpdateDelta,
+  EntityDespawnDelta,
 )
 export type AuthoritativeDelta = typeof AuthoritativeDelta.Type
 
@@ -440,6 +485,22 @@ export const VillagerTradeCommand = Schema.TaggedStruct('VillagerTradeCommand', 
   offerId: Schema.String.pipe(Schema.minLength(1)),
   action: Schema.Literal('execute-trade'),
 })
+export const EntityAttackCommand = Schema.TaggedStruct('EntityAttackCommand', {
+  ...CommandHeader,
+  entityId: EntityId,
+})
+export const EntityPickupCommand = Schema.TaggedStruct('EntityPickupCommand', {
+  ...CommandHeader,
+  entityId: EntityId,
+})
+export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
+  ...CommandHeader,
+  entityId: EntityId,
+  action: Schema.Union(
+    Schema.Literal('mount', 'dismount'),
+    Schema.TaggedStruct('move', { at: Vec3 }),
+  ),
+})
 export const AuthoritativeCommand = Schema.Union(
   PlayerInventoryCommand,
   PlayerVitalsCommand,
@@ -447,6 +508,9 @@ export const AuthoritativeCommand = Schema.Union(
   ContainerCommand,
   FurnaceCommand,
   VillagerTradeCommand,
+  EntityAttackCommand,
+  EntityPickupCommand,
+  VehicleCommand,
 )
 export type AuthoritativeCommand = typeof AuthoritativeCommand.Type
 
@@ -458,6 +522,10 @@ export const CommandRejectionReason = Schema.Literal(
   'resource-not-found',
   'insufficient-items',
   'offer-exhausted',
+  'out-of-range',
+  'entity-dead',
+  'not-mounted',
+  'vehicle-occupied',
 )
 export type CommandRejectionReason = typeof CommandRejectionReason.Type
 export const AuthoritativeCommandAccepted = Schema.TaggedStruct('AuthoritativeCommandAccepted', {
@@ -547,12 +615,18 @@ export const MESSAGE_TAGS = [
   'ContainerDelta',
   'FurnaceDelta',
   'VillagerTradeDelta',
+  'EntitySpawnDelta',
+  'EntityUpdateDelta',
+  'EntityDespawnDelta',
   'PlayerInventoryCommand',
   'PlayerVitalsCommand',
   'WorldTimeWeatherCommand',
   'ContainerCommand',
   'FurnaceCommand',
   'VillagerTradeCommand',
+  'EntityAttackCommand',
+  'EntityPickupCommand',
+  'VehicleCommand',
   'AuthoritativeCommandAccepted',
   'AuthoritativeCommandRejected',
   'AuthoritativeResyncRequest',

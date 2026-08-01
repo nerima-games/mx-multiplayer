@@ -439,6 +439,23 @@ describe('the stages are re-entrant and hold nothing globally', () => {
 })
 
 describe('production host integration seam', () => {
+  it('shares inbound state across separate Effect runtimes', () => {
+    const [left, peer] = Effect.runSync(makeLoopbackPair)
+    const host = Effect.runSync(makeMultiplayerHost.pipe(
+      Effect.provideService(TransportPort, left),
+    ))
+    const frame = Either.getOrThrow(encodeFrame(chat))
+
+    Effect.runSync(peer.send(frame))
+    expect(Effect.runSync(host.drainInbound)).toStrictEqual([])
+
+    const inbound = host.stages.find((stage) => stage.id === MULTIPLAYER_STAGE_IDS.inbound)
+    Effect.runSync(runStage(inbound))
+
+    expect(Effect.runSync(host.drainInbound)).toStrictEqual([chat])
+    expect(Effect.runSync(host.drainInbound)).toStrictEqual([])
+  })
+
   it.effect('drains only messages processed by the inbound stage, once', () =>
     Effect.gen(function* () {
       const [left, peer] = yield* makeLoopbackPair

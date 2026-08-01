@@ -39,6 +39,7 @@ import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
   CommandId,
+  EntityId,
   PlayerId,
   PlayerName,
   WorldId,
@@ -60,6 +61,8 @@ const OVERWORLD = WorldId.make('overworld')
 const COMMAND_ID = CommandId.make('command-1')
 const COMMAND_HEADER = { commandId: COMMAND_ID, player: ALICE, world: OVERWORLD, expectedRevision: 1 }
 const ITEM = { item: 'stone', count: 2 }
+const ENTITY_ID = EntityId.make('entity-1')
+const ENTITY = { _tag: 'living' as const, entityId: ENTITY_ID, entityType: 'zombie', at: { x: 1, y: 64, z: 1 }, health: 20, maxHealth: 20 }
 
 /** One sample per tag, so a check can sweep the whole message set. */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
@@ -104,7 +107,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     _tag: 'AuthoritativeSnapshot', world: OVERWORLD, revision: 1,
     inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
     vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }],
-    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [],
+    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [ENTITY],
   },
   PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } },
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { health: 19, hunger: 18, experience: 0 } },
@@ -112,12 +115,18 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   ContainerDelta: { _tag: 'ContainerDelta', world: OVERWORLD, revision: 2, state: { containerId: 'chest:1', slots: [ITEM] } },
   FurnaceDelta: { _tag: 'FurnaceDelta', world: OVERWORLD, revision: 2, state: { furnaceId: 'furnace:1', input: ITEM, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
   VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: OVERWORLD, revision: 2, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [ITEM], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
+  EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: OVERWORLD, revision: 2, entity: ENTITY },
+  EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: OVERWORLD, revision: 2, entity: { ...ENTITY, health: 19 } },
+  EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: OVERWORLD, revision: 2, entityId: ENTITY_ID },
   PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...COMMAND_HEADER, action: { _tag: 'select-slot', slot: 0 } },
   PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...COMMAND_HEADER, action: 'respawn' },
   WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...COMMAND_HEADER, action: { _tag: 'set-time', timeOfDay: 6000 } },
   ContainerCommand: { _tag: 'ContainerCommand', ...COMMAND_HEADER, containerId: 'chest:1', action: { _tag: 'open' } },
   FurnaceCommand: { _tag: 'FurnaceCommand', ...COMMAND_HEADER, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
   VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...COMMAND_HEADER, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
+  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  VehicleCommand: { _tag: 'VehicleCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, action: 'mount' },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId: COMMAND_ID, world: OVERWORLD, revision: 2 },
   AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId: COMMAND_ID, world: OVERWORLD, revision: 1, reason: 'stale-revision', resyncRequired: true },
   AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', world: OVERWORLD, lastKnownRevision: 1 },
