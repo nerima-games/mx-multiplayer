@@ -38,6 +38,7 @@ import {
 import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
+  CommandId,
   PlayerId,
   PlayerName,
   WorldId,
@@ -56,6 +57,9 @@ type Check = {
 
 const ALICE = PlayerId.make('alice')
 const OVERWORLD = WorldId.make('overworld')
+const COMMAND_ID = CommandId.make('command-1')
+const COMMAND_HEADER = { commandId: COMMAND_ID, player: ALICE, world: OVERWORLD, expectedRevision: 1 }
+const ITEM = { item: 'stone', count: 2 }
 
 /** One sample per tag, so a check can sweep the whole message set. */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
@@ -96,6 +100,27 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     reason: 'occupied',
     revision: 1,
   },
+  AuthoritativeSnapshot: {
+    _tag: 'AuthoritativeSnapshot', world: OVERWORLD, revision: 1,
+    inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
+    vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }],
+    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [],
+  },
+  PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } },
+  PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { health: 19, hunger: 18, experience: 0 } },
+  WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: OVERWORLD, revision: 2, state: { timeOfDay: 7000, weather: 'rain' } },
+  ContainerDelta: { _tag: 'ContainerDelta', world: OVERWORLD, revision: 2, state: { containerId: 'chest:1', slots: [ITEM] } },
+  FurnaceDelta: { _tag: 'FurnaceDelta', world: OVERWORLD, revision: 2, state: { furnaceId: 'furnace:1', input: ITEM, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
+  VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: OVERWORLD, revision: 2, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [ITEM], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
+  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...COMMAND_HEADER, action: 'select-slot' },
+  PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...COMMAND_HEADER, action: 'respawn' },
+  WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...COMMAND_HEADER, action: 'set-time' },
+  ContainerCommand: { _tag: 'ContainerCommand', ...COMMAND_HEADER, containerId: 'chest:1', action: 'open' },
+  FurnaceCommand: { _tag: 'FurnaceCommand', ...COMMAND_HEADER, furnaceId: 'furnace:1', action: 'take-output' },
+  VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...COMMAND_HEADER, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
+  AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId: COMMAND_ID, world: OVERWORLD, revision: 2 },
+  AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId: COMMAND_ID, world: OVERWORLD, revision: 1, reason: 'stale-revision', resyncRequired: true },
+  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', world: OVERWORLD, lastKnownRevision: 1 },
   Ping: { _tag: 'Ping', nonce: 7 },
   Pong: { _tag: 'Pong', nonce: 7 },
 }

@@ -17,6 +17,7 @@
 
 export * from './domain/codec'
 export * from './domain/authoritative-sync'
+export * from './domain/authoritative-session'
 export * from './domain/connection'
 export * from './domain/errors'
 export * from './domain/protocol'

@@ -61,6 +61,13 @@ export type PlayerName = typeof PlayerName.Type
 export const WorldId = Schema.String.pipe(Schema.minLength(1), Schema.brand('WorldId'))
 export type WorldId = typeof WorldId.Type
 
+/** Stable client-generated identity used to make command retries idempotent. */
+export const CommandId = Schema.String.pipe(Schema.minLength(1), Schema.brand('CommandId'))
+export type CommandId = typeof CommandId.Type
+
+export const Revision = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
+export type Revision = typeof Revision.Type
+
 /**
  * A continuous position. `finite()` is load-bearing: `JSON.stringify(NaN)` is
  * the literal `null`, so an unconstrained number silently becomes a decode
@@ -219,6 +226,182 @@ export const BlockMutationRejected = Schema.TaggedStruct('BlockMutationRejected'
 })
 export type BlockMutationRejected = typeof BlockMutationRejected.Type
 
+const ItemStack = Schema.Struct({
+  item: Schema.String.pipe(Schema.minLength(1)),
+  count: Schema.Number.pipe(Schema.int(), Schema.positive()),
+})
+
+const InventoryState = Schema.Struct({
+  slots: Schema.Array(Schema.NullOr(ItemStack)),
+  selectedSlot: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+})
+
+const VitalsState = Schema.Struct({
+  health: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  hunger: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  experience: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+})
+
+const TimeWeatherState = Schema.Struct({
+  timeOfDay: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  weather: Schema.Literal('clear', 'rain', 'thunder'),
+})
+
+const ContainerState = Schema.Struct({
+  containerId: Schema.String.pipe(Schema.minLength(1)),
+  slots: Schema.Array(Schema.NullOr(ItemStack)),
+})
+
+const FurnaceState = Schema.Struct({
+  furnaceId: Schema.String.pipe(Schema.minLength(1)),
+  input: Schema.NullOr(ItemStack),
+  fuel: Schema.NullOr(ItemStack),
+  output: Schema.NullOr(ItemStack),
+  burnTicksRemaining: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  cookTicks: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+})
+
+const VillagerTradeState = Schema.Struct({
+  villagerId: Schema.String.pipe(Schema.minLength(1)),
+  offers: Schema.Array(
+    Schema.Struct({
+      offerId: Schema.String.pipe(Schema.minLength(1)),
+      input: Schema.Array(ItemStack),
+      output: ItemStack,
+      uses: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+      maxUses: Schema.Number.pipe(Schema.int(), Schema.positive()),
+    }),
+  ),
+})
+
+/** Complete server state used for initial connection and reconnect recovery. */
+export const AuthoritativeSnapshot = Schema.TaggedStruct('AuthoritativeSnapshot', {
+  world: WorldId,
+  revision: Revision,
+  inventories: Schema.Array(Schema.Struct({ player: PlayerId, state: InventoryState })),
+  vitals: Schema.Array(Schema.Struct({ player: PlayerId, state: VitalsState })),
+  timeWeather: TimeWeatherState,
+  containers: Schema.Array(ContainerState),
+  furnaces: Schema.Array(FurnaceState),
+  villagerTrades: Schema.Array(VillagerTradeState),
+})
+export type AuthoritativeSnapshot = typeof AuthoritativeSnapshot.Type
+
+const DeltaHeader = { world: WorldId, revision: Revision }
+export const PlayerInventoryDelta = Schema.TaggedStruct('PlayerInventoryDelta', {
+  ...DeltaHeader,
+  player: PlayerId,
+  state: InventoryState,
+})
+export const PlayerVitalsDelta = Schema.TaggedStruct('PlayerVitalsDelta', {
+  ...DeltaHeader,
+  player: PlayerId,
+  state: VitalsState,
+})
+export const WorldTimeWeatherDelta = Schema.TaggedStruct('WorldTimeWeatherDelta', {
+  ...DeltaHeader,
+  state: TimeWeatherState,
+})
+export const ContainerDelta = Schema.TaggedStruct('ContainerDelta', {
+  ...DeltaHeader,
+  state: ContainerState,
+})
+export const FurnaceDelta = Schema.TaggedStruct('FurnaceDelta', {
+  ...DeltaHeader,
+  state: FurnaceState,
+})
+export const VillagerTradeDelta = Schema.TaggedStruct('VillagerTradeDelta', {
+  ...DeltaHeader,
+  state: VillagerTradeState,
+})
+export const AuthoritativeDelta = Schema.Union(
+  PlayerInventoryDelta,
+  PlayerVitalsDelta,
+  WorldTimeWeatherDelta,
+  ContainerDelta,
+  FurnaceDelta,
+  VillagerTradeDelta,
+)
+export type AuthoritativeDelta = typeof AuthoritativeDelta.Type
+
+const CommandHeader = {
+  commandId: CommandId,
+  player: PlayerId,
+  world: WorldId,
+  expectedRevision: Revision,
+}
+export const PlayerInventoryCommand = Schema.TaggedStruct('PlayerInventoryCommand', {
+  ...CommandHeader,
+  action: Schema.Literal('select-slot', 'move-item', 'drop-item'),
+})
+export const PlayerVitalsCommand = Schema.TaggedStruct('PlayerVitalsCommand', {
+  ...CommandHeader,
+  action: Schema.Literal('respawn'),
+})
+export const WorldTimeWeatherCommand = Schema.TaggedStruct('WorldTimeWeatherCommand', {
+  ...CommandHeader,
+  action: Schema.Literal('set-time', 'set-weather'),
+})
+export const ContainerCommand = Schema.TaggedStruct('ContainerCommand', {
+  ...CommandHeader,
+  containerId: Schema.String.pipe(Schema.minLength(1)),
+  action: Schema.Literal('open', 'move-item', 'close'),
+})
+export const FurnaceCommand = Schema.TaggedStruct('FurnaceCommand', {
+  ...CommandHeader,
+  furnaceId: Schema.String.pipe(Schema.minLength(1)),
+  action: Schema.Literal('move-item', 'take-output'),
+})
+export const VillagerTradeCommand = Schema.TaggedStruct('VillagerTradeCommand', {
+  ...CommandHeader,
+  villagerId: Schema.String.pipe(Schema.minLength(1)),
+  offerId: Schema.String.pipe(Schema.minLength(1)),
+  action: Schema.Literal('execute-trade'),
+})
+export const AuthoritativeCommand = Schema.Union(
+  PlayerInventoryCommand,
+  PlayerVitalsCommand,
+  WorldTimeWeatherCommand,
+  ContainerCommand,
+  FurnaceCommand,
+  VillagerTradeCommand,
+)
+export type AuthoritativeCommand = typeof AuthoritativeCommand.Type
+
+export const CommandRejectionReason = Schema.Literal(
+  'unauthorized-player',
+  'invalid-command',
+  'stale-revision',
+  'snapshot-required',
+  'resource-not-found',
+  'insufficient-items',
+  'offer-exhausted',
+)
+export type CommandRejectionReason = typeof CommandRejectionReason.Type
+export const AuthoritativeCommandAccepted = Schema.TaggedStruct('AuthoritativeCommandAccepted', {
+  commandId: CommandId,
+  world: WorldId,
+  revision: Revision,
+})
+export const AuthoritativeCommandRejected = Schema.TaggedStruct('AuthoritativeCommandRejected', {
+  commandId: CommandId,
+  world: WorldId,
+  revision: Revision,
+  reason: CommandRejectionReason,
+  resyncRequired: Schema.Boolean,
+})
+export const AuthoritativeCommandResult = Schema.Union(
+  AuthoritativeCommandAccepted,
+  AuthoritativeCommandRejected,
+)
+export type AuthoritativeCommandResult = typeof AuthoritativeCommandResult.Type
+
+export const AuthoritativeResyncRequest = Schema.TaggedStruct('AuthoritativeResyncRequest', {
+  world: WorldId,
+  lastKnownRevision: Schema.optional(Revision),
+})
+export type AuthoritativeResyncRequest = typeof AuthoritativeResyncRequest.Type
+
 /**
  * Liveness probe.
  *
@@ -254,6 +437,11 @@ export const NetworkMessage = Schema.Union(
   WorldInfo,
   WorldSnapshot,
   BlockMutationRejected,
+  AuthoritativeSnapshot,
+  AuthoritativeDelta,
+  AuthoritativeCommand,
+  AuthoritativeCommandResult,
+  AuthoritativeResyncRequest,
   Ping,
   Pong,
 )
@@ -270,6 +458,22 @@ export const MESSAGE_TAGS = [
   'WorldInfo',
   'WorldSnapshot',
   'BlockMutationRejected',
+  'AuthoritativeSnapshot',
+  'PlayerInventoryDelta',
+  'PlayerVitalsDelta',
+  'WorldTimeWeatherDelta',
+  'ContainerDelta',
+  'FurnaceDelta',
+  'VillagerTradeDelta',
+  'PlayerInventoryCommand',
+  'PlayerVitalsCommand',
+  'WorldTimeWeatherCommand',
+  'ContainerCommand',
+  'FurnaceCommand',
+  'VillagerTradeCommand',
+  'AuthoritativeCommandAccepted',
+  'AuthoritativeCommandRejected',
+  'AuthoritativeResyncRequest',
   'Ping',
   'Pong',
 ] as const satisfies ReadonlyArray<NetworkMessage['_tag']>
