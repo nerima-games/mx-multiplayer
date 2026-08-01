@@ -330,9 +330,84 @@ const CommandHeader = {
   world: WorldId,
   expectedRevision: Revision,
 }
+
+export const CommandSlotIndex = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
+export const CommandItemCount = Schema.Number.pipe(Schema.int(), Schema.positive())
+
+const strictAction = { parseOptions: { onExcessProperty: 'error' as const } }
+
+export const PlayerInventoryAction = Schema.Union(
+  Schema.TaggedStruct('select-slot', { slot: CommandSlotIndex }),
+  Schema.TaggedStruct('move-item', {
+    source: CommandSlotIndex,
+    destination: CommandSlotIndex,
+    count: CommandItemCount,
+  }),
+  Schema.TaggedStruct('drop-item', {
+    source: CommandSlotIndex,
+    destination: Schema.Literal('world'),
+    count: CommandItemCount,
+  }),
+).annotations(strictAction)
+export type PlayerInventoryAction = typeof PlayerInventoryAction.Type
+
+export const WorldTimeWeatherAction = Schema.Union(
+  Schema.TaggedStruct('set-time', { timeOfDay: Schema.Number.pipe(Schema.int(), Schema.nonNegative()) }),
+  Schema.TaggedStruct('set-weather', { weather: Schema.Literal('clear', 'rain', 'thunder') }),
+).annotations(strictAction)
+export type WorldTimeWeatherAction = typeof WorldTimeWeatherAction.Type
+
+export const PlayerSlotEndpoint = Schema.TaggedStruct('player-slot', { slot: CommandSlotIndex })
+export type PlayerSlotEndpoint = typeof PlayerSlotEndpoint.Type
+export const ContainerSlotEndpoint = Schema.TaggedStruct('container-slot', { slot: CommandSlotIndex })
+export type ContainerSlotEndpoint = typeof ContainerSlotEndpoint.Type
+
+export const ContainerAction = Schema.Union(
+  Schema.TaggedStruct('open', {}),
+  Schema.TaggedStruct('move-item', {
+    source: PlayerSlotEndpoint,
+    destination: ContainerSlotEndpoint,
+    count: CommandItemCount,
+  }),
+  Schema.TaggedStruct('move-item', {
+    source: ContainerSlotEndpoint,
+    destination: PlayerSlotEndpoint,
+    count: CommandItemCount,
+  }),
+  Schema.TaggedStruct('close', {}),
+).annotations(strictAction)
+export type ContainerAction = typeof ContainerAction.Type
+
+export const FurnaceSlotEndpoint = Schema.TaggedStruct('furnace-slot', {
+  slot: Schema.Literal('input', 'fuel'),
+})
+export type FurnaceSlotEndpoint = typeof FurnaceSlotEndpoint.Type
+const FurnaceOutputEndpoint = Schema.TaggedStruct('furnace-slot', {
+  slot: Schema.Literal('output'),
+})
+
+export const FurnaceAction = Schema.Union(
+  Schema.TaggedStruct('move-item', {
+    source: PlayerSlotEndpoint,
+    destination: FurnaceSlotEndpoint,
+    count: CommandItemCount,
+  }),
+  Schema.TaggedStruct('move-item', {
+    source: FurnaceSlotEndpoint,
+    destination: PlayerSlotEndpoint,
+    count: CommandItemCount,
+  }),
+  Schema.TaggedStruct('take-output', {
+    source: FurnaceOutputEndpoint,
+    destination: PlayerSlotEndpoint,
+    count: CommandItemCount,
+  }),
+).annotations(strictAction)
+export type FurnaceAction = typeof FurnaceAction.Type
+
 export const PlayerInventoryCommand = Schema.TaggedStruct('PlayerInventoryCommand', {
   ...CommandHeader,
-  action: Schema.Literal('select-slot', 'move-item', 'drop-item'),
+  action: PlayerInventoryAction,
 })
 export const PlayerVitalsCommand = Schema.TaggedStruct('PlayerVitalsCommand', {
   ...CommandHeader,
@@ -340,17 +415,17 @@ export const PlayerVitalsCommand = Schema.TaggedStruct('PlayerVitalsCommand', {
 })
 export const WorldTimeWeatherCommand = Schema.TaggedStruct('WorldTimeWeatherCommand', {
   ...CommandHeader,
-  action: Schema.Literal('set-time', 'set-weather'),
+  action: WorldTimeWeatherAction,
 })
 export const ContainerCommand = Schema.TaggedStruct('ContainerCommand', {
   ...CommandHeader,
   containerId: Schema.String.pipe(Schema.minLength(1)),
-  action: Schema.Literal('open', 'move-item', 'close'),
+  action: ContainerAction,
 })
 export const FurnaceCommand = Schema.TaggedStruct('FurnaceCommand', {
   ...CommandHeader,
   furnaceId: Schema.String.pipe(Schema.minLength(1)),
-  action: Schema.Literal('move-item', 'take-output'),
+  action: FurnaceAction,
 })
 export const VillagerTradeCommand = Schema.TaggedStruct('VillagerTradeCommand', {
   ...CommandHeader,

@@ -29,7 +29,7 @@ const command = (id: string, expectedRevision = 4): AuthoritativeCommand => ({
   player,
   world,
   expectedRevision,
-  action: 'select-slot',
+  action: { _tag: 'select-slot', slot: 0 },
 })
 
 describe('authoritative protocol schemas', () => {
@@ -39,9 +39,9 @@ describe('authoritative protocol schemas', () => {
     const commands: ReadonlyArray<AuthoritativeCommand> = [
       command('inventory'),
       { ...command('vitals'), _tag: 'PlayerVitalsCommand', action: 'respawn' },
-      { ...command('time'), _tag: 'WorldTimeWeatherCommand', action: 'set-time' },
-      { ...command('container'), _tag: 'ContainerCommand', containerId: 'chest:1', action: 'open' },
-      { ...command('furnace'), _tag: 'FurnaceCommand', furnaceId: 'furnace:1', action: 'take-output' },
+      { ...command('time'), _tag: 'WorldTimeWeatherCommand', action: { _tag: 'set-time', timeOfDay: 6000 } },
+      { ...command('container'), _tag: 'ContainerCommand', containerId: 'chest:1', action: { _tag: 'open' } },
+      { ...command('furnace'), _tag: 'FurnaceCommand', furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
       {
         ...command('trade'),
         _tag: 'VillagerTradeCommand',
@@ -66,6 +66,26 @@ describe('authoritative protocol schemas', () => {
         Schema.decodeUnknownEither(AuthoritativeCommand)({ ...command('valid'), commandId: '' }),
       ),
     ).toBe(true)
+
+    const invalidCommands: ReadonlyArray<unknown> = [
+      { ...command('old-action'), action: 'select-slot' },
+      { ...command('missing-slot'), action: { _tag: 'select-slot' } },
+      { ...command('zero-count'), action: { _tag: 'move-item', source: 0, destination: 1, count: 0 } },
+      {
+        ...command('wrong-weather-payload'),
+        _tag: 'WorldTimeWeatherCommand',
+        action: { _tag: 'set-weather', timeOfDay: 6000 },
+      },
+      {
+        ...command('same-side-container'),
+        _tag: 'ContainerCommand',
+        containerId: 'chest:1',
+        action: { _tag: 'move-item', source: { _tag: 'container-slot', slot: 0 }, destination: { _tag: 'container-slot', slot: 1 }, count: 1 },
+      },
+    ]
+    for (const value of invalidCommands) {
+      expect(Either.isLeft(Schema.decodeUnknownEither(AuthoritativeCommand)(value))).toBe(true)
+    }
   })
 })
 
@@ -126,5 +146,34 @@ describe('authoritative command session', () => {
     expect(result).toMatchObject({ reason: 'insufficient-items', resyncRequired: false })
     expect(subject.execute(command('denied'), () => ({ accepted: true }))).toStrictEqual(result)
     expect(subject.revision(world)).toBe(4)
+  })
+
+  it('passes an executable transfer payload unchanged to game rules', () => {
+    const subject = new AuthoritativeSession()
+    subject.restore(snapshot)
+    const transfer: AuthoritativeCommand = {
+      ...command('transfer'),
+      _tag: 'ContainerCommand',
+      containerId: 'chest:1',
+      action: {
+        _tag: 'move-item',
+        source: { _tag: 'player-slot', slot: 0 },
+        destination: { _tag: 'container-slot', slot: 3 },
+        count: 2,
+      },
+    }
+
+    const result = subject.execute(transfer, (received) => {
+      expect(received).toStrictEqual(transfer)
+      if (received._tag !== 'ContainerCommand' || received.action._tag !== 'move-item') {
+        return { accepted: false, reason: 'invalid-command' }
+      }
+      expect(received.action.source).toStrictEqual({ _tag: 'player-slot', slot: 0 })
+      expect(received.action.destination).toStrictEqual({ _tag: 'container-slot', slot: 3 })
+      expect(received.action.count).toBe(2)
+      return { accepted: true }
+    })
+
+    expect(result).toMatchObject({ _tag: 'AuthoritativeCommandAccepted', revision: 5 })
   })
 })

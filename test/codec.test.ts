@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Either, Option } from 'effect'
+import { Effect, Either, Option, Schema } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
 import type { ProtocolError } from '../src/domain/errors'
 import {
@@ -8,6 +8,7 @@ import {
   CommandId,
   PlayerId,
   PlayerName,
+  WorldTimeWeatherAction,
   WorldId,
   type NetworkMessage,
 } from '../src/domain/protocol'
@@ -80,11 +81,11 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'chest:1', slots: [item] } },
   FurnaceDelta: { _tag: 'FurnaceDelta', world: overworld, revision: 13, state: { furnaceId: 'furnace:1', input: item, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
   VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: overworld, revision: 13, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [item], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
-  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: 'select-slot' },
+  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 2 } },
   PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...commandHeader, action: 'respawn' },
-  WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: 'set-time' },
-  ContainerCommand: { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: 'open' },
-  FurnaceCommand: { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: 'take-output' },
+  WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 6000 } },
+  ContainerCommand: { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'open' } },
+  FurnaceCommand: { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 3 }, count: 1 } },
   VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...commandHeader, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, world: overworld, revision: 13 },
   AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, world: overworld, revision: 12, reason: 'stale-revision', resyncRequired: true },
@@ -155,6 +156,27 @@ describe('frame round trip', () => {
 
       for (const message of messages) {
         expect(Either.getOrThrow(decodeFrame(encoded(message)))).toStrictEqual(message)
+      }
+    }),
+  )
+
+  it.effect('preserves executable payloads for every authoritative operation', () =>
+    Effect.sync(() => {
+      const commands: ReadonlyArray<NetworkMessage> = [
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 4 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'move-item', source: 1, destination: 7, count: 2 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'drop-item', source: 7, destination: 'world', count: 1 } },
+        { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 18_000 } },
+        { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-weather', weather: 'thunder' } },
+        { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'move-item', source: { _tag: 'player-slot', slot: 1 }, destination: { _tag: 'container-slot', slot: 5 }, count: 2 } },
+        { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'move-item', source: { _tag: 'container-slot', slot: 5 }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 } },
+        { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'move-item', source: { _tag: 'player-slot', slot: 1 }, destination: { _tag: 'furnace-slot', slot: 'input' }, count: 2 } },
+        { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'move-item', source: { _tag: 'furnace-slot', slot: 'fuel' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 } },
+        { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 } },
+      ]
+
+      for (const original of commands) {
+        expect(Either.getOrThrow(decodeFrame(encoded(original)))).toStrictEqual(original)
       }
     }),
   )
@@ -347,6 +369,86 @@ describe('malformed input', () => {
       expect(rejected(text)?.reason).toBe('malformed-frame')
     }),
   )
+
+  it.effect('rejects command actions whose discriminant and payload cannot be executed', () =>
+    Effect.sync(() => {
+      const invalidActions: ReadonlyArray<unknown> = [
+        'select-slot',
+        { _tag: 'select-slot' },
+        { _tag: 'move-item', source: 0, destination: 1, count: 0 },
+        { _tag: 'drop-item', source: 0, destination: 1, count: 1 },
+        { _tag: 'set-time', weather: 'clear' },
+        { _tag: 'set-weather', weather: 'snow' },
+      ]
+
+      for (const action of invalidActions) {
+        const messageTag = typeof action === 'object' && action !== null && '_tag' in action &&
+            (action._tag === 'set-time' || action._tag === 'set-weather')
+          ? 'WorldTimeWeatherCommand'
+          : 'PlayerInventoryCommand'
+        const text = JSON.stringify({
+          protocolVersion: PROTOCOL_VERSION,
+          message: { _tag: messageTag, ...commandHeader, action },
+        })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  it.effect('rejects impossible container and furnace transfer directions', () =>
+    Effect.sync(() => {
+      const invalidCommands = [
+        {
+          _tag: 'ContainerCommand',
+          ...commandHeader,
+          containerId: 'chest:1',
+          action: { _tag: 'move-item', source: { _tag: 'player-slot', slot: 0 }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 },
+        },
+        {
+          _tag: 'FurnaceCommand',
+          ...commandHeader,
+          furnaceId: 'furnace:1',
+          action: { _tag: 'move-item', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 },
+        },
+        {
+          _tag: 'FurnaceCommand',
+          ...commandHeader,
+          furnaceId: 'furnace:1',
+          action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'input' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 },
+        },
+      ]
+
+      for (const message of invalidCommands) {
+        const text = JSON.stringify({ protocolVersion: PROTOCOL_VERSION, message })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  it.effect('rejects payload fields from a different action instead of stripping them', () =>
+    Effect.sync(() => {
+      const text = JSON.stringify({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          _tag: 'WorldTimeWeatherCommand',
+          ...commandHeader,
+          action: { _tag: 'set-time', timeOfDay: 6000, weather: 'rain' },
+        },
+      })
+
+      expect(rejected(text)?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it('applies action-level excess-property rejection without decoder options', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(WorldTimeWeatherAction)({
+        _tag: 'set-time',
+        timeOfDay: 6_000,
+        weather: 'rain',
+      }),
+    ).toThrow()
+  })
 
   // A block name this build does not know must still DECODE: rejecting it here
   // would turn "your client is older than mine" into a parse error. Deciding
