@@ -411,7 +411,14 @@ export const PlayerInventoryCommand = Schema.TaggedStruct('PlayerInventoryComman
 })
 export const PlayerVitalsCommand = Schema.TaggedStruct('PlayerVitalsCommand', {
   ...CommandHeader,
-  action: Schema.Literal('respawn'),
+  action: Schema.Union(
+    Schema.Literal('respawn'),
+    Schema.TaggedStruct('activity', {
+      activity: Schema.Literal('walk', 'swim', 'jump', 'attack', 'mine'),
+      amount: Schema.Number.pipe(Schema.finite(), Schema.positive(), Schema.lessThanOrEqualTo(100)),
+    }),
+    Schema.TaggedStruct('eat', { item: Schema.String.pipe(Schema.minLength(1)) }),
+  ),
 })
 export const WorldTimeWeatherCommand = Schema.TaggedStruct('WorldTimeWeatherCommand', {
   ...CommandHeader,
