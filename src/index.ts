@@ -22,6 +22,7 @@ export * from './domain/connection'
 export * from './domain/errors'
 export * from './domain/protocol'
 export * from './domain/snapshot-interpolation'
+export * from './domain/survival-authority'
 export * from './domain/transport'
 
 // --- Stages: this repository's contribution to the frame ---------------------
