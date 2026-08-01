@@ -56,56 +56,48 @@ const reasonOf = (text: string): string => {
   return Either.isLeft(result) ? result.left.reason : 'accepted'
 }
 
-describe('M1 — the version is checked AFTER the message shape, not before it', () => {
+describe('M1 — the version is checked before the message shape', () => {
   // DN-1: 「バージョンはメッセージの外側に置く。内側に置くと、未知バージョンの
   // フレームを弾くためにまず『もう存在しないかもしれないメッセージ形状』を
   // パースする必要が生じるため」。`domain/protocol.ts:205-211` repeats it.
   //
-  // `Frame` really does carry the version on the envelope. But `decodeFrame`
-  // (`domain/codec.ts:89-99`) decodes the whole `Frame` — `message:
-  // NetworkMessage` included — and only then compares the version at `:100`. So
-  // the message shape IS parsed first, and a frame from a build one version
-  // ahead is reported as corruption the moment it carries anything this build's
-  // schema does not already accept.
-  //
-  // The two reasons are not interchangeable: DN-1 assigns them opposite
-  // responses. `malformed-frame` drops the frame; `unsupported-protocol-version`
-  // drops the peer and tells the user their client is out of date. A rolling
-  // upgrade — the one scenario DN-1 exists for — therefore reads as "corrupt
-  // data".
+  // `decodeFrame` decodes only this stable envelope first and deliberately
+  // leaves `message` opaque. A supported version then enters the current
+  // `NetworkMessage` decoder; an unsupported version never does.
   const fromTheFuture = (message: unknown): string =>
     JSON.stringify({ protocolVersion: PROTOCOL_VERSION + 1, message })
 
-  it.effect('pins the current behaviour: a v+1 frame carrying a new tag reads as malformed', () =>
+  it.effect('a v+1 frame carrying a new tag reads as an unsupported version', () =>
     Effect.sync(() => {
       // Exactly what a build one version ahead would put on the wire when it
       // adds a message. `docs/design-notes.md` lists `EntitySnapshot` among the
       // reference's 18 message types, so this is the likely first addition.
-      expect(reasonOf(fromTheFuture({ _tag: 'EntitySnapshot', entities: [] }))).toBe('malformed-frame')
-    }),
-  )
-
-  it.effect('pins the current behaviour: a v+1 frame that renamed a field reads as malformed', () =>
-    Effect.sync(() => {
-      expect(reasonOf(fromTheFuture({ _tag: 'Ping', requestId: 7 }))).toBe('malformed-frame')
-    }),
-  )
-
-  it.effect('pins the current behaviour: a v+1 frame that widened a field reads as malformed', () =>
-    Effect.sync(() => {
-      // `WorldInfo.seed` is `int()` here. A newer build allowing a fractional
-      // seed produces a frame this one calls corrupt rather than newer.
-      expect(reasonOf(fromTheFuture({ _tag: 'WorldInfo', world: 'overworld', seed: 1.5 }))).toBe(
-        'malformed-frame',
+      expect(reasonOf(fromTheFuture({ _tag: 'EntitySnapshot', entities: [] }))).toBe(
+        'unsupported-protocol-version',
       )
     }),
   )
 
-  it.effect('the one case that works is a version bump that changes no message', () =>
+  it.effect('a v+1 frame that renamed a field reads as an unsupported version', () =>
     Effect.sync(() => {
-      // Which is why both existing version tests pass: they forge a v+1 frame
-      // around a message THIS build knows. That is the only shape of protocol
-      // bump the check currently handles, and it is the least likely one.
+      expect(reasonOf(fromTheFuture({ _tag: 'Ping', requestId: 7 }))).toBe(
+        'unsupported-protocol-version',
+      )
+    }),
+  )
+
+  it.effect('a v+1 frame that widened a field reads as an unsupported version', () =>
+    Effect.sync(() => {
+      // `WorldInfo.seed` is `int()` here. A newer build allowing a fractional
+      // seed must still be identified as newer before this schema is applied.
+      expect(reasonOf(fromTheFuture({ _tag: 'WorldInfo', world: 'overworld', seed: 1.5 }))).toBe(
+        'unsupported-protocol-version',
+      )
+    }),
+  )
+
+  it.effect('also rejects a version bump whose message still has a known shape', () =>
+    Effect.sync(() => {
       const knownShape = Either.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, ping))
       expect(reasonOf(knownShape)).toBe('unsupported-protocol-version')
     }),

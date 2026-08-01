@@ -32,8 +32,8 @@
  * round trip at the far end, where the frame is no longer available to debug.
  */
 import { Either, Schema } from 'effect'
+import { Frame, NetworkMessage, type NetworkMessage as NetworkMessageType, PROTOCOL_VERSION } from './protocol'
 import { ProtocolError } from './errors'
-import { Frame, PROTOCOL_VERSION, type NetworkMessage } from './protocol'
 
 /**
  * One frame, as text. Exactly one message; framing multiple messages into a
@@ -44,7 +44,17 @@ export type WireText = string
 /** `Frame` viewed through JSON: decoding takes text, encoding produces text. */
 const WireFrame = Schema.parseJson(Frame)
 
-const decodeWireFrame = Schema.decodeUnknownEither(WireFrame)
+/** The stable envelope decoded before inspecting a version-specific message. */
+const WireEnvelope = Schema.parseJson(
+  // eslint-disable-next-line new-cap
+  Schema.Struct({
+    message: Schema.Unknown,
+    protocolVersion: Schema.Number.pipe(Schema.int()),
+  }),
+)
+
+const decodeWireEnvelope = Schema.decodeUnknownEither(WireEnvelope)
+const decodeNetworkMessage = Schema.decodeUnknownEither(NetworkMessage)
 const encodeWireFrame = Schema.encodeEither(WireFrame)
 
 /**
@@ -56,19 +66,19 @@ const encodeWireFrame = Schema.encodeEither(WireFrame)
  */
 export const encodeFrameAsVersion = (
   protocolVersion: number,
-  message: NetworkMessage,
+  message: NetworkMessageType,
 ): Either.Either<WireText, ProtocolError> =>
   Either.mapLeft(
-    encodeWireFrame({ protocolVersion, message }),
+    encodeWireFrame({ message, protocolVersion }),
     (error) =>
       new ProtocolError({
-        reason: 'unencodable-message',
         detail: error.message,
+        reason: 'unencodable-message',
       }),
   )
 
 /** Encode a message into a frame at this build's protocol version. */
-export const encodeFrame = (message: NetworkMessage): Either.Either<WireText, ProtocolError> =>
+export const encodeFrame = (message: NetworkMessageType): Either.Either<WireText, ProtocolError> =>
   encodeFrameAsVersion(PROTOCOL_VERSION, message)
 
 /**
@@ -81,30 +91,40 @@ export const encodeFrame = (message: NetworkMessage): Either.Either<WireText, Pr
  * - `unsupported-protocol-version` — it IS a frame, and it is from a peer this
  *   build cannot talk to. Drop the *peer*, and say so to the user.
  *
- * The version is checked after the structural decode rather than as a
- * `Schema.Literal(PROTOCOL_VERSION)` inside `Frame`, because a literal would
- * report a version mismatch as a structural mismatch and the two need different
- * handling.
+ * The stable envelope is decoded first, with its message left opaque. This lets
+ * an older build reject a future protocol version without trying to understand
+ * that version's message schema. Only a supported version reaches the
+ * `NetworkMessage` decoder.
  */
-export const decodeFrame = (text: WireText): Either.Either<NetworkMessage, ProtocolError> =>
+export const decodeFrame = (text: WireText): Either.Either<NetworkMessageType, ProtocolError> =>
   Either.flatMap(
     Either.mapLeft(
-      decodeWireFrame(text),
+      decodeWireEnvelope(text),
       (error) =>
         new ProtocolError({
-          reason: 'malformed-frame',
           detail: error.message,
+          reason: 'malformed-frame',
         }),
     ),
-    (frame) =>
-      frame.protocolVersion === PROTOCOL_VERSION
-        ? Either.right(frame.message)
-        : Either.left(
-            new ProtocolError({
-              reason: 'unsupported-protocol-version',
-              detail:
-                `peer speaks protocol version ${String(frame.protocolVersion)}, ` +
-                `this build speaks ${String(PROTOCOL_VERSION)}`,
-            }),
-          ),
+    (envelope) => {
+      if (envelope.protocolVersion !== PROTOCOL_VERSION) {
+        return Either.left(
+          new ProtocolError({
+            detail:
+              `peer speaks protocol version ${String(envelope.protocolVersion)}, ` +
+              `this build speaks ${String(PROTOCOL_VERSION)}`,
+            reason: 'unsupported-protocol-version',
+          }),
+        )
+      }
+
+      return Either.mapLeft(
+        decodeNetworkMessage(envelope.message),
+        (error) =>
+          new ProtocolError({
+            detail: error.message,
+            reason: 'malformed-frame',
+          }),
+      )
+    },
   )

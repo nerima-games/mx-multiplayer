@@ -165,6 +165,17 @@ describe('protocol version', () => {
       expect(failure(decodeFrame(older))?.reason).not.toBe('malformed-frame')
     }),
   )
+
+  it.effect('rejects an unknown future message before interpreting its shape', () =>
+    Effect.sync(() => {
+      const futureFrame = JSON.stringify({
+        message: { _tag: 'EntitySnapshot', entities: [{ future: true }] },
+        protocolVersion: PROTOCOL_VERSION + 1,
+      })
+
+      expect(failure(decodeFrame(futureFrame))?.reason).toBe('unsupported-protocol-version')
+    }),
+  )
 })
 
 describe('malformed input', () => {
@@ -182,6 +193,18 @@ describe('malformed input', () => {
       expect(rejected('{}')?.reason).toBe('malformed-frame')
       expect(rejected('[]')?.reason).toBe('malformed-frame')
       expect(rejected('null')?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it.effect('rejects a missing or malformed envelope version', () =>
+    Effect.sync(() => {
+      expect(rejected(JSON.stringify({ message: SAMPLES.Ping }))?.reason).toBe('malformed-frame')
+      expect(
+        rejected(JSON.stringify({ message: SAMPLES.Ping, protocolVersion: '1' }))?.reason,
+      ).toBe('malformed-frame')
+      expect(
+        rejected(JSON.stringify({ message: SAMPLES.Ping, protocolVersion: 1.5 }))?.reason,
+      ).toBe('malformed-frame')
     }),
   )
 
