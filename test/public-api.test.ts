@@ -39,6 +39,7 @@ describe('public API surface', () => {
         'AuthoritativeRevisionTracker',
         // transport
         'TransportPort',
+        'connectionGatedTransport',
         'sendMessage',
         'receiveMessage',
         'makeLoopbackPair',

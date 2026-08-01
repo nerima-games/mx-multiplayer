@@ -29,6 +29,7 @@ import {
   type ConnectionState,
 } from '../../src/domain/connection'
 import {
+  connectionGatedTransport,
   disconnectedTransport,
   LoopbackTransportLayer,
   makeLoopbackPair,
@@ -344,27 +345,16 @@ const terminalIdempotence = Effect.sync((): Check => {
   } satisfies Check
 })
 
-/**
- * "Frames may only be sent from `Connected`. Enforced by `TransportPort`."
- *
- * That is `domain/connection.ts:59`. This measures it. `makeLoopbackPair` is the
- * only transport this repository ships that can succeed, and it holds no
- * reference to a `ConnectionState` at all — it cannot enforce anything, because
- * it has nothing to enforce it against. `disconnectedTransport` refuses every
- * send unconditionally, which is a different property.
- *
- * The gap is not academic. `canSend` exists and is exported, so the invariant is
- * expressible; nothing calls it. `sendMessage` (`domain/transport.ts:53-60`)
- * encodes and writes without consulting a state.
- */
+/** Measure the adapter-level Connected-only transport gate. */
 const sendGuard = Effect.gen(function* () {
   const [client, server] = yield* makeLoopbackPair
 
   const beforeHandshake: ConnectionState = { _tag: 'Connecting', attempt: 1 }
   const closed: ConnectionState = { _tag: 'Closed', reason: 'closed' }
+  const gated = connectionGatedTransport(Effect.succeed(beforeHandshake), client)
 
   const attempt = yield* Effect.either(
-    sendMessage(SAMPLES.Chat).pipe(Effect.provide(LoopbackTransportLayer(client))),
+    sendMessage(SAMPLES.Chat).pipe(Effect.provide(LoopbackTransportLayer(gated))),
   )
   const delivered = yield* Queue.size(server.inbound)
 
@@ -375,7 +365,7 @@ const sendGuard = Effect.gen(function* () {
 
   return {
     id: delivered > 0 ? 'M4' : 'ok',
-    title: 'nothing enforces "frames may only be sent from Connected"',
+    title: 'Connected-only transport gate',
     finding: delivered > 0,
     lines: [
       `  canSend(Connecting)                 ${String(canSend(beforeHandshake))}`,
@@ -384,15 +374,9 @@ const sendGuard = Effect.gen(function* () {
       `  frames waiting at the far end       ${String(delivered)}`,
       `  disconnectedTransport refuses       ${Either.isLeft(refused) ? `yes: ${refused.left._tag}` : 'no'}`,
       '',
-      '  domain/connection.ts:59 says the invariant is "Enforced by `TransportPort`".',
-      '  `makeLoopbackPair` holds no ConnectionState and cannot enforce it; `sendMessage`',
-      '  (domain/transport.ts:53-60) encodes and writes without consulting one.',
-      '  `disconnectedTransport` refuses every send unconditionally, which is a different',
-      '  property — it proves the failure path is typed, not that the guard exists.',
-      '',
-      '  `canSend` is exported and is never called anywhere in the repository, so the invariant',
-      '  is expressible and unexpressed. Either an adapter is the intended enforcement point and',
-      '  the comment should say which one, or `sendMessage` should take the state.',
+      '  `connectionGatedTransport` reads the supplied state for every send and returns a typed',
+      '  TransportError before delegating unless that state is Connected.',
+      '  Raw transports remain available for handshake traffic and backward compatibility.',
     ],
   } satisfies Check
 })

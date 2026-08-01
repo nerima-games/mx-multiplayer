@@ -1,12 +1,14 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Queue } from 'effect'
+import { Effect, Queue, Ref } from 'effect'
 import {
   LoopbackTransportLayer,
+  connectionGatedTransport,
   disconnectedTransport,
   makeLoopbackPair,
   receiveMessage,
   sendMessage,
 } from '../src/domain/transport'
+import type { ConnectionState } from '../src/domain/connection'
 import { PROTOCOL_VERSION, PlayerId, PlayerName, WorldId, type NetworkMessage } from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
@@ -101,6 +103,35 @@ describe('loopback synchronisation', () => {
 })
 
 describe('transport failure', () => {
+  it.effect('gates each send using the current connection state', () =>
+    Effect.gen(function* () {
+      const [client, server] = yield* makeLoopbackPair
+      const state = yield* Ref.make<ConnectionState>({ _tag: 'Connecting', attempt: 1 })
+      const gated = connectionGatedTransport(Ref.get(state), client)
+      const layer = LoopbackTransportLayer(gated)
+
+      const refused = yield* sendMessage(join).pipe(Effect.provide(layer), Effect.either)
+      expect(refused._tag).toBe('Left')
+      if (refused._tag === 'Left') {
+        expect(refused.left).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
+      }
+      expect(yield* Queue.size(server.inbound)).toBe(0)
+
+      yield* Ref.set(state, {
+        _tag: 'Connected',
+        player: alice,
+        world: WorldId.make('overworld'),
+      })
+      yield* sendMessage(join).pipe(Effect.provide(layer))
+      expect(yield* Queue.size(server.inbound)).toBe(1)
+
+      yield* Ref.set(state, { _tag: 'Closed', reason: 'closed' })
+      const closed = yield* sendMessage(move).pipe(Effect.provide(layer), Effect.either)
+      expect(closed._tag).toBe('Left')
+      expect(yield* Queue.size(server.inbound)).toBe(1)
+    }),
+  )
+
   it.effect('surfaces a refused send as a typed TransportError rather than a defect', () =>
     Effect.gen(function* () {
       const transport = yield* disconnectedTransport

@@ -40,6 +40,7 @@ import {
 } from '../src/domain/connection'
 import {
   LoopbackTransportLayer,
+  connectionGatedTransport,
   makeLoopbackPair,
   sendMessage,
 } from '../src/domain/transport'
@@ -198,42 +199,40 @@ describe('M3 — a settled connection rejects the events a real socket delivers 
   )
 })
 
-describe('M4 — nothing enforces "frames may only be sent from Connected"', () => {
-  // `domain/connection.ts:59` says the invariant is "Enforced by
-  // `TransportPort`". `makeLoopbackPair` holds no `ConnectionState` and cannot
-  // enforce anything; `sendMessage` (`domain/transport.ts:53-60`) encodes and
-  // writes without consulting one. `disconnectedTransport` refuses every send
-  // unconditionally, which proves the failure path is typed — a different
-  // property.
-  //
-  // `canSend` is exported, expresses the invariant exactly, and is called
-  // nowhere in the repository.
-  it.effect('pins the current behaviour: a frame sent from Connecting is delivered anyway', () =>
+describe('M4 — the transport boundary enforces Connected-only sending', () => {
+  it.effect('refuses a frame from Connecting with a typed transport failure', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair
       const connecting: ConnectionState = { _tag: 'Connecting', attempt: 1 }
+      const gated = connectionGatedTransport(Effect.succeed(connecting), client)
 
       expect(canSend(connecting)).toBe(false)
-
-      yield* sendMessage(chat).pipe(Effect.provide(LoopbackTransportLayer(client)))
-
-      // The transport neither knew nor asked.
-      expect(yield* Queue.size(server.inbound)).toBe(1)
+      const result = yield* sendMessage(chat).pipe(
+        Effect.provide(LoopbackTransportLayer(gated)),
+        Effect.either,
+      )
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') {
+        expect(result.left).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
+      }
+      expect(yield* Queue.size(server.inbound)).toBe(0)
     }),
   )
 
-  it.effect('pins the current behaviour: a frame sent from Closed is delivered anyway', () =>
+  it.effect('refuses a frame from Closed without producing protocol errors', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair
       const closed: ConnectionState = { _tag: 'Closed', reason: 'closed' }
+      const gated = connectionGatedTransport(Effect.succeed(closed), client)
 
       expect(canSend(closed)).toBe(false)
-
-      yield* sendMessage(chat).pipe(Effect.provide(LoopbackTransportLayer(client)))
-      const arrived = Array.from(yield* Queue.takeAll(server.inbound))
-
-      expect(arrived).toHaveLength(1)
-      expect(Either.isRight(decodeFrame(arrived[0] ?? ''))).toBe(true)
+      const result = yield* sendMessage(chat).pipe(
+        Effect.provide(LoopbackTransportLayer(gated)),
+        Effect.either,
+      )
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') expect(result.left._tag).toBe('TransportError')
+      expect(yield* Queue.size(server.inbound)).toBe(0)
     }),
   )
 })

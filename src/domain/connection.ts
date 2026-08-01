@@ -56,7 +56,7 @@ export type ConnectionEvent =
 
 export const initialConnectionState: ConnectionState = { _tag: 'Disconnected' }
 
-/** Frames may only be sent from `Connected`. Enforced by `TransportPort`. */
+/** Frames may only be sent from `Connected`. Used by the transport and stage gates. */
 export const canSend = (state: ConnectionState): boolean => state._tag === 'Connected'
 
 /** True once the attempt has settled, either way. */

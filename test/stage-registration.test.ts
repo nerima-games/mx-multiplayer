@@ -9,11 +9,8 @@
  *   - the stages move frames and do not read them. plan.md §3.14 confines this
  *     repository to transport and protocol, and DN-9 records what the reference
  *     implementation lost by not holding that line.
- *   - `canSend` is finally called. Finding M4 (`test/preview-findings.test.ts`)
- *     measured that the invariant "frames may only be sent from `Connected`" was
- *     expressible and unexpressed; `multiplayer:outbound` is where it is now
- *     expressed. M4's own pins stay green — they describe `sendMessage`, which
- *     this change deliberately does not touch.
+ *   - the stage applies the same `canSend` invariant as the public transport
+ *     decorator, dropping queued gameplay messages before encoding them.
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Either, Queue, Ref } from 'effect'
@@ -304,7 +301,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
   )
 })
 
-describe('multiplayer:outbound — the first caller of canSend', () => {
+describe('multiplayer:outbound — queue-level connection gate', () => {
   it.effect('sends the outbox when the connection is Connected, and the far end can decode it', () =>
     Effect.gen(function* () {
       const { state, peer, outbound } = yield* registered
@@ -325,7 +322,7 @@ describe('multiplayer:outbound — the first caller of canSend', () => {
   )
 
   it.effect(
-    'REGRESSION (finding M4): a frame is NOT sent from Connecting — `canSend` is consulted, and this is the first place it is',
+    'does not drain a frame from Connecting — `canSend` is consulted before transport',
     () =>
       Effect.gen(function* () {
         const { state, peer, outbound } = yield* registered
@@ -337,10 +334,8 @@ describe('multiplayer:outbound — the first caller of canSend', () => {
         yield* Ref.set(state.outbox, [chat])
         yield* runStage(outbound)
 
-        // `sendMessage` still delivers from `Connecting` — M4's pins say so and
-        // this change does not touch it. What is new is that the FRAME does not
-        // call `sendMessage` blind: the stage holds the state and the messages,
-        // so it can refuse without a Port learning about a state machine.
+        // The stage drops before encoding; adapters independently enforce the
+        // same invariant by providing `connectionGatedTransport` as the Port.
         expect(yield* drainPeer(peer)).toStrictEqual([])
         expect((yield* countersOf(state)).droppedWhileNotConnected).toBe(1)
       }),

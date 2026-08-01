@@ -718,7 +718,7 @@ export const MACHINE_FAULTS: ReadonlyArray<MachineFault> = [
   {
     key: 'w',
     label: 'client: send a Chat right now, whatever the state says',
-    why: 'connection.ts:59 says sending is "Enforced by TransportPort". Is it?',
+    why: 'Raw transport access bypasses the optional connection gate for handshake and compatibility.',
     run: (session) =>
       send(session, 'client', { _tag: 'Chat', player: ALICE, text: 'sent from the wrong state' }),
   },

@@ -158,7 +158,7 @@ machine フォールトは `a`〜`z` で、DN-8 が名指しする 3 本
 | **M1** | **バージョンがメッセージ形状より後に検査されている。** 新しいビルドから来たフレームは、このビルドのスキーマが受け付けない形を含んだ瞬間に `malformed-frame` になる（実測 3/4） | `domain/codec.ts:89-100` |
 | **M2** | `ConnectionState.Connecting.attempt` は常に 1。生成箇所は 2 つだけで、どちらもリテラルを書く。export されており `api-lock.md` にも載っている | `domain/connection.ts:80`, `:116` |
 | **M3** | 決着した接続が、実際のソケットが次に届けるイベント（書き込み失敗の後の close、Disconnect の 2 度押し）を「不正」として拒否する | `domain/connection.ts:113-121` |
-| **M4** | 「Connected からしか送れない」を強制するものが無い。`canSend` は export されていてリポジトリ内のどこからも呼ばれていない | `domain/connection.ts:59` / `domain/transport.ts:53-60` |
+| **M4 (解決済み)** | `connectionGatedTransport` が各 send 時に現在状態を読み、`Connected` 以外を typed `TransportError` で拒否する | `domain/transport.ts` / `test/transport.test.ts` |
 
 ### M1 —— なぜ既存の 2 本が通ってしまうのか
 
@@ -184,10 +184,8 @@ DN-1 の設計は「バージョンはメッセージの**外側**に置く。�
   2 クライアントを回してトランスポートを殺すと 1 回で出る。
   `--fault kill-transport --fault-at 1 --view machine` は、1 本の死んだソケットに対して
   `REJECTED` を 5 行連続で出す。
-- **M4**: `test/transport.test.ts` は `ConnectionState` を import していない。
-  トランスポートのテストと状態機械のテストが別ファイルにあるので、
-  **その 2 つをまたぐ主張**（`domain/connection.ts:59` のコメント）を検査する場所が
-  どこにも無かった。
+- **M4 (解決済み)**: `test/transport.test.ts` が可変な `ConnectionState` と transport を組み合わせ、
+  `Connecting` / `Closed` では未配送、`Connected` では配送されることを同じテストで検査する。
 
 ### 合格したまま残しているチェック
 

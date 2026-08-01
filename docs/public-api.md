@@ -102,6 +102,11 @@ type TransportService = {
 }
 class TransportPort extends Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<...>
 
+const connectionGatedTransport: (
+  state: Effect<ConnectionState>,
+  transport: TransportService,
+) => TransportService
+
 const sendMessage: (message: NetworkMessage) => Effect<void, ProtocolError | TransportError, TransportPort>
 const receiveMessage: Effect<NetworkMessage, ProtocolError, TransportPort>
 
@@ -109,6 +114,11 @@ const makeLoopbackPair: Effect<readonly [TransportService, TransportService]>
 const LoopbackTransportLayer: (service: TransportService) => Layer<TransportPort>
 const disconnectedTransport: Effect<TransportService>
 ```
+
+プラットフォームアダプタは raw transport と現在の `ConnectionState` を
+`connectionGatedTransport` で合成してから `TransportPort` として提供する。`send` ごとに状態を再評価し、
+`Connected` 以外では `TransportError { reason: 'not-connected' }` を返す。raw transport はハンドシェイク用途と
+後方互換性のため残る。
 
 **Port が運ぶのはテキストであってメッセージ値ではない。**
 `send` が `NetworkMessage` を取ると、ループバックはオブジェクトを参照渡しするだけになり、

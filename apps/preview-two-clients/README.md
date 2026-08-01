@@ -97,9 +97,9 @@ $ pnpm preview --once --ascii --script --fault future-message --fault-at 1 --vie
 | **M1** | **バージョンがメッセージ形状より**後に**検査されている** | DN-1 は「バージョンはメッセージの外側に置く。内側に置くと、未知バージョンのフレームを弾くためにまず『もう存在しないかもしれないメッセージ形状』をパースする必要が生じる」と言い、`domain/protocol.ts:205-211` が繰り返している。エンベロープは確かに外側にあるが、`domain/codec.ts:89-99` は `Frame` を**まるごと**（`message: NetworkMessage` を含めて）構造デコードし、バージョン比較は `:100` の後である。結果、**新しいビルドから来たフレームは、このビルドのスキーマが受け付けない形を含んだ瞬間に `malformed-frame` になる**。実測 3/4。2 つの判定は交換可能ではない —— DN-1 は前者に「フレームを捨てる」、後者に「**ピア**を切ってユーザにそう伝える」を割り当てている。ローリングアップグレード（DN-1 が存在する唯一の理由）が「パケットが壊れています」として出る |
 | **M2** | **`ConnectionState.Connecting.attempt` は常に 1** | 生成箇所は `domain/connection.ts:80` と `:116` の 2 つだけで、どちらもリテラル `1` を書く。前の attempt を読むものも増やすものも無い。7 回試行して観測値は `[1,1,1,1,1,1,1]`。このフィールドは export されており `api-lock.md` にも載っているので、mx-ui は永久に「attempt 1」を描ける。DN-8 の「試行回数**上限**を持たない」は正しい（上限は `Schedule` でアダプタのもの）が、**進行中の試行の序数**は別物で、機械が入口で上書きするのでアダプタからは供給できない |
 | **M3** | **決着した接続が、実際のソケットが次に届けるイベントを拒否する** | `Closed + PeerClosed`、`Closed + TransportFailed`、`Disconnected + CloseRequested` がすべて `undefined`。しかしソケットは書き込み失敗と close を**両方**届けるし、ユーザは Disconnect を 2 回押す。`domain/connection.ts:16-21` は「`undefined` を受け取った呼び出し側は自分のロジックのバグを見つけたのだ」と書いているが、この 3 つに呼び出し側のバグは無い。**遷移の間違いではなく契約の問題**である —— 決着後はこれらを合法かつ冪等にするか、`undefined` に第 3 の意味（「もう処理済み」）を与えて全アダプタに状態フィルタを義務づけるかのどちらかで、今はドキュメントが後者を言い、コードが前者を意味している |
-| **M4** | **「Connected からしか送れない」を強制するものが無い** | `domain/connection.ts:59` は "Frames may only be sent from `Connected`. Enforced by `TransportPort`" と書く。`makeLoopbackPair` は `ConnectionState` を 1 つも持っておらず、強制のしようがない。`sendMessage`（`domain/transport.ts:53-60`）も状態を見ない。`disconnectedTransport` は無条件に全 send を拒むが、それは「失敗経路が型で表現されている」という**別の**性質である。`canSend` は export されていて不変条件を正確に表現しており、**リポジトリ内のどこからも呼ばれていない** |
+| **M4 (解決済み)** | **Connected-only send gate** | `connectionGatedTransport` が各 send 時に現在の `ConnectionState` を読み、`Connected` 以外を `TransportError(not-connected)` で拒否する。raw transport はハンドシェイクと後方互換性のため維持する |
 
-**M1・M3・M4 は既存 107 本のテストが 1 つも捕まえていなかった。** 理由:
+**M1・M3・M4 は当初の 107 本のテストが 1 つも捕まえていなかった。** M4 は現在解決済み。理由:
 
 - **M1** —— バージョンテストは 2 本とも**このビルドが知っているメッセージ**を v+1 で包む
   （`SAMPLES.Ping` と `SAMPLES.PlayerLeave`）。**メッセージを 1 つも変えないバージョン上げ**が
@@ -107,9 +107,8 @@ $ pnpm preview --once --ascii --script --fault future-message --fault-at 1 --vie
 - **M3** —— `test/connection.test.ts` は遷移表を単体で網羅するが、
   **アダプタが実際に生む列**（書き込み失敗 → close）を 1 つも通していない。2 クライアントを回して
   トランスポートを殺すと 1 回で出る。
-- **M4** —— `test/transport.test.ts` は `ConnectionState` を import していない。
-  トランスポートのテストと状態機械のテストが別ファイルにあるので、
-  **その 2 つをまたぐ主張**（コメントに書いてある）を検査する場所がどこにも無かった。
+- **M4 (解決済み)** —— 現在は `test/transport.test.ts` が可変な状態と transport を組み合わせ、
+  `Connecting` / `Connected` / `Closed` の配送境界を検査する。
 
 合格したまま残しているチェックも 6 つある（DN-2 / DN-3 / DN-5 / DN-6 / DN-7 とラウンドトリップ）。
 合格したら消すチェックは、コードを 1 回しか検査しない。

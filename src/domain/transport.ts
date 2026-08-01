@@ -28,6 +28,7 @@
  */
 import { Context, Effect, Layer, Queue } from 'effect'
 import { decodeFrame, encodeFrame, type WireText } from './codec'
+import { canSend, type ConnectionState } from './connection'
 import { TransportError, type ProtocolError } from './errors'
 import type { NetworkMessage } from './protocol'
 
@@ -48,6 +49,32 @@ export class TransportPort extends Context.Tag('@nerima-games/mx-multiplayer/Tra
   TransportPort,
   TransportService
 >() {}
+
+/**
+ * Decorate a transport so every send observes the current connection state.
+ *
+ * The state is an Effect rather than a snapshot: passing `Ref.get(ref)` checks
+ * the Ref again for each send. Adapters should provide this decorated service
+ * as `TransportPort`; the undecorated service remains available for handshake
+ * traffic and for backward compatibility.
+ */
+export const connectionGatedTransport = (
+  state: Effect.Effect<ConnectionState>,
+  transport: TransportService,
+): TransportService => ({
+  inbound: transport.inbound,
+  send: (frame) =>
+    Effect.flatMap(state, (current) =>
+      canSend(current)
+        ? transport.send(frame)
+        : Effect.fail(
+            new TransportError({
+              reason: 'not-connected',
+              detail: `send attempted while connection state was ${current._tag}`,
+            }),
+          ),
+    ),
+})
 
 /** Encode and send. The ordinary way to talk to a peer. */
 export const sendMessage = (
