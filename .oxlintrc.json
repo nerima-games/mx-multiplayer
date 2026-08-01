@@ -77,54 +77,51 @@
     "no-sync": "warn",
 
     // Style
-    "array-bracket-spacing": "warn",
-    "block-spacing": "warn",
-    "brace-style": ["warn", "1tbs", { "allowSingleLine": true }],
-    "camelcase": "warn",
-    "comma-dangle": ["warn", "always-multiline"],
-    "comma-spacing": "warn",
-    "comma-style": "warn",
-    "computed-property-spacing": "warn",
-    "eol-last": "warn",
-    "func-call-spacing": "warn",
-    "indent": "off",
-    "key-spacing": "warn",
-    "keyword-spacing": "warn",
-    "linebreak-style": ["warn", "unix"],
-    "lines-between-class-members": "warn",
+    // NOTE (found while fixing the oxlint.json -> .oxlintrc.json discovery bug):
+    // this repository's config was never actually loaded by oxlint before this
+    // fix (see git history), so the ~29 pure formatting/ESLint-stylistic rules
+    // that used to live in this section (array-bracket-spacing, block-spacing,
+    // brace-style, camelcase, comma-dangle, comma-spacing, comma-style,
+    // computed-property-spacing, eol-last, func-call-spacing, indent,
+    // key-spacing, keyword-spacing, linebreak-style, lines-between-class-members,
+    // no-mixed-spaces-and-tabs, no-new-object, no-tabs, no-trailing-spaces,
+    // no-whitespace-before-property, object-curly-spacing, one-var,
+    // operator-linebreak, padded-blocks, quote-props, semi-spacing,
+    // space-before-blocks, space-infix-ops, space-unary-ops, spaced-comment)
+    // were never actually validated against a real oxlint run. Verified
+    // empirically against oxlint 1.76.0: every one of those rule names fails
+    // to parse with "Rule '<name>' not found in plugin 'eslint'" (oxlint has
+    // dropped ESLint's pure-stylistic rule set; there is no "style" plugin to
+    // enable instead). They have been removed here only to make this config
+    // parseable; the header comment's premise ("oxlint is the ONLY lint/format
+    // configuration ... no prettier, no biome") is therefore no longer true in
+    // practice for source formatting and needs a separate follow-up decision
+    // (adopt a real formatter, or accept oxlint no longer covers this).
     "no-array-method-this-argument": "warn",
     "no-bitwise": "warn",
-    "no-mixed-spaces-and-tabs": "error",
-    "no-new-object": "warn",
-    "no-tabs": "error",
-    "no-trailing-spaces": "warn",
-    "no-whitespace-before-property": "warn",
-    "object-curly-spacing": ["warn", "always"],
-    "one-var": ["warn", "never"],
-    "operator-linebreak": "warn",
-    "padded-blocks": ["warn", "never"],
-    "quote-props": ["warn", "as-needed"],
-    "semi-spacing": "warn",
-    "space-before-blocks": "warn",
-    "space-infix-ops": "warn",
-    "space-unary-ops": "warn",
-    "spaced-comment": "warn",
 
     // Restriction
     "default-case": "warn",
     "default-case-last": "warn",
     "no-empty-character-class": "warn",
-    // Declared for intent and for the day oxlint implements it; inert in 0.12.
-    // The real enforcement lives in scripts/check-dependency-whitelist.ts.
+    // Declared for intent and for the day oxlint implements it; inert in 1.76.0.
     "no-restricted-globals": ["warn", "name", "open", "close", "event"],
+    // Enforcement mechanism for DEPENDENCY_POLICY.md §5 (Tier boundaries). The
+    // old scripts/check-dependency-whitelist.ts was removed org-wide in favour
+    // of this rule; `pnpm lint` now absorbs the role of the old `check:deps`.
+    // Both restriction styles ("paths" for the bare "effect" import, "patterns"
+    // for the @nerima-games/* Tier3 edges) must live inside ONE options object
+    // — oxlint (like eslint) does not accept multiple positional option objects.
     "no-restricted-imports": [
-      "warn",
+      "error",
       {
-        "name": "effect",
-        "message": "Please use named imports from 'effect' package",
-        "importNames": ["default"]
-      },
-      {
+        "paths": [
+          {
+            "name": "effect",
+            "message": "Please use named imports from 'effect' package",
+            "importNames": ["default"]
+          }
+        ],
         "patterns": [
           {
             "regex": "^@nerima-games/(mx-gameplay|mx-redstone|mx-ui)(/.*)?$",
@@ -148,5 +145,5 @@
     "no-param-reassign": "off",
     "no-plusplus": "off"
   },
-  "ignore": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"]
+  "ignorePatterns": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"]
 }
