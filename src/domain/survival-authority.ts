@@ -4,6 +4,10 @@ import type { PlayerId, WorldId } from './protocol'
 export type SurvivalGameMode = 'survival' | 'creative' | 'spectator'
 export type SurvivalPosition = { readonly x: number; readonly y: number; readonly z: number }
 export type SurvivalItemStack = { readonly item: string; readonly count: number }
+export type SurvivalSleepState = {
+  readonly dimension: string
+  readonly bed: SurvivalPosition
+}
 export type SurvivalActorState = {
   readonly player: PlayerId
   readonly session: string
@@ -13,6 +17,7 @@ export type SurvivalActorState = {
   readonly health: number
   readonly spawn: SurvivalPosition
   readonly lastActionTick: number
+  readonly sleeping?: SurvivalSleepState
 }
 
 export type SurvivalSnapshot = {
@@ -37,6 +42,8 @@ export type SurvivalCommand = CommandHeader &
     | { readonly _tag: 'BreakBlock'; readonly at: SurvivalPosition }
     | { readonly _tag: 'Attack'; readonly target: PlayerId }
     | { readonly _tag: 'Respawn' }
+    | { readonly _tag: 'EnterSleep'; readonly bed: SurvivalPosition }
+    | { readonly _tag: 'LeaveSleep' }
   )
 
 export type SurvivalEvent =
@@ -46,6 +53,9 @@ export type SurvivalEvent =
   | { readonly _tag: 'ActorDied'; readonly actor: PlayerId; readonly killer: PlayerId }
   | { readonly _tag: 'ItemDropped'; readonly item: string; readonly count: number; readonly at: SurvivalPosition }
   | { readonly _tag: 'ActorRespawned'; readonly actor: PlayerId; readonly at: SurvivalPosition; readonly health: number }
+  | { readonly _tag: 'ActorSleepChanged'; readonly actor: PlayerId; readonly sleeping: SurvivalSleepState | null }
+  | { readonly _tag: 'SleepProgress'; readonly sleeping: number; readonly required: number; readonly connected: number; readonly ready: boolean }
+  | { readonly _tag: 'NightSkipped'; readonly sleeping: number; readonly required: number }
 
 export type SurvivalRejectionReason =
   | 'duplicate-request'
@@ -63,6 +73,24 @@ export type SurvivalRejectionReason =
   | 'target-dead'
   | 'actor-dead'
   | 'target-alive'
+  | 'invalid-bed'
+  | 'not-sleep-time'
+  | 'sleep-unsafe'
+  | 'already-sleeping'
+  | 'not-sleeping'
+
+export type SurvivalSleepValidation = {
+  readonly dimension: string
+  readonly bedValid: boolean
+  readonly nightOrThunder: boolean
+  readonly safe: boolean
+}
+
+export type SurvivalSleepValidationInput = {
+  readonly actor: SurvivalActorState
+  readonly bed: SurvivalPosition
+  readonly snapshot: SurvivalSnapshot
+}
 
 export type SurvivalCommandResult =
   | { readonly accepted: true; readonly requestId: string; readonly revision: number; readonly events: ReadonlyArray<SurvivalEvent> }
@@ -75,6 +103,8 @@ export type SurvivalAuthorityOptions = {
   readonly maximumHealth?: number
   readonly attackDamage?: number
   readonly blockDrop?: (block: string) => SurvivalItemStack | null
+  readonly sleepPercentage?: number
+  readonly validateSleep?: (input: SurvivalSleepValidationInput) => SurvivalSleepValidation
 }
 
 const positionKey = ({ x, y, z }: SurvivalPosition): string => `${x},${y},${z}`
@@ -87,6 +117,7 @@ const copyActor = (actor: SurvivalActorState): SurvivalActorState => ({
   inventory: actor.inventory.map((stack) => (stack === null ? null : { ...stack })),
   position: { ...actor.position },
   spawn: { ...actor.spawn },
+  ...(actor.sleeping === undefined ? {} : { sleeping: { ...actor.sleeping, bed: { ...actor.sleeping.bed } } }),
 })
 
 /** Deterministic, synchronous authority boundary. Each accepted command commits one atomic revision. */
@@ -97,6 +128,8 @@ export class SurvivalAuthority {
   readonly #maximumHealth: number
   readonly #attackDamage: number
   readonly #blockDrop: (block: string) => SurvivalItemStack | null
+  readonly #sleepRatio: number
+  readonly #validateSleep: (input: SurvivalSleepValidationInput) => SurvivalSleepValidation
   readonly #results = new Map<string, SurvivalCommandResult>()
   #state: SurvivalSnapshot
 
@@ -107,6 +140,9 @@ export class SurvivalAuthority {
     this.#maximumHealth = options.maximumHealth ?? 20
     this.#attackDamage = options.attackDamage ?? 4
     this.#blockDrop = options.blockDrop ?? ((block) => ({ item: block, count: 1 }))
+    const sleepPercentage = options.sleepPercentage ?? 100
+    this.#sleepRatio = Number.isFinite(sleepPercentage) ? Math.min(1, Math.max(0, sleepPercentage / 100)) : 1
+    this.#validateSleep = options.validateSleep ?? (() => ({ dimension: 'overworld', bedValid: false, nightOrThunder: false, safe: false }))
     this.#state = this.#copySnapshot(snapshot)
   }
 
@@ -125,6 +161,31 @@ export class SurvivalAuthority {
     )
     this.#state = { ...this.#state, actors }
     return true
+  }
+
+  /** Removes a disconnected actor and re-evaluates the authoritative threshold. */
+  disconnect(actor: PlayerId): ReadonlyArray<SurvivalEvent> {
+    const index = this.#state.actors.findIndex((candidate) => candidate.player === actor)
+    if (index < 0) return []
+    const wasSleeping = this.#state.actors[index]?.sleeping !== undefined
+    this.#state = { ...this.#state, actors: this.#state.actors.filter((candidate) => candidate.player !== actor), revision: this.#state.revision + 1 }
+    return this.#sleepEvents(wasSleeping ? [{ _tag: 'ActorSleepChanged', actor, sleeping: null }] : [])
+  }
+
+  /** Revalidates sleeping actors after dimension or bed state changes. */
+  reconcileSleep(): ReadonlyArray<SurvivalEvent> {
+    const removed: SurvivalEvent[] = []
+    const actors = this.#state.actors.map((actor) => {
+      if (actor.sleeping === undefined) return actor
+      const validation = this.#validateSleep({ actor: copyActor(actor), bed: actor.sleeping.bed, snapshot: this.snapshot() })
+      if (validation.bedValid && validation.dimension === actor.sleeping.dimension && actor.health > 0 && actor.gameMode === 'survival') return actor
+      removed.push({ _tag: 'ActorSleepChanged', actor: actor.player, sleeping: null })
+      const { sleeping: _sleeping, ...awake } = actor
+      return awake
+    })
+    if (removed.length === 0) return []
+    this.#state = { ...this.#state, actors, revision: this.#state.revision + 1 }
+    return this.#sleepEvents(removed)
   }
 
   execute(command: SurvivalCommand): SurvivalCommandResult {
@@ -157,11 +218,13 @@ export class SurvivalAuthority {
     | { readonly accepted: false; readonly reason: SurvivalRejectionReason }
     | { readonly accepted: true; readonly state: SurvivalSnapshot; readonly events: ReadonlyArray<SurvivalEvent> } {
     if (command._tag === 'Respawn') return this.#respawn(command, actorIndex, actor)
+    if (command._tag === 'LeaveSleep') return this.#leaveSleep(actorIndex, actor)
     if (actor.health <= 0) return { accepted: false, reason: 'actor-dead' }
     if (actor.gameMode !== 'survival') return { accepted: false, reason: 'invalid-game-mode' }
     if (!Number.isInteger(command.clientTick) || command.clientTick - actor.lastActionTick < this.#cooldownTicks) {
       return { accepted: false, reason: 'cooldown-active' }
     }
+    if (command._tag === 'EnterSleep') return this.#enterSleep(command, actorIndex, actor)
     if (command._tag === 'Attack') return this.#attack(command, actorIndex, actor)
     return this.#mutateBlock(command, actorIndex, actor)
   }
@@ -216,10 +279,57 @@ export class SurvivalAuthority {
     }
     const actors = this.#state.actors.map((candidate, index) => {
       if (index === actorIndex) return { ...candidate, lastActionTick: command.clientTick }
-      if (index === targetIndex) return { ...candidate, health, inventory: health === 0 ? candidate.inventory.map(() => null) : candidate.inventory }
+      if (index === targetIndex) {
+        const next = { ...candidate, health, inventory: health === 0 ? candidate.inventory.map(() => null) : candidate.inventory }
+        if (health > 0 || candidate.sleeping === undefined) return next
+        const { sleeping: _sleeping, ...awake } = next
+        return awake
+      }
       return candidate
     })
+    if (health === 0 && target.sleeping !== undefined) {
+      events.push({ _tag: 'ActorSleepChanged', actor: target.player, sleeping: null })
+      return { accepted: true as const, state: { ...this.#state, actors, drops }, events: this.#sleepEvents(events, actors) }
+    }
     return { accepted: true as const, state: { ...this.#state, actors, drops }, events }
+  }
+
+  #enterSleep(command: Extract<SurvivalCommand, { readonly _tag: 'EnterSleep' }>, actorIndex: number, actor: SurvivalActorState) {
+    if (!validPosition(command.bed)) return { accepted: false as const, reason: 'invalid-command' as const }
+    if (actor.sleeping !== undefined) return { accepted: false as const, reason: 'already-sleeping' as const }
+    if (distanceSquared(actor.position, command.bed) > this.#reach ** 2) return { accepted: false as const, reason: 'out-of-reach' as const }
+    const validation = this.#validateSleep({ actor: copyActor(actor), bed: { ...command.bed }, snapshot: this.snapshot() })
+    if (!validation.bedValid) return { accepted: false as const, reason: 'invalid-bed' as const }
+    if (!validation.nightOrThunder) return { accepted: false as const, reason: 'not-sleep-time' as const }
+    if (!validation.safe) return { accepted: false as const, reason: 'sleep-unsafe' as const }
+    const sleeping = { dimension: validation.dimension, bed: { ...command.bed } }
+    const actors = this.#state.actors.map((candidate, index) => index === actorIndex ? { ...candidate, sleeping, lastActionTick: command.clientTick } : candidate)
+    const events: SurvivalEvent[] = [{ _tag: 'ActorSleepChanged', actor: actor.player, sleeping }]
+    return { accepted: true as const, state: { ...this.#state, actors }, events: this.#sleepEvents(events, actors) }
+  }
+
+  #leaveSleep(actorIndex: number, actor: SurvivalActorState) {
+    if (actor.sleeping === undefined) return { accepted: false as const, reason: 'not-sleeping' as const }
+    const { sleeping: _sleeping, ...awake } = actor
+    const actors = this.#state.actors.map((candidate, index) => index === actorIndex ? awake : candidate)
+    const events: SurvivalEvent[] = [{ _tag: 'ActorSleepChanged', actor: actor.player, sleeping: null }]
+    return { accepted: true as const, state: { ...this.#state, actors }, events: this.#sleepEvents(events, actors) }
+  }
+
+  #sleepEvents(prefix: ReadonlyArray<SurvivalEvent>, actors = this.#state.actors): ReadonlyArray<SurvivalEvent> {
+    const connected = actors.filter((actor) => actor.gameMode === 'survival').length
+    const sleeping = actors.filter((actor) => actor.gameMode === 'survival' && actor.health > 0 && actor.sleeping !== undefined).length
+    const required = connected === 0 ? 0 : Math.max(1, Math.ceil(connected * this.#sleepRatio))
+    const ready = required > 0 && sleeping >= required
+    const progress: SurvivalEvent = { _tag: 'SleepProgress', sleeping, required, connected, ready }
+    if (!ready) return [...prefix, progress]
+    for (const actor of actors) {
+      if (actor.sleeping === undefined) continue
+      const { sleeping: _sleeping, ...awake } = actor
+      Object.assign(actor, awake)
+      delete (actor as { sleeping?: SurvivalSleepState }).sleeping
+    }
+    return [...prefix, progress, { _tag: 'NightSkipped', sleeping, required }]
   }
 
   #respawn(command: Extract<SurvivalCommand, { readonly _tag: 'Respawn' }>, actorIndex: number, actor: SurvivalActorState) {

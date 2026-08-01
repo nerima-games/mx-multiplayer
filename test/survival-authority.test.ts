@@ -1,4 +1,4 @@
-/* eslint-disable id-length, max-statements, no-magic-numbers, no-ternary, sort-imports, sort-keys -- Fixtures make authority transitions explicit. */
+/* eslint-disable id-length, max-statements, no-magic-numbers, no-ternary, no-undefined, no-underscore-dangle, sort-imports, sort-keys -- Fixtures make authority transitions explicit. */
 import { describe, expect, it } from '@effect/vitest'
 import { PlayerId, SurvivalAuthority, WorldId, type SurvivalCommand, type SurvivalSnapshot } from '../src/index'
 
@@ -78,5 +78,86 @@ describe('survival authority', () => {
     expect(restored.snapshot()).toStrictEqual(first.snapshot())
     expect(restored.rejoin(alice, 'alice-session', 'alice-rejoined')).toBe(true)
     expect(restored.execute({ actor: alice, session: 'alice-session', requestId: 'old', expectedRevision: 8, clientTick: 20, _tag: 'Respawn' })).toMatchObject({ reason: 'session-mismatch' })
+  })
+
+  it('authoritatively validates sleep and emits one threshold event', () => {
+    const authority = new SurvivalAuthority(initial(), {
+      sleepPercentage: 50,
+      validateSleep: ({ bed }) => ({ dimension: 'overworld', bedValid: bed.y === 64, nightOrThunder: true, safe: true }),
+    })
+    const entered = authority.execute({ ...header('sleep'), _tag: 'EnterSleep', bed: { x: 0, y: 64, z: 1 } })
+    expect(entered).toMatchObject({
+      accepted: true,
+      revision: 8,
+      events: [
+        { _tag: 'ActorSleepChanged', actor: alice },
+        { _tag: 'SleepProgress', sleeping: 1, required: 1, connected: 2, ready: true },
+        { _tag: 'NightSkipped', sleeping: 1, required: 1 },
+      ],
+    })
+    expect(authority.snapshot().actors.every((actor) => actor.sleeping === undefined)).toBe(true)
+    expect(authority.execute({ ...header('duplicate', 8), _tag: 'LeaveSleep' })).toMatchObject({ accepted: false, reason: 'not-sleeping' })
+  })
+
+  it('rejects spoofed, stale, duplicate and server-invalid sleep commands', () => {
+    const command = { ...header('sleep'), _tag: 'EnterSleep', bed: { x: 0, y: 64, z: 1 } } as const
+    const authority = new SurvivalAuthority(initial(), {
+      validateSleep: () => ({ dimension: 'overworld', bedValid: true, nightOrThunder: false, safe: true }),
+    })
+    expect(authority.execute(command)).toMatchObject({ accepted: false, reason: 'not-sleep-time' })
+    expect(authority.execute(command)).toMatchObject({ accepted: false, reason: 'duplicate-request' })
+    expect(new SurvivalAuthority(initial()).execute({ ...command, requestId: 'spoof', actor: PlayerId.make('mallory') })).toMatchObject({ reason: 'unauthorized-actor' })
+    expect(new SurvivalAuthority(initial()).execute({ ...command, requestId: 'stale', expectedRevision: 6 })).toMatchObject({ reason: 'stale-revision' })
+    expect(new SurvivalAuthority(initial(), {
+      validateSleep: () => ({ dimension: 'overworld', bedValid: true, nightOrThunder: true, safe: false }),
+    }).execute(command)).toMatchObject({ reason: 'sleep-unsafe' })
+    expect(new SurvivalAuthority(initial(), {
+      validateSleep: () => ({ dimension: 'overworld', bedValid: false, nightOrThunder: true, safe: true }),
+    }).execute(command)).toMatchObject({ reason: 'invalid-bed' })
+
+    const leaveAuthority = new SurvivalAuthority(initial(), {
+      validateSleep: () => ({ dimension: 'overworld', bedValid: true, nightOrThunder: true, safe: true }),
+    })
+    expect(leaveAuthority.execute({ ...command, requestId: 'enter-before-leave' })).toMatchObject({ accepted: true, revision: 8 })
+    expect(leaveAuthority.execute({ ...header('leave', 8), _tag: 'LeaveSleep' })).toMatchObject({
+      accepted: true,
+      revision: 9,
+      events: [{ _tag: 'ActorSleepChanged', sleeping: null }, { _tag: 'SleepProgress', sleeping: 0, ready: false }],
+    })
+  })
+
+  it('persists sleep in snapshots and reconciles disconnect, death, dimension and bed invalidation', () => {
+    let aliceValid = true
+    const bobValid = true
+    const authority = new SurvivalAuthority(initial(), {
+      validateSleep: ({ actor }) => ({
+        dimension: actor.player === alice && !aliceValid ? 'nether' : 'overworld',
+        bedValid: actor.player === alice ? aliceValid : bobValid,
+        nightOrThunder: true,
+        safe: true,
+      }),
+    })
+    expect(authority.execute({ ...header('alice-sleep'), _tag: 'EnterSleep', bed: { x: 0, y: 64, z: 1 } })).toMatchObject({ accepted: true })
+    const restored = new SurvivalAuthority(authority.snapshot(), {
+      validateSleep: ({ actor }) => ({ dimension: 'overworld', bedValid: actor.player === bob ? bobValid : aliceValid, nightOrThunder: true, safe: true }),
+    })
+    expect(restored.snapshot().actors[0]?.sleeping).toMatchObject({ dimension: 'overworld', bed: { x: 0, y: 64, z: 1 } })
+    expect(restored.rejoin(alice, 'alice-session', 'alice-rejoined')).toBe(true)
+    aliceValid = false
+    expect(restored.reconcileSleep()).toMatchObject([{ _tag: 'ActorSleepChanged', actor: alice }, { _tag: 'SleepProgress', sleeping: 0 }])
+
+    const deathBase = initial()
+    const deathSnapshot: SurvivalSnapshot = { ...deathBase, actors: deathBase.actors.map((actor) => actor.player === bob ? { ...actor, sleeping: { dimension: 'overworld', bed: { x: 1, y: 64, z: 1 } } } : actor) }
+    const deathAuthority = new SurvivalAuthority(deathSnapshot)
+    const death = deathAuthority.execute({ ...header('kill-sleeper'), _tag: 'Attack', target: bob })
+    expect(death).toMatchObject({ accepted: true })
+    expect(death.accepted && death.events.some((event) => event._tag === 'ActorSleepChanged' && event.actor === bob)).toBe(true)
+    expect(death.accepted && death.events.some((event) => event._tag === 'SleepProgress' && event.sleeping === 0)).toBe(true)
+
+    const disconnectBase = initial()
+    const disconnectSnapshot: SurvivalSnapshot = { ...disconnectBase, actors: disconnectBase.actors.map((actor) => actor.player === alice ? { ...actor, sleeping: { dimension: 'overworld', bed: { x: 0, y: 64, z: 1 } } } : actor) }
+    const disconnectAuthority = new SurvivalAuthority(disconnectSnapshot)
+    expect(disconnectAuthority.disconnect(bob)).toMatchObject([{ _tag: 'SleepProgress', connected: 1, required: 1 }, { _tag: 'NightSkipped' }])
+    expect(disconnectAuthority.disconnect(bob)).toStrictEqual([])
   })
 })
