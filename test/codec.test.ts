@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Either, Option } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../domain/codec'
-import type { ProtocolError } from '../domain/errors'
+import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
+import type { ProtocolError } from '../src/domain/errors'
 import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
@@ -9,7 +9,7 @@ import {
   PlayerName,
   WorldId,
   type NetworkMessage,
-} from '../domain/protocol'
+} from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
 const overworld = WorldId.make('overworld')
@@ -36,6 +36,34 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   BlockBreak: { _tag: 'BlockBreak', player: alice, at: { x: -1, y: 0, z: -3 } },
   Chat: { _tag: 'Chat', player: alice, text: 'hello 世界' },
   WorldInfo: { _tag: 'WorldInfo', world: overworld, seed: -1_234_567 },
+  WorldSnapshot: {
+    _tag: 'WorldSnapshot',
+    world: overworld,
+    seed: -1_234_567,
+    revision: 12,
+    players: [
+      {
+        player: alice,
+        name: PlayerName.make('Alice'),
+        world: overworld,
+        at: { x: 8.5, y: 65, z: -12.25 },
+        facing: { yawRadians: 3.14159, pitchRadians: -1.5 },
+      },
+    ],
+    blocks: [
+      { world: overworld, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
+      { world: overworld, at: { x: -1, y: 0, z: -3 }, block: null },
+    ],
+  },
+  BlockMutationRejected: {
+    _tag: 'BlockMutationRejected',
+    player: alice,
+    world: overworld,
+    at: { x: 1, y: 2, z: 3 },
+    operation: 'place',
+    reason: 'occupied',
+    revision: 12,
+  },
   Ping: { _tag: 'Ping', nonce: 7 },
   Pong: { _tag: 'Pong', nonce: 7 },
 }
@@ -89,6 +117,20 @@ describe('frame round trip', () => {
     Effect.sync(() => {
       const moved = decodeFrame(encoded(SAMPLES.PlayerMove))
       expect(Either.getOrThrow(moved)).toStrictEqual(SAMPLES.PlayerMove)
+    }),
+  )
+
+  it.effect('preserves an optional world on protocol-v1 movement and block mutations', () =>
+    Effect.sync(() => {
+      const messages: ReadonlyArray<NetworkMessage> = [
+        { ...SAMPLES.PlayerMove, world: overworld },
+        { ...SAMPLES.BlockPlace, world: WorldId.make('nether') },
+        { ...SAMPLES.BlockBreak, world: WorldId.make('end') },
+      ]
+
+      for (const message of messages) {
+        expect(Either.getOrThrow(decodeFrame(encoded(message)))).toStrictEqual(message)
+      }
     }),
   )
 
@@ -177,6 +219,56 @@ describe('malformed input', () => {
         message: { _tag: 'BlockBreak', player: 'alice', at: { x: 0.5, y: 1, z: 2 } },
       })
       expect(rejected(text)?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it.effect('rejects negative or fractional authoritative revisions', () =>
+    Effect.sync(() => {
+      for (const revision of [-1, 0.5]) {
+        const text = JSON.stringify({
+          protocolVersion: PROTOCOL_VERSION,
+          message: {
+            _tag: 'WorldSnapshot',
+            world: 'overworld',
+            seed: 1,
+            revision,
+            players: [],
+            blocks: [],
+          },
+        })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  it.effect('rejects malformed snapshot members and unknown rejection reasons', () =>
+    Effect.sync(() => {
+      const malformedPlayer = JSON.stringify({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          _tag: 'WorldSnapshot',
+          world: 'overworld',
+          seed: 1,
+          revision: 0,
+          players: [{ player: 'alice', name: '', at: { x: 0, y: 0, z: 0 }, facing: { yawRadians: 0, pitchRadians: 0 } }],
+          blocks: [],
+        },
+      })
+      const unknownReason = JSON.stringify({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          _tag: 'BlockMutationRejected',
+          player: 'alice',
+          world: 'overworld',
+          at: { x: 0, y: 0, z: 0 },
+          operation: 'break',
+          reason: 'because-i-said-so',
+          revision: 0,
+        },
+      })
+
+      expect(rejected(malformedPlayer)?.reason).toBe('malformed-frame')
+      expect(rejected(unknownReason)?.reason).toBe('malformed-frame')
     }),
   )
 

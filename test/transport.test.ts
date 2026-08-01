@@ -6,8 +6,8 @@ import {
   makeLoopbackPair,
   receiveMessage,
   sendMessage,
-} from '../domain/transport'
-import { PROTOCOL_VERSION, PlayerId, PlayerName, WorldId, type NetworkMessage } from '../domain/protocol'
+} from '../src/domain/transport'
+import { PROTOCOL_VERSION, PlayerId, PlayerName, WorldId, type NetworkMessage } from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
 

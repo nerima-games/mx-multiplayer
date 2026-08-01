@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import * as multiplayer from '../index'
-import { decodeFrame, encodeFrame } from '../domain/codec'
-import { MESSAGE_TAGS, PROTOCOL_VERSION } from '../domain/protocol'
+import * as multiplayer from '../src/index'
+import { decodeFrame, encodeFrame } from '../src/domain/codec'
+import { MESSAGE_TAGS, PROTOCOL_VERSION } from '../src/domain/protocol'
 
 describe('public API surface', () => {
   // The barrel is what mc-compose imports. A re-export dropped here is

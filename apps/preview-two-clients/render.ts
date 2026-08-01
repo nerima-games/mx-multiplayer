@@ -9,7 +9,7 @@
  * reason `ansi.ts` gives.
  */
 import { padEnd, padStart, type Rgb, type Style } from './ansi'
-import { PROTOCOL_VERSION } from '../../domain/protocol'
+import { PROTOCOL_VERSION } from '../../src/domain/protocol'
 import {
   MACHINE_FAULTS,
   SCRIPT,

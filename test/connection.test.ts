@@ -8,8 +8,8 @@ import {
   transition,
   type ConnectionEvent,
   type ConnectionState,
-} from '../domain/connection'
-import { PlayerId, WorldId } from '../domain/protocol'
+} from '../src/domain/connection'
+import { PlayerId, WorldId } from '../src/domain/protocol'
 
 const connectRequested: ConnectionEvent = { _tag: 'ConnectRequested' }
 const handshakeSucceeded: ConnectionEvent = {
