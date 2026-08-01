@@ -3,7 +3,7 @@
   // ever leaks into domain code this project fails, which is what keeps
   // mc-kernel usable from browser, worker and server repos alike.
   "extends": "./tsconfig.base.json",
-  "include": ["index.ts", "domain/**/*.ts", "stages/**/*.ts"],
+  "include": ["src/index.ts", "src/domain/**/*.ts", "src/stages/**/*.ts"],
   "exclude": [
     "node_modules",
     "coverage",

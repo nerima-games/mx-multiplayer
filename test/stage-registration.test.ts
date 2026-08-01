@@ -17,14 +17,14 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Either, Queue, Ref } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../domain/codec'
-import { canSend, type ConnectionState } from '../domain/connection'
+import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
+import { canSend, type ConnectionState } from '../src/domain/connection'
 import {
   DeltaTimeSecs,
   StageId,
   type GameModule,
   type StageRegistration,
-} from '../domain/frame-contract'
+} from '../src/domain/frame-contract'
 import {
   BlockPlace,
   Chat,
@@ -33,12 +33,12 @@ import {
   PROTOCOL_VERSION,
   WorldId,
   type NetworkMessage,
-} from '../domain/protocol'
+} from '../src/domain/protocol'
 import {
   makeLoopbackPair,
   TransportPort,
   type TransportService,
-} from '../domain/transport'
+} from '../src/domain/transport'
 import {
   makeMultiplayerFrameState,
   makeMultiplayerHost,
@@ -48,13 +48,13 @@ import {
   multiplayerStages,
   NO_NETWORK_FRAMES,
   type MultiplayerFrameState,
-} from '../stages/registration'
+} from '../src/stages/registration'
 import {
   EXPERIENCE_MODULE_STAGE_PREFIXES,
   MULTIPLAYER_STAGE_IDS,
   OWN_STAGE_PREFIX,
   UPSTREAM_STAGE_IDS,
-} from '../stages/stage-ids'
+} from '../src/stages/stage-ids'
 
 const ZERO_DT = DeltaTimeSecs(0)
 const ONE_FRAME = DeltaTimeSecs(1 / 60)

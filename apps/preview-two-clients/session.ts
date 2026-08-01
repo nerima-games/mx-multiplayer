@@ -45,27 +45,27 @@
  * DN-3 removed from the protocol.
  */
 import { Effect, Either, Queue } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion, type WireText } from '../../domain/codec'
+import { decodeFrame, encodeFrame, encodeFrameAsVersion, type WireText } from '../../src/domain/codec'
 import {
   canSend,
   initialConnectionState,
   transition,
   type ConnectionEvent,
   type ConnectionState,
-} from '../../domain/connection'
-import { ProtocolError, TransportError } from '../../domain/errors'
+} from '../../src/domain/connection'
+import { ProtocolError, TransportError } from '../../src/domain/errors'
 import {
   disconnectedTransport,
   makeLoopbackPair,
   type TransportService,
-} from '../../domain/transport'
+} from '../../src/domain/transport'
 import {
   PROTOCOL_VERSION,
   PlayerId,
   PlayerName,
   WorldId,
   type NetworkMessage,
-} from '../../domain/protocol'
+} from '../../src/domain/protocol'
 
 export type SideName = 'client' | 'server'
 

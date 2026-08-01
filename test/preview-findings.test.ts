@@ -29,7 +29,7 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Either, Queue } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../domain/codec'
+import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
 import {
   canSend,
   initialConnectionState,
@@ -37,13 +37,13 @@ import {
   transition,
   type ConnectionEvent,
   type ConnectionState,
-} from '../domain/connection'
+} from '../src/domain/connection'
 import {
   LoopbackTransportLayer,
   makeLoopbackPair,
   sendMessage,
-} from '../domain/transport'
-import { PROTOCOL_VERSION, PlayerId, WorldId, type NetworkMessage } from '../domain/protocol'
+} from '../src/domain/transport'
+import { PROTOCOL_VERSION, PlayerId, WorldId, type NetworkMessage } from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
 const overworld = WorldId.make('overworld')

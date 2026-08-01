@@ -52,9 +52,10 @@ mc-sim が既に宣言してある** ので、契約は最初から機械可読�
 
 1. **下流が実際に消費して契約を確認した。** 具体的には mc-compose が
    このリポジトリを import し、E2E が green になっている
-2. **API ロック 4 週間無変更**(plan.md §6 Step 3)。公開 API のレポートを diff レビューし、
-   4 週間変更が入らないこと。そのレポートは `api-lock.md` として実在し、
-   計測の起点は最後にそれが変わったコミットである([public-api.md](./public-api.md) §6)
+2. **1.0.0 への昇格は maintainer(take)の裁量判断による。** 日数計測ベースの自動凍結ゲート
+   (旧「API ロック 4 週間無変更」)は廃止された([RELEASE_STANDARD.md §4.2](https://github.com/nerima-games/.github/blob/main/RELEASE_STANDARD.md#42-新しい昇格ポリシー人間による裁量判断))。
+   代替の定量基準も設けない。判断材料は上位階層からの利用実績や破壊的変更の落ち着き具合など、
+   都度異なってよい
 3. **参照実装のテスト資産の移植が完了**([porting.md](./porting.md) の 1〜6)
 4. **ビルド / publish パイプラインが存在する**(§6)
 5. **カバレッジ 99% ゲートが有効**([testing.md](./testing.md) §6)

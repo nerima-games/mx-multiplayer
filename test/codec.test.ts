@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Either, Option } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../domain/codec'
-import type { ProtocolError } from '../domain/errors'
+import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
+import type { ProtocolError } from '../src/domain/errors'
 import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
@@ -9,7 +9,7 @@ import {
   PlayerName,
   WorldId,
   type NetworkMessage,
-} from '../domain/protocol'
+} from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
 const overworld = WorldId.make('overworld')

@@ -3,14 +3,17 @@
   // oxlint is the ONLY lint/format configuration in this repository.
   // There is deliberately no prettier, no biome and no .editorconfig.
   //
-  // NOTE on the `Date.now()` ban (see README 現状 / scripts/check-dependency-whitelist.ts):
+  // NOTE on the `Date.now()` ban (see README 現状):
   // oxlint 0.12 does not implement `no-restricted-syntax` or `no-restricted-properties`,
   // and while `no-restricted-globals` is listed by `oxlint --rules` it is not implemented
   // either (no checkmark). Verified empirically against oxlint 0.12.0: a file containing
-  // `Date.now()` produces 0 diagnostics under all three rules. The ban is therefore
-  // enforced by `pnpm check:deps` (scripts/check-dependency-whitelist.ts) instead.
-  // When oxlint gains `no-restricted-syntax`, move the ban here and delete the script's
-  // time-source section.
+  // `Date.now()` produces 0 diagnostics under all three rules.
+  // `scripts/check-dependency-whitelist.ts`, which used to enforce this ban, was removed
+  // org-wide in favour of oxlint's `no-restricted-imports` (DEPENDENCY_POLICY.md §5). oxlint
+  // has no replacement rule for a raw wall-clock read yet, so per DEPENDENCY_POLICY.md §5
+  // ("各リポジトリの裁量とします") this repository does not carry a substitute script; the
+  // ban is currently unenforced by tooling. When oxlint gains `no-restricted-syntax`, add it
+  // here.
   "env": {
     "es2022": true,
     "node": true
@@ -120,6 +123,18 @@
         "name": "effect",
         "message": "Please use named imports from 'effect' package",
         "importNames": ["default"]
+      },
+      {
+        "patterns": [
+          {
+            "regex": "^@nerima-games/(mx-gameplay|mx-redstone|mx-ui)(/.*)?$",
+            "message": "Tier3 experience modules do not depend on each other laterally (DEPENDENCY_POLICY.md §2). Talk through mc-sim instead."
+          },
+          {
+            "regex": "^@nerima-games/(mc-worldgen|mc-render|mc-meshing|mc-noise|mc-physics|mc-save|mc-audio|mc-playground-kit|mc-compose|mc-dev-meta)(/.*)?$",
+            "message": "mx-multiplayer (Tier3, DEPENDENCY_POLICY.md) may depend only on mc-sim and mc-kernel."
+          }
+        ]
       }
     ],
     "prefer-template": "warn",
