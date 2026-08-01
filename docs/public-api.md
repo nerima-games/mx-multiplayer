@@ -158,7 +158,26 @@ snapshots.disconnect(playerId)
 sequence/tick は wire protocol v1 のフィールドではない。既存プロトコルとの互換性を保つため、
 サーバまたは上位の同期処理が `PlayerTransformSnapshot` を構築する際に付与する。
 
-## 7. まだ無いもの
+## 7. authoritative revision 管理(`domain/authoritative-sync.ts`)
+
+```typescript
+class AuthoritativeRevisionTracker {
+  ingestSnapshot(snapshot: WorldSnapshot): RevisionAdmission
+  ingestRevision(world: WorldId, revision: number): RevisionAdmission
+  revision(world: WorldId): number | undefined
+  disconnect(world?: WorldId): void
+}
+```
+
+接続直後と再接続後は incremental update を `snapshot-required` として拒否し、完全な
+`WorldSnapshot` が同期基準を確立してから連番 revision だけを受理する。欠番は
+`revision-gap` として検出し、その revision へ進まないため、呼び出し側は新しい snapshot を
+取得して安全に復旧できる。snapshot と live update の遅延・重複は `duplicate-or-stale` になる。
+
+tracker はゲーム状態を保持・変更せず、再接続や snapshot 要求の transport 方針も決めない。
+それらを所有する platform adapter が admission 結果を使って再取得を開始する。
+
+## 8. まだ無いもの
 
 | 未実装 | 追加時期 |
 | --- | --- |
@@ -167,7 +186,7 @@ sequence/tick は wire protocol v1 のフィールドではない。既存プロ
 | 実 WebSocket アダプタ | プラットフォーム層の所在が決まってから |
 | **mc-compose 側の `multiplayer:` フェーズ** | **mc-compose の作業**。無いあいだ 2 stage は HUD の後ろで走る |
 
-### 7.1 stage 登録
+### 8.1 stage 登録
 
 ```ts
 const MULTIPLAYER_STAGE_IDS: { inbound: StageId; outbound: StageId }   // multiplayer:inbound / multiplayer:outbound

@@ -35,6 +35,8 @@ describe('public API surface', () => {
         'runTransitions',
         'canSend',
         'isSettled',
+        // authoritative resync admission
+        'AuthoritativeRevisionTracker',
         // transport
         'TransportPort',
         'sendMessage',
