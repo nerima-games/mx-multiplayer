@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         # Pinned to a commit, not the mutable v6 tag: a tag can be repointed at
         # new code by upstream at any time without any change here.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # GITHUB_TOKEN would otherwise remain readable from every later step
           # via .git/config; this job needs no push access, so there is no
@@ -90,7 +90,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # `changeset status --since` needs the base branch's history, not
           # just the PR's own commits.
