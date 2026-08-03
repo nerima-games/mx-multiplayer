@@ -127,22 +127,10 @@ export const MULTIPLAYER_STAGE_IDS = {
    * Publish the frames the local session wants to send, if the connection
    * permits sending.
    *
-   * `domain/connection.ts`'s `canSend` is the permission, and this stage is its
-   * first caller outside a test or a preview. That is finding M4
-   * (`test/preview-findings.test.ts`, `apps/preview-two-clients/stats.ts`):
-   * `domain/connection.ts:59` claims the invariant is "Enforced by
-   * `TransportPort`", `makeLoopbackPair` holds no `ConnectionState` and cannot
-   * enforce anything, and `canSend` was exported and called nowhere — the
-   * invariant expressible and unexpressed.
-   *
-   * M4 offers two resolutions ("either an adapter is the intended enforcement
-   * point ... or `sendMessage` should take the state") and this is a third,
-   * which is why `sendMessage` is left exactly as it was: a frame stage is the
-   * only place that holds BOTH the connection state and the messages waiting to
-   * go out, so it can refuse without a Port learning about a state machine and
-   * without every caller of `sendMessage` having to thread one. The findings
-   * that pin `sendMessage`'s unguarded behaviour stay green on purpose — they
-   * describe a function this change does not touch.
+   * `domain/connection.ts`'s `canSend` is the permission. This stage checks it
+   * before draining queued application work; socket adapters enforce the same
+   * invariant at their boundary with `connectionGatedTransport`. `sendMessage`
+   * remains state-agnostic for handshake traffic and backward compatibility.
    */
   outbound: StageId('multiplayer:outbound'),
 } as const

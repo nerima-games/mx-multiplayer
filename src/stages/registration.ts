@@ -120,10 +120,9 @@ export type MultiplayerFrameState = {
   /**
    * The connection lifecycle, as `domain/connection.ts` models it.
    *
-   * Held rather than derived: `canSend` is a question about a STATE, and until
-   * something held one there was nothing to ask (finding M4). It is advanced by
-   * `transition`, by whoever owns the socket — this repository ships no adapter
-   * — and read here.
+   * Held rather than derived: `canSend` is a question about a STATE. It is
+   * advanced by `transition`, by whoever owns the socket, and read here. Socket
+   * adapters can expose the same live state through `connectionGatedTransport`.
    */
   readonly connection: Ref.Ref<ConnectionState>
   /**
@@ -265,10 +264,8 @@ export const multiplayerStages = (
         // backlog the world then replays in fast-forward.
         const pending = yield* Ref.getAndSet(state.outbox, [])
 
-        // Finding M4's answer. `canSend` was exported and called nowhere; the
-        // frame stage is the one place that holds both the state and the
-        // messages, so it is where the invariant can be enforced without a Port
-        // learning about a state machine.
+        // Avoid queueing work while disconnected even when the supplied
+        // transport also applies the Connected-only boundary gate.
         if (!canSend(connection)) {
           yield* Ref.update(state.counters, (current) => ({
             ...current,

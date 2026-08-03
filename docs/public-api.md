@@ -102,6 +102,11 @@ type TransportService = {
 }
 class TransportPort extends Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<...>
 
+const connectionGatedTransport: (
+  state: Effect<ConnectionState>,
+  transport: TransportService,
+) => TransportService
+
 const sendMessage: (message: NetworkMessage) => Effect<void, ProtocolError | TransportError, TransportPort>
 const receiveMessage: Effect<NetworkMessage, ProtocolError, TransportPort>
 
@@ -110,6 +115,11 @@ const LoopbackTransportLayer: (service: TransportService) => Layer<TransportPort
 const disconnectedTransport: Effect<TransportService>
 ```
 
+プラットフォームアダプタは raw transport と現在の `ConnectionState` を
+`connectionGatedTransport` で合成してから `TransportPort` として提供する。`send` ごとに状態を再評価し、
+`Connected` 以外では `TransportError { reason: 'not-connected' }` を返す。raw transport はハンドシェイク用途と
+後方互換性のため残る。
+
 **Port が運ぶのはテキストであってメッセージ値ではない。**
 `send` が `NetworkMessage` を取ると、ループバックはオブジェクトを参照渡しするだけになり、
 コーデックのバグがすべてのループバックテストを生き延びる。
@@ -117,7 +127,67 @@ const disconnectedTransport: Effect<TransportService>
 `inbound` がコールバックでなく `Dequeue` なのはバックプレッシャを表現するため。
 追いつけない consumer は producer をブロックし、裏で無制限にキューが伸びない。
 
-## 6. まだ無いもの
+## 6. スナップショット補間(`domain/snapshot-interpolation.ts`)
+
+```typescript
+interface PlayerTransformSnapshot {
+  readonly sequence: number
+  readonly tick: number
+  readonly at: Vec3
+  readonly facing: Orientation
+}
+
+interface SnapshotInterpolatorConfig {
+  readonly historyLimit: number
+  readonly teleportDistance: number
+}
+
+class SnapshotInterpolator {
+  constructor(config: SnapshotInterpolatorConfig)
+  ingest(player: PlayerId, snapshot: PlayerTransformSnapshot): SnapshotIngestResult
+  sample(player: PlayerId, renderTick: number): PlayerTransformSnapshot | undefined
+  historySize(player: PlayerId): number
+  disconnect(player?: PlayerId): void
+}
+```
+
+`ingest` はプレイヤーごとに sequence と tick がともに単調増加するスナップショットだけを受理する。
+重複・遅延・逆順パケットは `duplicate-or-stale` として破棄し、履歴は `historyLimit` を超えない。
+`sample` は外部クロックを読まず、同じ履歴と描画 tick に常に同じ結果を返す。範囲内では位置・pitchを
+線形補間し、yaw は最短角を通る。位置差が `teleportDistance` 以上なら中間位置を生成せず、右側の
+authoritative tick でスナップする。切断時は `disconnect(player)`、全切断時は `disconnect()` を呼ぶ。
+
+```typescript
+const snapshots = new SnapshotInterpolator({ historyLimit: 32, teleportDistance: 8 })
+
+snapshots.ingest(playerId, authoritativeSnapshot)
+const pose = snapshots.sample(playerId, serverTick - 2)
+snapshots.disconnect(playerId)
+```
+
+sequence/tick は wire protocol v1 のフィールドではない。既存プロトコルとの互換性を保つため、
+サーバまたは上位の同期処理が `PlayerTransformSnapshot` を構築する際に付与する。
+
+## 7. authoritative revision 管理(`domain/authoritative-sync.ts`)
+
+```typescript
+class AuthoritativeRevisionTracker {
+  ingestSnapshot(snapshot: WorldSnapshot): RevisionAdmission
+  ingestRevision(world: WorldId, revision: number): RevisionAdmission
+  revision(world: WorldId): number | undefined
+  disconnect(world?: WorldId): void
+}
+```
+
+接続直後と再接続後は incremental update を `snapshot-required` として拒否し、完全な
+`WorldSnapshot` が同期基準を確立してから連番 revision だけを受理する。欠番は
+`revision-gap` として検出し、その revision へ進まないため、呼び出し側は新しい snapshot を
+取得して安全に復旧できる。snapshot と live update の遅延・重複は `duplicate-or-stale` になる。
+
+tracker はゲーム状態を保持・変更せず、再接続や snapshot 要求の transport 方針も決めない。
+それらを所有する platform adapter が admission 結果を使って再取得を開始する。
+
+## 8. まだ無いもの
 
 | 未実装 | 追加時期 |
 | --- | --- |
@@ -126,7 +196,7 @@ const disconnectedTransport: Effect<TransportService>
 | 実 WebSocket アダプタ | プラットフォーム層の所在が決まってから |
 | **mc-compose 側の `multiplayer:` フェーズ** | **mc-compose の作業**。無いあいだ 2 stage は HUD の後ろで走る |
 
-### 6.1 stage 登録
+### 8.1 stage 登録
 
 ```ts
 const MULTIPLAYER_STAGE_IDS: { inbound: StageId; outbound: StageId }   // multiplayer:inbound / multiplayer:outbound

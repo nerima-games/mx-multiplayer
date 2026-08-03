@@ -29,6 +29,7 @@ import {
   type ConnectionState,
 } from '../../src/domain/connection'
 import {
+  connectionGatedTransport,
   disconnectedTransport,
   LoopbackTransportLayer,
   makeLoopbackPair,
@@ -37,6 +38,8 @@ import {
 import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
+  CommandId,
+  EntityId,
   PlayerId,
   PlayerName,
   WorldId,
@@ -55,6 +58,11 @@ type Check = {
 
 const ALICE = PlayerId.make('alice')
 const OVERWORLD = WorldId.make('overworld')
+const COMMAND_ID = CommandId.make('command-1')
+const COMMAND_HEADER = { commandId: COMMAND_ID, player: ALICE, world: OVERWORLD, expectedRevision: 1 }
+const ITEM = { item: 'stone', count: 2 }
+const ENTITY_ID = EntityId.make('entity-1')
+const ENTITY = { _tag: 'living' as const, entityId: ENTITY_ID, entityType: 'zombie', at: { x: 1, y: 64, z: 1 }, health: 20, maxHealth: 20 }
 
 /** One sample per tag, so a check can sweep the whole message set. */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
@@ -95,6 +103,33 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     reason: 'occupied',
     revision: 1,
   },
+  AuthoritativeSnapshot: {
+    _tag: 'AuthoritativeSnapshot', world: OVERWORLD, revision: 1,
+    inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
+    vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }],
+    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [ENTITY],
+  },
+  PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } },
+  PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { health: 19, hunger: 18, experience: 0 } },
+  WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: OVERWORLD, revision: 2, state: { timeOfDay: 7000, weather: 'rain' } },
+  ContainerDelta: { _tag: 'ContainerDelta', world: OVERWORLD, revision: 2, state: { containerId: 'chest:1', slots: [ITEM] } },
+  FurnaceDelta: { _tag: 'FurnaceDelta', world: OVERWORLD, revision: 2, state: { furnaceId: 'furnace:1', input: ITEM, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
+  VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: OVERWORLD, revision: 2, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [ITEM], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
+  EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: OVERWORLD, revision: 2, entity: ENTITY },
+  EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: OVERWORLD, revision: 2, entity: { ...ENTITY, health: 19 } },
+  EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: OVERWORLD, revision: 2, entityId: ENTITY_ID },
+  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...COMMAND_HEADER, action: { _tag: 'select-slot', slot: 0 } },
+  PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...COMMAND_HEADER, action: 'respawn' },
+  WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...COMMAND_HEADER, action: { _tag: 'set-time', timeOfDay: 6000 } },
+  ContainerCommand: { _tag: 'ContainerCommand', ...COMMAND_HEADER, containerId: 'chest:1', action: { _tag: 'open' } },
+  FurnaceCommand: { _tag: 'FurnaceCommand', ...COMMAND_HEADER, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
+  VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...COMMAND_HEADER, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
+  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  VehicleCommand: { _tag: 'VehicleCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, action: 'mount' },
+  AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId: COMMAND_ID, world: OVERWORLD, revision: 2 },
+  AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId: COMMAND_ID, world: OVERWORLD, revision: 1, reason: 'stale-revision', resyncRequired: true },
+  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', world: OVERWORLD, lastKnownRevision: 1 },
   Ping: { _tag: 'Ping', nonce: 7 },
   Pong: { _tag: 'Pong', nonce: 7 },
 }
@@ -344,27 +379,16 @@ const terminalIdempotence = Effect.sync((): Check => {
   } satisfies Check
 })
 
-/**
- * "Frames may only be sent from `Connected`. Enforced by `TransportPort`."
- *
- * That is `domain/connection.ts:59`. This measures it. `makeLoopbackPair` is the
- * only transport this repository ships that can succeed, and it holds no
- * reference to a `ConnectionState` at all — it cannot enforce anything, because
- * it has nothing to enforce it against. `disconnectedTransport` refuses every
- * send unconditionally, which is a different property.
- *
- * The gap is not academic. `canSend` exists and is exported, so the invariant is
- * expressible; nothing calls it. `sendMessage` (`domain/transport.ts:53-60`)
- * encodes and writes without consulting a state.
- */
+/** Measure the adapter-level Connected-only transport gate. */
 const sendGuard = Effect.gen(function* () {
   const [client, server] = yield* makeLoopbackPair
 
   const beforeHandshake: ConnectionState = { _tag: 'Connecting', attempt: 1 }
   const closed: ConnectionState = { _tag: 'Closed', reason: 'closed' }
+  const gated = connectionGatedTransport(Effect.succeed(beforeHandshake), client)
 
   const attempt = yield* Effect.either(
-    sendMessage(SAMPLES.Chat).pipe(Effect.provide(LoopbackTransportLayer(client))),
+    sendMessage(SAMPLES.Chat).pipe(Effect.provide(LoopbackTransportLayer(gated))),
   )
   const delivered = yield* Queue.size(server.inbound)
 
@@ -375,7 +399,7 @@ const sendGuard = Effect.gen(function* () {
 
   return {
     id: delivered > 0 ? 'M4' : 'ok',
-    title: 'nothing enforces "frames may only be sent from Connected"',
+    title: 'Connected-only transport gate',
     finding: delivered > 0,
     lines: [
       `  canSend(Connecting)                 ${String(canSend(beforeHandshake))}`,
@@ -384,15 +408,9 @@ const sendGuard = Effect.gen(function* () {
       `  frames waiting at the far end       ${String(delivered)}`,
       `  disconnectedTransport refuses       ${Either.isLeft(refused) ? `yes: ${refused.left._tag}` : 'no'}`,
       '',
-      '  domain/connection.ts:59 says the invariant is "Enforced by `TransportPort`".',
-      '  `makeLoopbackPair` holds no ConnectionState and cannot enforce it; `sendMessage`',
-      '  (domain/transport.ts:53-60) encodes and writes without consulting one.',
-      '  `disconnectedTransport` refuses every send unconditionally, which is a different',
-      '  property — it proves the failure path is typed, not that the guard exists.',
-      '',
-      '  `canSend` is exported and is never called anywhere in the repository, so the invariant',
-      '  is expressible and unexpressed. Either an adapter is the intended enforcement point and',
-      '  the comment should say which one, or `sendMessage` should take the state.',
+      '  `connectionGatedTransport` reads the supplied state for every send and returns a typed',
+      '  TransportError before delegating unless that state is Connected.',
+      '  Raw transports remain available for handshake traffic and backward compatibility.',
     ],
   } satisfies Check
 })

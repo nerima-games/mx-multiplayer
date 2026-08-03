@@ -40,6 +40,7 @@ import {
 } from '../src/domain/connection'
 import {
   LoopbackTransportLayer,
+  connectionGatedTransport,
   makeLoopbackPair,
   sendMessage,
 } from '../src/domain/transport'
@@ -56,56 +57,48 @@ const reasonOf = (text: string): string => {
   return Either.isLeft(result) ? result.left.reason : 'accepted'
 }
 
-describe('M1 — the version is checked AFTER the message shape, not before it', () => {
+describe('M1 — the version is checked before the message shape', () => {
   // DN-1: 「バージョンはメッセージの外側に置く。内側に置くと、未知バージョンの
   // フレームを弾くためにまず『もう存在しないかもしれないメッセージ形状』を
   // パースする必要が生じるため」。`domain/protocol.ts:205-211` repeats it.
   //
-  // `Frame` really does carry the version on the envelope. But `decodeFrame`
-  // (`domain/codec.ts:89-99`) decodes the whole `Frame` — `message:
-  // NetworkMessage` included — and only then compares the version at `:100`. So
-  // the message shape IS parsed first, and a frame from a build one version
-  // ahead is reported as corruption the moment it carries anything this build's
-  // schema does not already accept.
-  //
-  // The two reasons are not interchangeable: DN-1 assigns them opposite
-  // responses. `malformed-frame` drops the frame; `unsupported-protocol-version`
-  // drops the peer and tells the user their client is out of date. A rolling
-  // upgrade — the one scenario DN-1 exists for — therefore reads as "corrupt
-  // data".
+  // `decodeFrame` decodes only this stable envelope first and deliberately
+  // leaves `message` opaque. A supported version then enters the current
+  // `NetworkMessage` decoder; an unsupported version never does.
   const fromTheFuture = (message: unknown): string =>
     JSON.stringify({ protocolVersion: PROTOCOL_VERSION + 1, message })
 
-  it.effect('pins the current behaviour: a v+1 frame carrying a new tag reads as malformed', () =>
+  it.effect('a v+1 frame carrying a new tag reads as an unsupported version', () =>
     Effect.sync(() => {
       // Exactly what a build one version ahead would put on the wire when it
       // adds a message. `docs/design-notes.md` lists `EntitySnapshot` among the
       // reference's 18 message types, so this is the likely first addition.
-      expect(reasonOf(fromTheFuture({ _tag: 'EntitySnapshot', entities: [] }))).toBe('malformed-frame')
-    }),
-  )
-
-  it.effect('pins the current behaviour: a v+1 frame that renamed a field reads as malformed', () =>
-    Effect.sync(() => {
-      expect(reasonOf(fromTheFuture({ _tag: 'Ping', requestId: 7 }))).toBe('malformed-frame')
-    }),
-  )
-
-  it.effect('pins the current behaviour: a v+1 frame that widened a field reads as malformed', () =>
-    Effect.sync(() => {
-      // `WorldInfo.seed` is `int()` here. A newer build allowing a fractional
-      // seed produces a frame this one calls corrupt rather than newer.
-      expect(reasonOf(fromTheFuture({ _tag: 'WorldInfo', world: 'overworld', seed: 1.5 }))).toBe(
-        'malformed-frame',
+      expect(reasonOf(fromTheFuture({ _tag: 'EntitySnapshot', entities: [] }))).toBe(
+        'unsupported-protocol-version',
       )
     }),
   )
 
-  it.effect('the one case that works is a version bump that changes no message', () =>
+  it.effect('a v+1 frame that renamed a field reads as an unsupported version', () =>
     Effect.sync(() => {
-      // Which is why both existing version tests pass: they forge a v+1 frame
-      // around a message THIS build knows. That is the only shape of protocol
-      // bump the check currently handles, and it is the least likely one.
+      expect(reasonOf(fromTheFuture({ _tag: 'Ping', requestId: 7 }))).toBe(
+        'unsupported-protocol-version',
+      )
+    }),
+  )
+
+  it.effect('a v+1 frame that widened a field reads as an unsupported version', () =>
+    Effect.sync(() => {
+      // `WorldInfo.seed` is `int()` here. A newer build allowing a fractional
+      // seed must still be identified as newer before this schema is applied.
+      expect(reasonOf(fromTheFuture({ _tag: 'WorldInfo', world: 'overworld', seed: 1.5 }))).toBe(
+        'unsupported-protocol-version',
+      )
+    }),
+  )
+
+  it.effect('also rejects a version bump whose message still has a known shape', () =>
+    Effect.sync(() => {
       const knownShape = Either.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, ping))
       expect(reasonOf(knownShape)).toBe('unsupported-protocol-version')
     }),
@@ -206,42 +199,40 @@ describe('M3 — a settled connection rejects the events a real socket delivers 
   )
 })
 
-describe('M4 — nothing enforces "frames may only be sent from Connected"', () => {
-  // `domain/connection.ts:59` says the invariant is "Enforced by
-  // `TransportPort`". `makeLoopbackPair` holds no `ConnectionState` and cannot
-  // enforce anything; `sendMessage` (`domain/transport.ts:53-60`) encodes and
-  // writes without consulting one. `disconnectedTransport` refuses every send
-  // unconditionally, which proves the failure path is typed — a different
-  // property.
-  //
-  // `canSend` is exported, expresses the invariant exactly, and is called
-  // nowhere in the repository.
-  it.effect('pins the current behaviour: a frame sent from Connecting is delivered anyway', () =>
+describe('M4 — the transport boundary enforces Connected-only sending', () => {
+  it.effect('refuses a frame from Connecting with a typed transport failure', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair
       const connecting: ConnectionState = { _tag: 'Connecting', attempt: 1 }
+      const gated = connectionGatedTransport(Effect.succeed(connecting), client)
 
       expect(canSend(connecting)).toBe(false)
-
-      yield* sendMessage(chat).pipe(Effect.provide(LoopbackTransportLayer(client)))
-
-      // The transport neither knew nor asked.
-      expect(yield* Queue.size(server.inbound)).toBe(1)
+      const result = yield* sendMessage(chat).pipe(
+        Effect.provide(LoopbackTransportLayer(gated)),
+        Effect.either,
+      )
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') {
+        expect(result.left).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
+      }
+      expect(yield* Queue.size(server.inbound)).toBe(0)
     }),
   )
 
-  it.effect('pins the current behaviour: a frame sent from Closed is delivered anyway', () =>
+  it.effect('refuses a frame from Closed without producing protocol errors', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair
       const closed: ConnectionState = { _tag: 'Closed', reason: 'closed' }
+      const gated = connectionGatedTransport(Effect.succeed(closed), client)
 
       expect(canSend(closed)).toBe(false)
-
-      yield* sendMessage(chat).pipe(Effect.provide(LoopbackTransportLayer(client)))
-      const arrived = Array.from(yield* Queue.takeAll(server.inbound))
-
-      expect(arrived).toHaveLength(1)
-      expect(Either.isRight(decodeFrame(arrived[0] ?? ''))).toBe(true)
+      const result = yield* sendMessage(chat).pipe(
+        Effect.provide(LoopbackTransportLayer(gated)),
+        Effect.either,
+      )
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') expect(result.left._tag).toBe('TransportError')
+      expect(yield* Queue.size(server.inbound)).toBe(0)
     }),
   )
 })

@@ -35,13 +35,18 @@ describe('public API surface', () => {
         'runTransitions',
         'canSend',
         'isSettled',
+        // authoritative resync admission
+        'AuthoritativeRevisionTracker',
         // transport
         'TransportPort',
+        'connectionGatedTransport',
         'sendMessage',
         'receiveMessage',
         'makeLoopbackPair',
         'LoopbackTransportLayer',
         'disconnectedTransport',
+        // deterministic client-side snapshot interpolation
+        'SnapshotInterpolator',
         // stages — what mc-compose merges and what a consumer names
         'MULTIPLAYER_STAGE_IDS',
         'UPSTREAM_STAGE_IDS',
