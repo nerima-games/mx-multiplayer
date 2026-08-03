@@ -235,9 +235,15 @@ const ItemStack = Schema.Struct({
   count: Schema.Number.pipe(Schema.int(), Schema.positive()),
 })
 
+const ItemDurability = Schema.Struct({
+  current: Schema.Number.pipe(Schema.int(), Schema.positive()),
+  max: Schema.Number.pipe(Schema.int(), Schema.positive()),
+})
+
 const InventoryState = Schema.Struct({
   slots: Schema.Array(Schema.NullOr(ItemStack)),
   selectedSlot: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  durability: Schema.optional(Schema.Array(Schema.NullOr(ItemDurability))),
 })
 
 const VitalsState = Schema.Struct({
@@ -357,6 +363,14 @@ export const PlayerVitalsDelta = Schema.TaggedStruct('PlayerVitalsDelta', {
   player: PlayerId,
   state: VitalsState,
 })
+export const PlayerFishingDelta = Schema.TaggedStruct('PlayerFishingDelta', {
+  ...DeltaHeader,
+  player: PlayerId,
+  state: Schema.Struct({
+    phase: Schema.Literal('idle', 'waiting', 'bite', 'escaped'),
+    result: Schema.Literal('idle', 'cast', 'bite', 'escaped', 'caught', 'too-early', 'too-late', 'lost-water', 'cancelled', 'invalid-rod', 'no-water'),
+  }),
+})
 export const WorldTimeWeatherDelta = Schema.TaggedStruct('WorldTimeWeatherDelta', {
   ...DeltaHeader,
   state: TimeWeatherState,
@@ -388,6 +402,7 @@ export const EntityDespawnDelta = Schema.TaggedStruct('EntityDespawnDelta', {
 export const AuthoritativeDelta = Schema.Union(
   PlayerInventoryDelta,
   PlayerVitalsDelta,
+  PlayerFishingDelta,
   WorldTimeWeatherDelta,
   ContainerDelta,
   FurnaceDelta,
@@ -533,6 +548,10 @@ export const IgniteTntCommand = Schema.TaggedStruct('IgniteTntCommand', {
 export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', {
   ...CommandHeader,
 })
+export const FishingCommand = Schema.TaggedStruct('FishingCommand', {
+  ...CommandHeader,
+  action: Schema.Literal('cast', 'reel'),
+})
 export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   ...CommandHeader,
   entityId: EntityId,
@@ -553,6 +572,7 @@ export const AuthoritativeCommand = Schema.Union(
   BowUseCommand,
   IgniteTntCommand,
   EnderPearlCommand,
+  FishingCommand,
   VehicleCommand,
 )
 export type AuthoritativeCommand = typeof AuthoritativeCommand.Type
@@ -654,6 +674,7 @@ export const MESSAGE_TAGS = [
   'AuthoritativeSnapshot',
   'PlayerInventoryDelta',
   'PlayerVitalsDelta',
+  'PlayerFishingDelta',
   'WorldTimeWeatherDelta',
   'ContainerDelta',
   'FurnaceDelta',
@@ -672,6 +693,7 @@ export const MESSAGE_TAGS = [
   'BowUseCommand',
   'IgniteTntCommand',
   'EnderPearlCommand',
+  'FishingCommand',
   'VehicleCommand',
   'AuthoritativeCommandAccepted',
   'AuthoritativeCommandRejected',

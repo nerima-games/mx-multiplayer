@@ -41,6 +41,7 @@ describe('authoritative protocol schemas', () => {
       command('inventory'),
       { ...command('vitals'), _tag: 'PlayerVitalsCommand', action: 'respawn' },
       { ...command('ender-pearl'), _tag: 'EnderPearlCommand' },
+      { ...command('fishing'), _tag: 'FishingCommand', action: 'cast' },
       { ...command('time'), _tag: 'WorldTimeWeatherCommand', action: { _tag: 'set-time', timeOfDay: 6000 } },
       { ...command('container'), _tag: 'ContainerCommand', containerId: 'chest:1', action: { _tag: 'open' } },
       { ...command('furnace'), _tag: 'FurnaceCommand', furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
