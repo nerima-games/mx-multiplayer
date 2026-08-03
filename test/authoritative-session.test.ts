@@ -24,7 +24,7 @@ const snapshot: AuthoritativeSnapshot = {
   villagerTrades: [],
 }
 
-const command = (id: string, expectedRevision = 4): AuthoritativeCommand => ({
+const command = (id: string, expectedRevision = 4): Extract<AuthoritativeCommand, { readonly _tag: 'PlayerInventoryCommand' }> => ({
   _tag: 'PlayerInventoryCommand',
   commandId: CommandId.make(id),
   player,
@@ -39,6 +39,7 @@ describe('authoritative protocol schemas', () => {
 
     const commands: ReadonlyArray<AuthoritativeCommand> = [
       command('inventory'),
+      { ...command('swap-inventory'), action: { _tag: 'swap-items', source: 0, destination: 1 } },
       { ...command('vitals'), _tag: 'PlayerVitalsCommand', action: 'respawn' },
       { ...command('ender-pearl'), _tag: 'EnderPearlCommand' },
       { ...command('bucket'), _tag: 'BucketUseCommand' },
@@ -97,6 +98,7 @@ describe('authoritative protocol schemas', () => {
       { ...command('old-action'), action: 'select-slot' },
       { ...command('missing-slot'), action: { _tag: 'select-slot' } },
       { ...command('zero-count'), action: { _tag: 'move-item', source: 0, destination: 1, count: 0 } },
+      { ...command('swap-missing-destination'), action: { _tag: 'swap-items', source: 0 } },
       {
         ...command('wrong-weather-payload'),
         _tag: 'WorldTimeWeatherCommand',

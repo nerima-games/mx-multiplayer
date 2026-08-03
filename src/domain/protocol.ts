@@ -432,6 +432,10 @@ export const PlayerInventoryAction = Schema.Union(
     destination: CommandSlotIndex,
     count: CommandItemCount,
   }),
+  Schema.TaggedStruct('swap-items', {
+    source: CommandSlotIndex,
+    destination: CommandSlotIndex,
+  }),
   Schema.TaggedStruct('drop-item', {
     source: CommandSlotIndex,
     destination: Schema.Literal('world'),
