@@ -97,6 +97,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...commandHeader, entityId },
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 0 } },
+  EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
   VehicleCommand: { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', at: { x: 2, y: 64, z: 2 } } },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, world: overworld, revision: 13 },
   AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, world: overworld, revision: 12, reason: 'stale-revision', resyncRequired: true },

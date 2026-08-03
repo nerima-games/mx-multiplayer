@@ -127,6 +127,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
+  EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   VehicleCommand: { _tag: 'VehicleCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, action: 'mount' },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId: COMMAND_ID, world: OVERWORLD, revision: 2 },

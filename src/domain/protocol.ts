@@ -530,6 +530,9 @@ export const IgniteTntCommand = Schema.TaggedStruct('IgniteTntCommand', {
   ...CommandHeader,
   at: BlockPos,
 })
+export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', {
+  ...CommandHeader,
+})
 export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   ...CommandHeader,
   entityId: EntityId,
@@ -549,6 +552,7 @@ export const AuthoritativeCommand = Schema.Union(
   EntityPickupCommand,
   BowUseCommand,
   IgniteTntCommand,
+  EnderPearlCommand,
   VehicleCommand,
 )
 export type AuthoritativeCommand = typeof AuthoritativeCommand.Type
@@ -667,6 +671,7 @@ export const MESSAGE_TAGS = [
   'EntityPickupCommand',
   'BowUseCommand',
   'IgniteTntCommand',
+  'EnderPearlCommand',
   'VehicleCommand',
   'AuthoritativeCommandAccepted',
   'AuthoritativeCommandRejected',
