@@ -284,6 +284,12 @@ export const LivingEntityState = Schema.TaggedStruct('living', {
   at: Vec3,
   health: Schema.Number.pipe(Schema.finite(), Schema.positive()),
   maxHealth: Schema.Number.pipe(Schema.finite(), Schema.positive()),
+  // Optional so peers can continue decoding living entities without AI state.
+  mobState: Schema.optional(Schema.Struct({
+    attackCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+    motionPhase: Schema.Number.pipe(Schema.finite()),
+    provoked: Schema.Boolean,
+  })),
 })
 export const ItemDropEntityState = Schema.TaggedStruct('item-drop', {
   entityId: EntityId,
