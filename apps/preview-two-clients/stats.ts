@@ -130,6 +130,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...COMMAND_HEADER },
+  VehicleUseCommand: { _tag: 'VehicleUseCommand', ...COMMAND_HEADER },
   FishingCommand: { _tag: 'FishingCommand', ...COMMAND_HEADER, action: 'cast' },
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   VehicleCommand: { _tag: 'VehicleCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, action: 'mount' },
