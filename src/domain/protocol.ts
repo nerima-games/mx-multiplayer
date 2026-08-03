@@ -563,7 +563,7 @@ export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   entityId: EntityId,
   action: Schema.Union(
     Schema.Literal('mount', 'dismount'),
-    Schema.TaggedStruct('move', { at: Vec3 }),
+    Schema.TaggedStruct('move', { direction: Schema.Literal('forward', 'backward') }),
   ),
 })
 export const AuthoritativeCommand = Schema.Union(
