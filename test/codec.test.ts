@@ -95,6 +95,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...commandHeader, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
   EntityAttackCommand: { _tag: 'EntityAttackCommand', ...commandHeader, entityId },
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...commandHeader, entityId },
+  BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
   VehicleCommand: { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', at: { x: 2, y: 64, z: 2 } } },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, world: overworld, revision: 13 },
   AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, world: overworld, revision: 12, reason: 'stale-revision', resyncRequired: true },

@@ -309,10 +309,19 @@ export const VehicleEntityState = Schema.TaggedStruct('vehicle', {
   at: Vec3,
   occupant: Schema.NullOr(PlayerId),
 })
+export const ArrowEntityState = Schema.TaggedStruct('arrow', {
+  entityId: EntityId,
+  at: Vec3,
+  velocity: Vec3,
+  damage: Schema.Number.pipe(Schema.finite(), Schema.positive()),
+  owner: PlayerId,
+  ageTicks: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+})
 export const AuthoritativeEntityState = Schema.Union(
   LivingEntityState,
   ItemDropEntityState,
   VehicleEntityState,
+  ArrowEntityState,
 )
 export type AuthoritativeEntityState = typeof AuthoritativeEntityState.Type
 
@@ -506,6 +515,10 @@ export const EntityPickupCommand = Schema.TaggedStruct('EntityPickupCommand', {
   ...CommandHeader,
   entityId: EntityId,
 })
+export const BowUseCommand = Schema.TaggedStruct('BowUseCommand', {
+  ...CommandHeader,
+  action: Schema.Literal('start', 'release'),
+})
 export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   ...CommandHeader,
   entityId: EntityId,
@@ -523,6 +536,7 @@ export const AuthoritativeCommand = Schema.Union(
   VillagerTradeCommand,
   EntityAttackCommand,
   EntityPickupCommand,
+  BowUseCommand,
   VehicleCommand,
 )
 export type AuthoritativeCommand = typeof AuthoritativeCommand.Type
@@ -639,6 +653,7 @@ export const MESSAGE_TAGS = [
   'VillagerTradeCommand',
   'EntityAttackCommand',
   'EntityPickupCommand',
+  'BowUseCommand',
   'VehicleCommand',
   'AuthoritativeCommandAccepted',
   'AuthoritativeCommandRejected',

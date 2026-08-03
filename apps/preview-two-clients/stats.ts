@@ -125,6 +125,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   FurnaceCommand: { _tag: 'FurnaceCommand', ...COMMAND_HEADER, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
   VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...COMMAND_HEADER, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
   EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   VehicleCommand: { _tag: 'VehicleCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, action: 'mount' },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId: COMMAND_ID, world: OVERWORLD, revision: 2 },
