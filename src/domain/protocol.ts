@@ -251,8 +251,12 @@ const TimeWeatherState = Schema.Struct({
   weather: Schema.Literal('clear', 'rain', 'thunder'),
 })
 
+export const ContainerKind = Schema.Literal('chest', 'shulker_box', 'dispenser', 'hopper')
+export type ContainerKind = typeof ContainerKind.Type
+
 const ContainerState = Schema.Struct({
   containerId: Schema.String.pipe(Schema.minLength(1)),
+  kind: ContainerKind,
   slots: Schema.Array(Schema.NullOr(ItemStack)),
 })
 

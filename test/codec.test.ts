@@ -81,7 +81,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: overworld, revision: 13, player: alice, state: { slots: [item], selectedSlot: 0 } },
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: overworld, revision: 13, player: alice, state: { health: 19, hunger: 18, experience: 1 } },
   WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: overworld, revision: 13, state: { timeOfDay: 7000, weather: 'rain' } },
-  ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'chest:1', slots: [item] } },
+  ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'chest:1', kind: 'chest', slots: [item] } },
   FurnaceDelta: { _tag: 'FurnaceDelta', world: overworld, revision: 13, state: { furnaceId: 'furnace:1', input: item, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
   VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: overworld, revision: 13, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [item], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: overworld, revision: 13, entity: living },
@@ -345,9 +345,19 @@ describe('malformed input', () => {
           revision: 0,
         },
       })
+      const missingContainerKind = JSON.stringify({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          _tag: 'ContainerDelta',
+          world: 'overworld',
+          revision: 0,
+          state: { containerId: 'chest:1', slots: [] },
+        },
+      })
 
       expect(rejected(malformedPlayer)?.reason).toBe('malformed-frame')
       expect(rejected(unknownReason)?.reason).toBe('malformed-frame')
+      expect(rejected(missingContainerKind)?.reason).toBe('malformed-frame')
     }),
   )
 

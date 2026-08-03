@@ -112,7 +112,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } },
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { health: 19, hunger: 18, experience: 0 } },
   WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: OVERWORLD, revision: 2, state: { timeOfDay: 7000, weather: 'rain' } },
-  ContainerDelta: { _tag: 'ContainerDelta', world: OVERWORLD, revision: 2, state: { containerId: 'chest:1', slots: [ITEM] } },
+  ContainerDelta: { _tag: 'ContainerDelta', world: OVERWORLD, revision: 2, state: { containerId: 'chest:1', kind: 'chest', slots: [ITEM] } },
   FurnaceDelta: { _tag: 'FurnaceDelta', world: OVERWORLD, revision: 2, state: { furnaceId: 'furnace:1', input: ITEM, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
   VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: OVERWORLD, revision: 2, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [ITEM], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: OVERWORLD, revision: 2, entity: ENTITY },
