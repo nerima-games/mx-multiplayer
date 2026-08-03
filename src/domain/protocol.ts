@@ -317,11 +317,18 @@ export const ArrowEntityState = Schema.TaggedStruct('arrow', {
   owner: PlayerId,
   ageTicks: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
 })
+export const PrimedTntEntityState = Schema.TaggedStruct('primed-tnt', {
+  entityId: EntityId,
+  at: Vec3,
+  burnedSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  owner: PlayerId,
+})
 export const AuthoritativeEntityState = Schema.Union(
   LivingEntityState,
   ItemDropEntityState,
   VehicleEntityState,
   ArrowEntityState,
+  PrimedTntEntityState,
 )
 export type AuthoritativeEntityState = typeof AuthoritativeEntityState.Type
 
@@ -519,6 +526,10 @@ export const BowUseCommand = Schema.TaggedStruct('BowUseCommand', {
   ...CommandHeader,
   action: Schema.Literal('start', 'release'),
 })
+export const IgniteTntCommand = Schema.TaggedStruct('IgniteTntCommand', {
+  ...CommandHeader,
+  at: BlockPos,
+})
 export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   ...CommandHeader,
   entityId: EntityId,
@@ -537,6 +548,7 @@ export const AuthoritativeCommand = Schema.Union(
   EntityAttackCommand,
   EntityPickupCommand,
   BowUseCommand,
+  IgniteTntCommand,
   VehicleCommand,
 )
 export type AuthoritativeCommand = typeof AuthoritativeCommand.Type
@@ -654,6 +666,7 @@ export const MESSAGE_TAGS = [
   'EntityAttackCommand',
   'EntityPickupCommand',
   'BowUseCommand',
+  'IgniteTntCommand',
   'VehicleCommand',
   'AuthoritativeCommandAccepted',
   'AuthoritativeCommandRejected',
