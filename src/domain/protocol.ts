@@ -289,6 +289,8 @@ export const ItemDropEntityState = Schema.TaggedStruct('item-drop', {
   entityId: EntityId,
   at: Vec3,
   stack: ItemStack,
+  // Optional so snapshots written before item aging remain decodable.
+  ageTicks: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
 })
 export const VehicleEntityState = Schema.TaggedStruct('vehicle', {
   entityId: EntityId,
