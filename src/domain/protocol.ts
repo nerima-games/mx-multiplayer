@@ -289,6 +289,11 @@ export const LivingEntityState = Schema.TaggedStruct('living', {
     attackCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
     motionPhase: Schema.Number.pipe(Schema.finite()),
     provoked: Schema.Boolean,
+    // Host-owned lifecycle data. Optional fields preserve older reconnect snapshots.
+    ageTicks: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
+    persistent: Schema.optional(Schema.Boolean),
+    named: Schema.optional(Schema.Boolean),
+    tamed: Schema.optional(Schema.Boolean),
   })),
 })
 export const ItemDropEntityState = Schema.TaggedStruct('item-drop', {

@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Either, Schema } from 'effect'
 import {
   AuthoritativeCommand,
+  AuthoritativeEntityState,
   AuthoritativeSession,
   AuthoritativeSnapshot,
   CommandId,
@@ -53,6 +54,27 @@ describe('authoritative protocol schemas', () => {
     for (const value of commands) {
       expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeCommand)(value))).toBe(true)
     }
+  })
+
+  it('decodes optional hostile lifecycle state without requiring it from older peers', () => {
+    const entity: AuthoritativeEntityState = {
+      _tag: 'living',
+      entityId: 'zombie-1' as AuthoritativeEntityState['entityId'],
+      entityType: 'zombie',
+      at: { x: 0, y: 64, z: 0 },
+      health: 20,
+      maxHealth: 20,
+      mobState: {
+        attackCooldownSecs: 0,
+        motionPhase: 0,
+        provoked: false,
+        ageTicks: 600,
+        persistent: true,
+        named: true,
+        tamed: true,
+      },
+    }
+    expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeEntityState)(entity))).toBe(true)
   })
 
   it('rejects malformed authoritative values', () => {
