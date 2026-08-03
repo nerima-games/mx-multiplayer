@@ -548,6 +548,9 @@ export const IgniteTntCommand = Schema.TaggedStruct('IgniteTntCommand', {
 export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', {
   ...CommandHeader,
 })
+export const BucketUseCommand = Schema.TaggedStruct('BucketUseCommand', {
+  ...CommandHeader,
+})
 export const FishingCommand = Schema.TaggedStruct('FishingCommand', {
   ...CommandHeader,
   action: Schema.Literal('cast', 'reel'),
@@ -572,6 +575,7 @@ export const AuthoritativeCommand = Schema.Union(
   BowUseCommand,
   IgniteTntCommand,
   EnderPearlCommand,
+  BucketUseCommand,
   FishingCommand,
   VehicleCommand,
 )
@@ -693,6 +697,7 @@ export const MESSAGE_TAGS = [
   'BowUseCommand',
   'IgniteTntCommand',
   'EnderPearlCommand',
+  'BucketUseCommand',
   'FishingCommand',
   'VehicleCommand',
   'AuthoritativeCommandAccepted',
