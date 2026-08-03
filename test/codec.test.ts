@@ -181,6 +181,7 @@ describe('frame round trip', () => {
       const commands: ReadonlyArray<NetworkMessage> = [
         { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 4 } },
         { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'move-item', source: 1, destination: 7, count: 2 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'swap-items', source: 1, destination: 7 } },
         { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'drop-item', source: 7, destination: 'world', count: 1 } },
         { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 18_000 } },
         { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-weather', weather: 'thunder' } },
@@ -392,6 +393,7 @@ describe('malformed input', () => {
         'select-slot',
         { _tag: 'select-slot' },
         { _tag: 'move-item', source: 0, destination: 1, count: 0 },
+        { _tag: 'swap-items', source: 0 },
         { _tag: 'drop-item', source: 0, destination: 1, count: 1 },
         { _tag: 'set-time', weather: 'clear' },
         { _tag: 'set-weather', weather: 'snow' },
