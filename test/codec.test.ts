@@ -18,7 +18,7 @@ const alice = PlayerId.make('alice')
 const overworld = WorldId.make('overworld')
 const commandId = CommandId.make('command-1')
 const commandHeader = { commandId, player: alice, world: overworld, expectedRevision: 12 }
-const item = { item: 'stone', count: 2 }
+const item = { item: 'stone', count: 2, durability: { current: 42, max: 64 } }
 const entityId = EntityId.make('entity-1')
 const living = { _tag: 'living' as const, entityId, entityType: 'zombie', at: { x: 1, y: 64, z: 1 }, health: 20, maxHealth: 20 }
 
@@ -82,7 +82,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: overworld, revision: 13, player: alice, state: { health: 19, hunger: 18, experience: 1 } },
   PlayerFishingDelta: { _tag: 'PlayerFishingDelta', world: overworld, revision: 13, player: alice, state: { phase: 'waiting', result: 'cast' } },
   WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: overworld, revision: 13, state: { timeOfDay: 7000, weather: 'rain' } },
-  ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'chest:1', slots: [item] } },
+  ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'chest:1', kind: 'chest', slots: [item] } },
   FurnaceDelta: { _tag: 'FurnaceDelta', world: overworld, revision: 13, state: { furnaceId: 'furnace:1', input: item, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
   VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: overworld, revision: 13, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [item], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: overworld, revision: 13, entity: living },
