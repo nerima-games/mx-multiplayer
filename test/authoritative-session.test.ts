@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Either, Schema } from 'effect'
 import {
   AuthoritativeCommand,
+  AuthoritativeEntityState,
   AuthoritativeSession,
   AuthoritativeSnapshot,
   CommandId,
@@ -23,7 +24,7 @@ const snapshot: AuthoritativeSnapshot = {
   villagerTrades: [],
 }
 
-const command = (id: string, expectedRevision = 4): AuthoritativeCommand => ({
+const command = (id: string, expectedRevision = 4): Extract<AuthoritativeCommand, { readonly _tag: 'PlayerInventoryCommand' }> => ({
   _tag: 'PlayerInventoryCommand',
   commandId: CommandId.make(id),
   player,
@@ -38,7 +39,12 @@ describe('authoritative protocol schemas', () => {
 
     const commands: ReadonlyArray<AuthoritativeCommand> = [
       command('inventory'),
+      { ...command('swap-inventory'), action: { _tag: 'swap-items', source: 0, destination: 1 } },
       { ...command('vitals'), _tag: 'PlayerVitalsCommand', action: 'respawn' },
+      { ...command('ender-pearl'), _tag: 'EnderPearlCommand' },
+      { ...command('bucket'), _tag: 'BucketUseCommand' },
+      { ...command('vehicle-use'), _tag: 'VehicleUseCommand' },
+      { ...command('fishing'), _tag: 'FishingCommand', action: 'cast' },
       { ...command('time'), _tag: 'WorldTimeWeatherCommand', action: { _tag: 'set-time', timeOfDay: 6000 } },
       { ...command('container'), _tag: 'ContainerCommand', containerId: 'chest:1', action: { _tag: 'open' } },
       { ...command('furnace'), _tag: 'FurnaceCommand', furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
@@ -53,6 +59,27 @@ describe('authoritative protocol schemas', () => {
     for (const value of commands) {
       expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeCommand)(value))).toBe(true)
     }
+  })
+
+  it('decodes optional hostile lifecycle state without requiring it from older peers', () => {
+    const entity: AuthoritativeEntityState = {
+      _tag: 'living',
+      entityId: 'zombie-1' as AuthoritativeEntityState['entityId'],
+      entityType: 'zombie',
+      at: { x: 0, y: 64, z: 0 },
+      health: 20,
+      maxHealth: 20,
+      mobState: {
+        attackCooldownSecs: 0,
+        motionPhase: 0,
+        provoked: false,
+        ageTicks: 600,
+        persistent: true,
+        named: true,
+        tamed: true,
+      },
+    }
+    expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeEntityState)(entity))).toBe(true)
   })
 
   it('rejects malformed authoritative values', () => {
@@ -71,6 +98,7 @@ describe('authoritative protocol schemas', () => {
       { ...command('old-action'), action: 'select-slot' },
       { ...command('missing-slot'), action: { _tag: 'select-slot' } },
       { ...command('zero-count'), action: { _tag: 'move-item', source: 0, destination: 1, count: 0 } },
+      { ...command('swap-missing-destination'), action: { _tag: 'swap-items', source: 0 } },
       {
         ...command('wrong-weather-payload'),
         _tag: 'WorldTimeWeatherCommand',

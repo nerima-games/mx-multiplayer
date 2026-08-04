@@ -238,7 +238,12 @@ const ItemDurability = Schema.Struct({
 const ItemStack = Schema.Struct({
   item: Schema.String.pipe(Schema.minLength(1)),
   count: Schema.Number.pipe(Schema.int(), Schema.positive()),
-  durability: Schema.optional(ItemDurability),
+  durability: Schema.optional(
+    Schema.Struct({
+      current: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+      max: Schema.Number.pipe(Schema.int(), Schema.positive()),
+    }),
+  ),
 })
 
 export const EquipmentSlot = Schema.Literal('head', 'chest', 'legs', 'feet', 'offhand')
@@ -354,6 +359,8 @@ export const AuthoritativeEntityState = Schema.Union(
   ArrowEntityState,
   PrimedTntEntityState,
   VehicleEntityState,
+  ArrowEntityState,
+  PrimedTntEntityState,
 )
 export type AuthoritativeEntityState = typeof AuthoritativeEntityState.Type
 
@@ -453,6 +460,10 @@ export const PlayerInventoryAction = Schema.Union(
     source: CommandSlotIndex,
     destination: CommandSlotIndex,
     count: CommandItemCount,
+  }),
+  Schema.TaggedStruct('swap-items', {
+    source: CommandSlotIndex,
+    destination: CommandSlotIndex,
   }),
   Schema.TaggedStruct('drop-item', {
     source: CommandSlotIndex,
@@ -595,11 +606,11 @@ export type FishingCommand = typeof FishingCommand.Type
 export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   ...CommandHeader,
   entityId: EntityId,
-    action: Schema.Union(
-      Schema.Literal('mount', 'dismount'),
-      Schema.TaggedStruct('move', { direction: Schema.Literal('forward', 'backward') }),
-    ).annotations(strictAction),
-  })
+  action: Schema.Union(
+    Schema.Literal('mount', 'dismount'),
+    Schema.TaggedStruct('move', { direction: Schema.Literal('forward', 'backward') }),
+  ).annotations(strictAction),
+})
 export const AuthoritativeCommand = Schema.Union(
   PlayerInventoryCommand,
   PlayerVitalsCommand,
