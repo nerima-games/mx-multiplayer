@@ -19,6 +19,7 @@ describe('public API surface', () => {
         'Vec3',
         'BlockPos',
         'Orientation',
+        'PoweredRailSnapshot',
         'EndPortalUseCommand',
         'RealmTransferSnapshot',
         'NetworkMessage',

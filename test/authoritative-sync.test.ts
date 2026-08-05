@@ -15,6 +15,7 @@ const nether = WorldId.make('nether')
 const snapshot = (world: WorldId, revision: number): WorldSnapshot => ({
   _tag: 'WorldSnapshot',
   blocks: [],
+  poweredRails: [],
   players: [
     {
       at: { x: 0, y: 64, z: 0 },

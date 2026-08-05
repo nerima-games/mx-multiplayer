@@ -181,6 +181,13 @@ export const BlockMutationSnapshot = Schema.Struct({
 })
 export type BlockMutationSnapshot = typeof BlockMutationSnapshot.Type
 
+/** The authoritative powered state of one rail block in a world snapshot. */
+export const PoweredRailSnapshot = Schema.Struct({
+  at: BlockPos,
+  powered: Schema.Boolean,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type PoweredRailSnapshot = typeof PoweredRailSnapshot.Type
+
 /**
  * Complete state needed by a late joiner or reconnecting client.
  *
@@ -194,6 +201,7 @@ export const WorldSnapshot = Schema.TaggedStruct('WorldSnapshot', {
   revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
   players: Schema.Array(PlayerSnapshot),
   blocks: Schema.Array(BlockMutationSnapshot),
+  poweredRails: Schema.Array(PoweredRailSnapshot),
 })
 export type WorldSnapshot = typeof WorldSnapshot.Type
 

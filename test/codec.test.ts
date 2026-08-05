@@ -76,6 +76,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
       { world: overworld, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
       { world: overworld, at: { x: -1, y: 0, z: -3 }, block: null },
     ],
+    poweredRails: [{ at: { x: 2, y: 64, z: 3 }, powered: true }],
   },
   BlockMutationRejected: {
     _tag: 'BlockMutationRejected',
@@ -95,7 +96,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   RealmTransferSnapshot: {
     _tag: 'RealmTransferSnapshot', commandId, player: alice, fromWorld: overworld, destinationWorld: end,
     at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
-    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [] },
+    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [] },
     authoritativeSnapshot: {
       _tag: 'AuthoritativeSnapshot', world: end, revision: 1,
       inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }],
@@ -372,6 +373,7 @@ describe('malformed input', () => {
             revision,
             players: [],
             blocks: [],
+            poweredRails: [],
           },
         })
         expect(rejected(text)?.reason).toBe('malformed-frame')
@@ -390,6 +392,19 @@ describe('malformed input', () => {
           revision: 0,
           players: [{ player: 'alice', name: '', at: { x: 0, y: 0, z: 0 }, facing: { yawRadians: 0, pitchRadians: 0 } }],
           blocks: [],
+          poweredRails: [],
+        },
+      })
+      const malformedPoweredRail = JSON.stringify({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          _tag: 'WorldSnapshot',
+          world: 'overworld',
+          seed: 1,
+          revision: 0,
+          players: [],
+          blocks: [],
+          poweredRails: [{ at: { x: 0, y: 64, z: 0 }, powered: true, requestedBy: 'client' }],
         },
       })
       const unknownReason = JSON.stringify({
@@ -415,6 +430,7 @@ describe('malformed input', () => {
       })
 
       expect(rejected(malformedPlayer)?.reason).toBe('malformed-frame')
+      expect(rejected(malformedPoweredRail)?.reason).toBe('malformed-frame')
       expect(rejected(unknownReason)?.reason).toBe('malformed-frame')
       expect(rejected(missingContainerKind)?.reason).toBe('malformed-frame')
     }),
