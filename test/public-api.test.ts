@@ -19,6 +19,8 @@ describe('public API surface', () => {
         'Vec3',
         'BlockPos',
         'Orientation',
+        'EndPortalUseCommand',
+        'RealmTransferSnapshot',
         'NetworkMessage',
         'MESSAGE_TAGS',
         'Frame',
@@ -107,7 +109,7 @@ describe('public API surface', () => {
   // docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(1)
+      expect(PROTOCOL_VERSION).toBe(2)
     }),
   )
 })

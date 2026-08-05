@@ -43,7 +43,7 @@ import { Schema } from 'effect'
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 // ---------------------------------------------------------------------------
 // Identifiers and payload shapes
@@ -362,6 +362,19 @@ export const AuthoritativeSnapshot = Schema.TaggedStruct('AuthoritativeSnapshot'
 })
 export type AuthoritativeSnapshot = typeof AuthoritativeSnapshot.Type
 
+/** Server-authoritative result of using an End portal. */
+export const RealmTransferSnapshot = Schema.TaggedStruct('RealmTransferSnapshot', {
+  commandId: CommandId,
+  player: PlayerId,
+  fromWorld: WorldId,
+  destinationWorld: WorldId,
+  at: Vec3,
+  facing: Orientation,
+  worldSnapshot: WorldSnapshot,
+  authoritativeSnapshot: AuthoritativeSnapshot,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type RealmTransferSnapshot = typeof RealmTransferSnapshot.Type
+
 const DeltaHeader = { world: WorldId, revision: Revision }
 export const PlayerInventoryDelta = Schema.TaggedStruct('PlayerInventoryDelta', {
   ...DeltaHeader,
@@ -559,6 +572,11 @@ export const IgniteTntCommand = Schema.TaggedStruct('IgniteTntCommand', {
   ...CommandHeader,
   at: BlockPos,
 })
+/** A client requests End portal use; destination and spawn are server authority. */
+export const EndPortalUseCommand = Schema.TaggedStruct('EndPortalUseCommand', {
+  ...CommandHeader,
+  portal: BlockPos,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', {
   ...CommandHeader,
 })
@@ -591,6 +609,7 @@ export const AuthoritativeCommand = Schema.Union(
   EntityPickupCommand,
   BowUseCommand,
   IgniteTntCommand,
+  EndPortalUseCommand,
   EnderPearlCommand,
   BucketUseCommand,
   VehicleUseCommand,
@@ -673,6 +692,7 @@ export const NetworkMessage = Schema.Union(
   WorldSnapshot,
   BlockMutationRejected,
   AuthoritativeSnapshot,
+  RealmTransferSnapshot,
   AuthoritativeDelta,
   AuthoritativeCommand,
   AuthoritativeCommandResult,
@@ -694,6 +714,7 @@ export const MESSAGE_TAGS = [
   'WorldSnapshot',
   'BlockMutationRejected',
   'AuthoritativeSnapshot',
+  'RealmTransferSnapshot',
   'PlayerInventoryDelta',
   'PlayerVitalsDelta',
   'PlayerFishingDelta',
@@ -714,6 +735,7 @@ export const MESSAGE_TAGS = [
   'EntityPickupCommand',
   'BowUseCommand',
   'IgniteTntCommand',
+  'EndPortalUseCommand',
   'EnderPearlCommand',
   'BucketUseCommand',
   'VehicleUseCommand',

@@ -6,16 +6,19 @@ import {
   MESSAGE_TAGS,
   PROTOCOL_VERSION,
   CommandId,
+  EndPortalUseCommand,
   EntityId,
   PlayerId,
   PlayerName,
   WorldTimeWeatherAction,
   WorldId,
+  RealmTransferSnapshot,
   type NetworkMessage,
 } from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
 const overworld = WorldId.make('overworld')
+const end = WorldId.make('end')
 const commandId = CommandId.make('command-1')
 const commandHeader = { commandId, player: alice, world: overworld, expectedRevision: 12 }
 const item = { item: 'stone', count: 2, durability: { current: 42, max: 64 } }
@@ -78,6 +81,17 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }],
     timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [living],
   },
+  RealmTransferSnapshot: {
+    _tag: 'RealmTransferSnapshot', commandId, player: alice, fromWorld: overworld, destinationWorld: end,
+    at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
+    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [] },
+    authoritativeSnapshot: {
+      _tag: 'AuthoritativeSnapshot', world: end, revision: 1,
+      inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }],
+      vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }],
+      timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [],
+    },
+  },
   PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: overworld, revision: 13, player: alice, state: { slots: [item], selectedSlot: 0 } },
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: overworld, revision: 13, player: alice, state: { health: 19, hunger: 18, experience: 1 } },
   PlayerFishingDelta: { _tag: 'PlayerFishingDelta', world: overworld, revision: 13, player: alice, state: { phase: 'waiting', result: 'cast' } },
@@ -98,6 +112,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...commandHeader, entityId },
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 0 } },
+  EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 0 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },
   VehicleUseCommand: { _tag: 'VehicleUseCommand', ...commandHeader },
@@ -464,6 +479,21 @@ describe('malformed input', () => {
         _tag: 'set-time',
         timeOfDay: 6_000,
         weather: 'rain',
+      }),
+    ).toThrow()
+  })
+
+  it('rejects client-selected End transfer state without decoder options', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(EndPortalUseCommand)({
+        ...SAMPLES.EndPortalUseCommand,
+        destinationWorld: end,
+      }),
+    ).toThrow()
+    expect(() =>
+      Schema.decodeUnknownSync(RealmTransferSnapshot)({
+        ...SAMPLES.RealmTransferSnapshot,
+        spawn: { x: 0, y: 64, z: 0 },
       }),
     ).toThrow()
   })

@@ -58,6 +58,7 @@ type Check = {
 
 const ALICE = PlayerId.make('alice')
 const OVERWORLD = WorldId.make('overworld')
+const END = WorldId.make('end')
 const COMMAND_ID = CommandId.make('command-1')
 const COMMAND_HEADER = { commandId: COMMAND_ID, player: ALICE, world: OVERWORLD, expectedRevision: 1 }
 const ITEM = { item: 'stone', count: 2 }
@@ -109,6 +110,17 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }],
     timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [ENTITY],
   },
+  RealmTransferSnapshot: {
+    _tag: 'RealmTransferSnapshot', commandId: COMMAND_ID, player: ALICE, fromWorld: OVERWORLD, destinationWorld: END,
+    at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
+    worldSnapshot: { _tag: 'WorldSnapshot', world: END, seed: 42, revision: 1, players: [], blocks: [] },
+    authoritativeSnapshot: {
+      _tag: 'AuthoritativeSnapshot', world: END, revision: 1,
+      inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
+      vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }],
+      timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [],
+    },
+  },
   PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } },
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { health: 19, hunger: 18, experience: 0 } },
   PlayerFishingDelta: { _tag: 'PlayerFishingDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { phase: 'waiting', result: 'cast' } },
@@ -128,6 +140,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
+  EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...COMMAND_HEADER },
   VehicleUseCommand: { _tag: 'VehicleUseCommand', ...COMMAND_HEADER },
