@@ -31,7 +31,7 @@ const living = {
   at: { x: 1, y: 64, z: 1 },
   health: 20,
   maxHealth: 20,
-  mobState: { attackCooldownSecs: 0, motionPhase: 0.5, provoked: false, persistent: true },
+  mobState: { attackCooldownSecs: 0, motionPhase: 0.5, provoked: false, persistent: true, charged: true },
 }
 const itemDrop = { _tag: 'item-drop' as const, entityId: EntityId.make('drop-1'), at: { x: 2, y: 64, z: 1 }, stack: item, ageTicks: 1 }
 const arrow = { _tag: 'arrow' as const, entityId: EntityId.make('arrow-1'), at: { x: 2, y: 65, z: 1 }, velocity: { x: 0, y: 0.1, z: 1 }, damage: 4, owner: alice, ageTicks: 2 }
@@ -117,6 +117,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: overworld, revision: 13, entity: living },
   EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: overworld, revision: 13, entity: { ...living, health: 19 } },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: overworld, revision: 13, entityId },
+  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', world: overworld, revision: 13, at: { x: 3.5, y: 72, z: -4.5 } },
   EyeOfEnderThrown: {
     _tag: 'EyeOfEnderThrown', world: overworld, revision: 13, player: alice,
     origin: { x: 1, y: 65, z: 1 }, target: { x: 100, y: 72, z: 100 }, breaks: false,

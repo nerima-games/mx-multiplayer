@@ -32,7 +32,7 @@ import { Schema } from 'effect'
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 7
+export const PROTOCOL_VERSION = 8
 
 // ---------------------------------------------------------------------------
 // Identifiers and payload shapes
@@ -319,6 +319,8 @@ const MobState = Schema.Struct({
   persistent: Schema.optional(Schema.Boolean),
   named: Schema.optional(Schema.Boolean),
   tamed: Schema.optional(Schema.Boolean),
+  /** Present only for creepers struck by server-authoritative lightning. */
+  charged: Schema.optional(Schema.Boolean),
 })
 
 export const LivingEntityState = Schema.TaggedStruct('living', {
@@ -443,6 +445,11 @@ export const EntityDespawnDelta = Schema.TaggedStruct('EntityDespawnDelta', {
   ...DeltaHeader,
   entityId: EntityId,
 })
+/** A server-authoritative lightning impact rendered by connected clients. */
+export const LightningStrikeDelta = Schema.TaggedStruct('LightningStrikeDelta', {
+  ...DeltaHeader,
+  at: Vec3,
+})
 /**
  * A server-derived Eye of Ender flight. It is deliberately separate from
  * persistent entity deltas: the client renders the short-lived flight, while
@@ -467,6 +474,7 @@ export const AuthoritativeDelta = Schema.Union(
   EntitySpawnDelta,
   EntityUpdateDelta,
   EntityDespawnDelta,
+  LightningStrikeDelta,
 )
 export type AuthoritativeDelta = typeof AuthoritativeDelta.Type
 
@@ -803,6 +811,7 @@ export const MESSAGE_TAGS = [
   'EntitySpawnDelta',
   'EntityUpdateDelta',
   'EntityDespawnDelta',
+  'LightningStrikeDelta',
   'PlayerInventoryCommand',
   'PlayerVitalsCommand',
   'WorldTimeWeatherCommand',

@@ -133,6 +133,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: OVERWORLD, revision: 2, entity: ENTITY },
   EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: OVERWORLD, revision: 2, entity: { ...ENTITY, health: 19 } },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: OVERWORLD, revision: 2, entityId: ENTITY_ID },
+  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', world: OVERWORLD, revision: 2, at: { x: 3.5, y: 72, z: -4.5 } },
   EyeOfEnderThrown: {
     _tag: 'EyeOfEnderThrown', world: OVERWORLD, revision: 2, player: ALICE,
     origin: { x: 1, y: 65, z: 1 }, target: { x: 100, y: 72, z: 100 }, breaks: false,
