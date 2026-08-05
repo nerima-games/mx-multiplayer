@@ -32,7 +32,7 @@ import { Schema } from 'effect'
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4
 
 // ---------------------------------------------------------------------------
 // Identifiers and payload shapes
@@ -188,6 +188,12 @@ export const PoweredRailSnapshot = Schema.Struct({
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export type PoweredRailSnapshot = typeof PoweredRailSnapshot.Type
 
+export const LeverSnapshot = Schema.Struct({
+  at: BlockPos,
+  active: Schema.Boolean,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type LeverSnapshot = typeof LeverSnapshot.Type
+
 /**
  * Complete state needed by a late joiner or reconnecting client.
  *
@@ -202,6 +208,7 @@ export const WorldSnapshot = Schema.TaggedStruct('WorldSnapshot', {
   players: Schema.Array(PlayerSnapshot),
   blocks: Schema.Array(BlockMutationSnapshot),
   poweredRails: Schema.Array(PoweredRailSnapshot),
+  levers: Schema.Array(LeverSnapshot),
 })
 export type WorldSnapshot = typeof WorldSnapshot.Type
 
@@ -604,6 +611,13 @@ export const EndPortalUseCommand = Schema.TaggedStruct('EndPortalUseCommand', {
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export type EndPortalUseCommand = typeof EndPortalUseCommand.Type
 
+/** A client requests a lever toggle; the server owns its active state. */
+export const ToggleLeverCommand = Schema.TaggedStruct('ToggleLeverCommand', {
+  ...CommandHeader,
+  lever: BlockPos,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type ToggleLeverCommand = typeof ToggleLeverCommand.Type
+
 export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', { ...CommandHeader })
 export type EnderPearlCommand = typeof EnderPearlCommand.Type
 export const BucketUseCommand = Schema.TaggedStruct('BucketUseCommand', { ...CommandHeader })
@@ -635,6 +649,7 @@ export const AuthoritativeCommand = Schema.Union(
   BowUseCommand,
   IgniteTntCommand,
   EndPortalUseCommand,
+  ToggleLeverCommand,
   EnderPearlCommand,
   BucketUseCommand,
   VehicleUseCommand,
@@ -761,6 +776,7 @@ export const MESSAGE_TAGS = [
   'BowUseCommand',
   'IgniteTntCommand',
   'EndPortalUseCommand',
+  'ToggleLeverCommand',
   'EnderPearlCommand',
   'BucketUseCommand',
   'VehicleUseCommand',

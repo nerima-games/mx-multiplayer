@@ -56,6 +56,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   },
   BlockPlace: { _tag: 'BlockPlace', player: alice, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
   BlockBreak: { _tag: 'BlockBreak', player: alice, at: { x: -1, y: 0, z: -3 } },
+  ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...commandHeader, lever: { x: 1, y: 64, z: 2 } },
   Chat: { _tag: 'Chat', player: alice, text: 'hello 世界' },
   WorldInfo: { _tag: 'WorldInfo', world: overworld, seed: -1_234_567 },
   WorldSnapshot: {
@@ -77,6 +78,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
       { world: overworld, at: { x: -1, y: 0, z: -3 }, block: null },
     ],
     poweredRails: [{ at: { x: 2, y: 64, z: 3 }, powered: true }],
+    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
   },
   BlockMutationRejected: {
     _tag: 'BlockMutationRejected',
@@ -96,7 +98,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   RealmTransferSnapshot: {
     _tag: 'RealmTransferSnapshot', commandId, player: alice, fromWorld: overworld, destinationWorld: end,
     at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
-    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [] },
+    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [], levers: [] },
     authoritativeSnapshot: {
       _tag: 'AuthoritativeSnapshot', world: end, revision: 1,
       inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }],

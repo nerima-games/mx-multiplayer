@@ -95,6 +95,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     ],
     blocks: [{ world: OVERWORLD, at: { x: 1, y: 2, z: 3 }, block: 'stone' }],
     poweredRails: [{ at: { x: 2, y: 64, z: 3 }, powered: true }],
+    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
   },
   BlockMutationRejected: {
     _tag: 'BlockMutationRejected',
@@ -114,7 +115,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   RealmTransferSnapshot: {
     _tag: 'RealmTransferSnapshot', commandId: COMMAND_ID, player: ALICE, fromWorld: OVERWORLD, destinationWorld: END,
     at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
-    worldSnapshot: { _tag: 'WorldSnapshot', world: END, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [] },
+    worldSnapshot: { _tag: 'WorldSnapshot', world: END, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [], levers: [] },
     authoritativeSnapshot: {
       _tag: 'AuthoritativeSnapshot', world: END, revision: 1,
       inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
@@ -142,6 +143,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
   EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
+  ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...COMMAND_HEADER, lever: { x: 1, y: 64, z: 0 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...COMMAND_HEADER },
   VehicleUseCommand: { _tag: 'VehicleUseCommand', ...COMMAND_HEADER },
