@@ -11,7 +11,7 @@
 
 | 名前 | 種別 | 契約 |
 | --- | --- | --- |
-| `PROTOCOL_VERSION` | `number` | このビルドが話すプロトコルバージョン。現在 `2` |
+| `PROTOCOL_VERSION` | `number` | このビルドが話すプロトコルバージョン。現在 `3` |
 | `PlayerId` / `PlayerName` / `WorldId` | branded Schema | 非空文字列。`.make(...)` でコンストラクト |
 | `Vec3` | Schema | `{ x, y, z }` すべて `finite()` |
 | `BlockPos` | Schema | `{ x, y, z }` すべて `int()` |

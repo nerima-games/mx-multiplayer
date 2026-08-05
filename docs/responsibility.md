@@ -8,7 +8,7 @@
 
 | 責務 | 具体物 | 現状 |
 | --- | --- | --- |
-| プロトコル定義 | `NetworkMessage` の集合、`Frame` エンベロープ、`PROTOCOL_VERSION` | `domain/protocol.ts`（Protocol v2、42 タグ） |
+| プロトコル定義 | `NetworkMessage` の集合、`Frame` エンベロープ、`PROTOCOL_VERSION` | `domain/protocol.ts`（Protocol v3、42 タグ） |
 | フレームコーデック | `encodeFrame` / `decodeFrame`。ラウンドトリップが契約 | `domain/codec.ts` |
 | 障害分類 | `ProtocolError`(再送無意味)/ `TransportError`(再送が正解) | `domain/errors.ts` |
 | 接続ライフサイクル | 明示的な状態機械。合法遷移の表 | `domain/connection.ts` |
