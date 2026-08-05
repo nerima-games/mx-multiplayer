@@ -276,7 +276,7 @@ const TimeWeatherState = Schema.Struct({
   weather: Schema.Literal('clear', 'rain', 'thunder'),
 })
 
-export const ContainerKind = Schema.Literal('chest', 'shulker_box', 'dispenser', 'hopper')
+export const ContainerKind = Schema.Literal('chest', 'shulker_box', 'dispenser', 'dropper', 'hopper')
 export type ContainerKind = typeof ContainerKind.Type
 
 const ContainerState = Schema.Struct({
