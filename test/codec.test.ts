@@ -7,6 +7,7 @@ import {
   PROTOCOL_VERSION,
   CommandId,
   EndPortalUseCommand,
+  NetherPortalUseCommand,
   EntityId,
   PlayerId,
   PlayerName,
@@ -127,6 +128,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 1 } },
   EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
+  NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },
   VehicleUseCommand: { _tag: 'VehicleUseCommand', ...commandHeader },
@@ -569,10 +571,16 @@ describe('malformed input', () => {
     ).toThrow()
   })
 
-  it('rejects client-selected End transfer state without decoder options', () => {
+  it('rejects client-selected portal transfer state without decoder options', () => {
     expect(() =>
       Schema.decodeUnknownSync(EndPortalUseCommand)({
         ...SAMPLES.EndPortalUseCommand,
+        destinationWorld: end,
+      }),
+    ).toThrow()
+    expect(() =>
+      Schema.decodeUnknownSync(NetherPortalUseCommand)({
+        ...SAMPLES.NetherPortalUseCommand,
         destinationWorld: end,
       }),
     ).toThrow()

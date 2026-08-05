@@ -32,7 +32,7 @@ import { Schema } from 'effect'
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 4
+export const PROTOCOL_VERSION = 5
 
 // ---------------------------------------------------------------------------
 // Identifiers and payload shapes
@@ -611,6 +611,13 @@ export const EndPortalUseCommand = Schema.TaggedStruct('EndPortalUseCommand', {
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export type EndPortalUseCommand = typeof EndPortalUseCommand.Type
 
+/** A client requests Nether portal use; destination and spawn are server authority. */
+export const NetherPortalUseCommand = Schema.TaggedStruct('NetherPortalUseCommand', {
+  ...CommandHeader,
+  portal: BlockPos,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type NetherPortalUseCommand = typeof NetherPortalUseCommand.Type
+
 /** A client requests a lever toggle; the server owns its active state. */
 export const ToggleLeverCommand = Schema.TaggedStruct('ToggleLeverCommand', {
   ...CommandHeader,
@@ -649,6 +656,7 @@ export const AuthoritativeCommand = Schema.Union(
   BowUseCommand,
   IgniteTntCommand,
   EndPortalUseCommand,
+  NetherPortalUseCommand,
   ToggleLeverCommand,
   EnderPearlCommand,
   BucketUseCommand,
@@ -776,6 +784,7 @@ export const MESSAGE_TAGS = [
   'BowUseCommand',
   'IgniteTntCommand',
   'EndPortalUseCommand',
+  'NetherPortalUseCommand',
   'ToggleLeverCommand',
   'EnderPearlCommand',
   'BucketUseCommand',

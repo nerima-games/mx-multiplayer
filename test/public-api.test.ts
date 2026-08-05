@@ -21,6 +21,7 @@ describe('public API surface', () => {
         'Orientation',
         'PoweredRailSnapshot',
         'EndPortalUseCommand',
+        'NetherPortalUseCommand',
         'RealmTransferSnapshot',
         'NetworkMessage',
         'MESSAGE_TAGS',
@@ -110,7 +111,7 @@ describe('public API surface', () => {
   // docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(3)
+      expect(PROTOCOL_VERSION).toBe(5)
     }),
   )
 })
