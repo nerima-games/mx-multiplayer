@@ -32,7 +32,7 @@ import { Schema } from 'effect'
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 5
+export const PROTOCOL_VERSION = 6
 
 // ---------------------------------------------------------------------------
 // Identifiers and payload shapes
@@ -611,6 +611,19 @@ export const EndPortalUseCommand = Schema.TaggedStruct('EndPortalUseCommand', {
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export type EndPortalUseCommand = typeof EndPortalUseCommand.Type
 
+/** The server validates the held Eye and derives the stronghold from the world seed. */
+export const ThrowEyeOfEnderCommand = Schema.TaggedStruct('ThrowEyeOfEnderCommand', {
+  ...CommandHeader,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type ThrowEyeOfEnderCommand = typeof ThrowEyeOfEnderCommand.Type
+
+/** The server validates that this is an empty generated stronghold frame. */
+export const InsertEyeIntoEndPortalFrameCommand = Schema.TaggedStruct('InsertEyeIntoEndPortalFrameCommand', {
+  ...CommandHeader,
+  frame: BlockPos,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type InsertEyeIntoEndPortalFrameCommand = typeof InsertEyeIntoEndPortalFrameCommand.Type
+
 /** A client requests Nether portal use; destination and spawn are server authority. */
 export const NetherPortalUseCommand = Schema.TaggedStruct('NetherPortalUseCommand', {
   ...CommandHeader,
@@ -656,6 +669,8 @@ export const AuthoritativeCommand = Schema.Union(
   BowUseCommand,
   IgniteTntCommand,
   EndPortalUseCommand,
+  ThrowEyeOfEnderCommand,
+  InsertEyeIntoEndPortalFrameCommand,
   NetherPortalUseCommand,
   ToggleLeverCommand,
   EnderPearlCommand,
@@ -784,6 +799,8 @@ export const MESSAGE_TAGS = [
   'BowUseCommand',
   'IgniteTntCommand',
   'EndPortalUseCommand',
+  'ThrowEyeOfEnderCommand',
+  'InsertEyeIntoEndPortalFrameCommand',
   'NetherPortalUseCommand',
   'ToggleLeverCommand',
   'EnderPearlCommand',

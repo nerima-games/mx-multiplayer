@@ -128,6 +128,12 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 1 } },
   EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
+  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...commandHeader },
+  InsertEyeIntoEndPortalFrameCommand: {
+    _tag: 'InsertEyeIntoEndPortalFrameCommand',
+    ...commandHeader,
+    frame: { x: 1, y: 64, z: 1 },
+  },
   NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },

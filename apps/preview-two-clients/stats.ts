@@ -142,6 +142,8 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
+  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...COMMAND_HEADER },
+  InsertEyeIntoEndPortalFrameCommand: { _tag: 'InsertEyeIntoEndPortalFrameCommand', ...COMMAND_HEADER, frame: { x: 1, y: 64, z: 0 } },
   EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
   NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
   ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...COMMAND_HEADER, lever: { x: 1, y: 64, z: 0 } },
