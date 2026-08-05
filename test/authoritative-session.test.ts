@@ -1,11 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Either, Schema } from 'effect'
+import { Either, Schema, SchemaAST } from 'effect'
 import {
   AuthoritativeCommand,
   AuthoritativeEntityState,
   AuthoritativeSession,
   AuthoritativeSnapshot,
   CommandId,
+  PlayerInventoryAction,
   PlayerId,
   WorldId,
 } from '../src/index'
@@ -34,6 +35,20 @@ const command = (id: string, expectedRevision = 4): Extract<AuthoritativeCommand
 })
 
 describe('authoritative protocol schemas', () => {
+  it('defines each authoritative entity and inventory action variant once', () => {
+    const entityStateAst = AuthoritativeEntityState.ast
+    const inventoryActionAst = PlayerInventoryAction.ast
+
+    expect(SchemaAST.isUnion(entityStateAst)).toBe(true)
+    expect(SchemaAST.isUnion(inventoryActionAst)).toBe(true)
+    if (!SchemaAST.isUnion(entityStateAst) || !SchemaAST.isUnion(inventoryActionAst)) {
+      throw new Error('authoritative schemas must remain unions')
+    }
+
+    expect(entityStateAst.types).toHaveLength(5)
+    expect(inventoryActionAst.types).toHaveLength(6)
+  })
+
   it('decodes complete reconnect snapshots and every command domain', () => {
     expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeSnapshot)(snapshot))).toBe(true)
 

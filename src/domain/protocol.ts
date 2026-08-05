@@ -2,10 +2,6 @@
  * The wire protocol: the set of messages two peers may exchange, and nothing
  * else.
  *
- * PRE-AUDIT FIRST CUT (叩き台). The message roster below is a representative
- * subset, not the reference implementation's full set — see
- * `docs/porting.md`.
- *
  * ---------------------------------------------------------------------------
  * Scope
  * ---------------------------------------------------------------------------
@@ -20,18 +16,11 @@
  * Why the payload types are re-declared here instead of imported from kernel
  * ---------------------------------------------------------------------------
  *
- * `Vec3` and `BlockPos` below look like `@nerima-games/mc-kernel`'s `Position`
- * and chunk coordinates, and eventually the *domain-side* of the codec should
- * decode into kernel types. It does not yet, for two reasons:
- *
- * 1. Nothing in the 16-repository roster is published (plan.md §6 Step 3), so
- *    this skeleton has no sibling package to depend on.
- * 2. More durably: a wire format and a domain type have different change
- *    budgets. Kernel's `Position` may be refactored freely; the wire encoding
- *    of a position may not, because an old client is still sending it. Keeping
- *    a declared wire schema — even one that currently mirrors kernel exactly —
- *    is what makes "kernel changed" and "the protocol changed" two separate
- *    events. See docs/design-notes.md.
+ * `Vec3` and `BlockPos` below deliberately resemble `@nerima-games/mc-kernel`
+ * value types but are not imported from them. A wire format and a domain type
+ * have different change budgets: kernel values may be refactored without
+ * changing the protocol, while wire changes require a version transition.
+ * Keeping their schemas separate makes those two events explicit.
  */
 import { Schema } from 'effect'
 
@@ -359,8 +348,6 @@ export const AuthoritativeEntityState = Schema.Union(
   ArrowEntityState,
   PrimedTntEntityState,
   VehicleEntityState,
-  ArrowEntityState,
-  PrimedTntEntityState,
 )
 export type AuthoritativeEntityState = typeof AuthoritativeEntityState.Type
 
@@ -482,10 +469,6 @@ export const PlayerInventoryAction = Schema.Union(
     source: CommandSlotIndex,
     destination: Schema.Literal('world'),
     count: CommandItemCount,
-  }),
-  Schema.TaggedStruct('swap-items', {
-    source: CommandSlotIndex,
-    destination: CommandSlotIndex,
   }),
   Schema.TaggedStruct('equip-item', {
     source: CommandSlotIndex,

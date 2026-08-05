@@ -5,11 +5,9 @@
  * Read `stage-ids.ts` first
  * ---------------------------------------------------------------------------
  *
- * It carries the measurement that matters more than anything in this file:
- * mc-compose's `STANDARD_STAGE_SKELETON` has no phase that claims either of
- * these ids, so today both run at the END of the frame, after the HUD. It also
- * names the two phases mc-compose needs, and says why neither can be supplied
- * from here.
+ * mc-compose owns the global frame skeleton. Its network phases place inbound
+ * work before simulation and outbound work after authoritative simulation, so
+ * this repository only declares the local dependency between its two stages.
  *
  * ---------------------------------------------------------------------------
  * What a stage in THIS repository is allowed to do
@@ -31,20 +29,12 @@
  * changing an inventory rule meant editing the network layer.
  *
  * ---------------------------------------------------------------------------
- * The seam, and what is FIRST CUT
+ * The seam
  * ---------------------------------------------------------------------------
  *
- * "Apply a decoded message" means "write through an mc-sim service"
- * (`index.ts`, docs/responsibility.md §2). mc-sim is not published — plan.md §6
- * Step 3 is bottom-up publish-then-pin — so the seam is two `Ref`s that a
- * preview or a test drives, in exactly the shape mx-gameplay uses for its
- * outbox and mx-ui for its snapshot. When mc-sim publishes, the services are
- * acquired in `makeMultiplayerStages` alongside `TransportPort` and the `Ref`s
- * become an implementation detail of the previews.
- *
- * What is NOT first cut is the part this repository can decide alone and which
- * the frame position depends on: the ids, the single `after` edge, the `canSend`
- * guard, and the drop policies below. Those are settled.
+ * "Apply a decoded message" means "write through a host/session adapter".
+ * That adapter owns the projection to mc-sim and mx-gameplay; these `Ref`s keep
+ * the transport boundary explicit for the preview and its contract tests.
  */
 import { Chunk, Effect, Either, Layer, Queue, Ref } from 'effect'
 import { decodeFrame, encodeFrame } from '../domain/codec'
@@ -128,19 +118,15 @@ export type MultiplayerFrameState = {
   /**
    * Messages waiting to go out, in the order they were offered.
    *
-   * FIRST CUT: filled by a preview or a test today. When mc-sim publishes, the
-   * local session's per-frame intent is read from its services here instead —
-   * still without interpreting it, because "read the player's position and put
-   * it in a `PlayerMove`" is a projection, not a rule.
+   * Filled by the host/session adapter with projected command messages. The
+   * stage still does not interpret them: projection is not a game rule.
    */
   readonly outbox: Ref.Ref<ReadonlyArray<NetworkMessage>>
   /**
    * Messages decoded this frame and not yet applied to the world.
    *
-   * FIRST CUT: this IS the seam. Today it accumulates and a preview or a test
-   * drains it; when mc-sim publishes, `multiplayer:inbound` writes each message
-   * through an mc-sim service in the same place it currently appends here, and
-   * this `Ref` disappears.
+   * This is the transport seam. The host/session adapter drains it and applies
+   * game rules through mc-sim and mx-gameplay.
    */
   readonly inbound: Ref.Ref<ReadonlyArray<NetworkMessage>>
   readonly counters: Ref.Ref<NetworkFrameCounters>
@@ -217,10 +203,8 @@ export const multiplayerStages = (
               // bytes (DN-2). What the counter separates is whether the right
               // response is to drop the frame or the peer (DN-1).
               onLeft: (error) => countProtocolFailure(state, error),
-              // The seam. FIRST CUT: appended for a preview or a test to drain;
-              // when mc-sim publishes, this line writes through an mc-sim
-              // service instead. Either way this stage does not look inside the
-              // message — plan.md §3.14.
+              // The transport seam. The host/session adapter drains this queue
+              // and applies the message through mc-sim and mx-gameplay.
               onRight: (message) =>
                 Ref.update(state.inbound, (pending) => [...pending, message]).pipe(
                   Effect.zipRight(
