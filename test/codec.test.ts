@@ -117,6 +117,10 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: overworld, revision: 13, entity: living },
   EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: overworld, revision: 13, entity: { ...living, health: 19 } },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: overworld, revision: 13, entityId },
+  EyeOfEnderThrown: {
+    _tag: 'EyeOfEnderThrown', world: overworld, revision: 13, player: alice,
+    origin: { x: 1, y: 65, z: 1 }, target: { x: 100, y: 72, z: 100 }, breaks: false,
+  },
   PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 2 } },
   PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...commandHeader, action: { _tag: 'activity', activity: 'swim', amount: 3 } },
   WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 6000 } },
