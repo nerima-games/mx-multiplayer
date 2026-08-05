@@ -230,6 +230,11 @@ export const BlockMutationRejected = Schema.TaggedStruct('BlockMutationRejected'
 })
 export type BlockMutationRejected = typeof BlockMutationRejected.Type
 
+const ItemDurability = Schema.Struct({
+  current: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  max: Schema.Number.pipe(Schema.int(), Schema.positive()),
+})
+
 const ItemStack = Schema.Struct({
   item: Schema.String.pipe(Schema.minLength(1)),
   count: Schema.Number.pipe(Schema.int(), Schema.positive()),
@@ -241,15 +246,23 @@ const ItemStack = Schema.Struct({
   ),
 })
 
-const ItemDurability = Schema.Struct({
-  current: Schema.Number.pipe(Schema.int(), Schema.positive()),
-  max: Schema.Number.pipe(Schema.int(), Schema.positive()),
+export const EquipmentSlot = Schema.Literal('head', 'chest', 'legs', 'feet', 'offhand')
+export type EquipmentSlot = typeof EquipmentSlot.Type
+
+const EquipmentState = Schema.Struct({
+  head: Schema.NullOr(ItemStack),
+  chest: Schema.NullOr(ItemStack),
+  legs: Schema.NullOr(ItemStack),
+  feet: Schema.NullOr(ItemStack),
+  offhand: Schema.NullOr(ItemStack),
 })
 
 const InventoryState = Schema.Struct({
   slots: Schema.Array(Schema.NullOr(ItemStack)),
   selectedSlot: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  // Accepted for protocol-v1 peers that sent durability out-of-band.
   durability: Schema.optional(Schema.Array(Schema.NullOr(ItemDurability))),
+  equipment: Schema.optional(EquipmentState),
 })
 
 const VitalsState = Schema.Struct({
@@ -294,54 +307,57 @@ const VillagerTradeState = Schema.Struct({
   ),
 })
 
+const MobState = Schema.Struct({
+  attackCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  motionPhase: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  provoked: Schema.Boolean,
+  ageTicks: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
+  persistent: Schema.optional(Schema.Boolean),
+  named: Schema.optional(Schema.Boolean),
+  tamed: Schema.optional(Schema.Boolean),
+})
+
 export const LivingEntityState = Schema.TaggedStruct('living', {
   entityId: EntityId,
   entityType: Schema.String.pipe(Schema.minLength(1)),
   at: Vec3,
   health: Schema.Number.pipe(Schema.finite(), Schema.positive()),
   maxHealth: Schema.Number.pipe(Schema.finite(), Schema.positive()),
-  // Optional so peers can continue decoding living entities without AI state.
-  mobState: Schema.optional(Schema.Struct({
-    attackCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-    motionPhase: Schema.Number.pipe(Schema.finite()),
-    provoked: Schema.Boolean,
-    // Host-owned lifecycle data. Optional fields preserve older reconnect snapshots.
-    ageTicks: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
-    persistent: Schema.optional(Schema.Boolean),
-    named: Schema.optional(Schema.Boolean),
-    tamed: Schema.optional(Schema.Boolean),
-  })),
+  mobState: Schema.optional(MobState),
 })
 export const ItemDropEntityState = Schema.TaggedStruct('item-drop', {
   entityId: EntityId,
   at: Vec3,
   stack: ItemStack,
-  // Optional so snapshots written before item aging remain decodable.
   ageTicks: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
 })
+export const ArrowEntityState = Schema.TaggedStruct('arrow', {
+  entityId: EntityId,
+  at: Vec3,
+  velocity: Vec3,
+  damage: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  owner: Schema.NullOr(PlayerId),
+  ageTicks: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+})
+export type ArrowEntityState = typeof ArrowEntityState.Type
+export const PrimedTntEntityState = Schema.TaggedStruct('primed-tnt', {
+  entityId: EntityId,
+  at: Vec3,
+  burnedSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  owner: Schema.NullOr(PlayerId),
+})
+export type PrimedTntEntityState = typeof PrimedTntEntityState.Type
 export const VehicleEntityState = Schema.TaggedStruct('vehicle', {
   entityId: EntityId,
   vehicleType: Schema.String.pipe(Schema.minLength(1)),
   at: Vec3,
   occupant: Schema.NullOr(PlayerId),
 })
-export const ArrowEntityState = Schema.TaggedStruct('arrow', {
-  entityId: EntityId,
-  at: Vec3,
-  velocity: Vec3,
-  damage: Schema.Number.pipe(Schema.finite(), Schema.positive()),
-  owner: PlayerId,
-  ageTicks: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-})
-export const PrimedTntEntityState = Schema.TaggedStruct('primed-tnt', {
-  entityId: EntityId,
-  at: Vec3,
-  burnedSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  owner: PlayerId,
-})
 export const AuthoritativeEntityState = Schema.Union(
   LivingEntityState,
   ItemDropEntityState,
+  ArrowEntityState,
+  PrimedTntEntityState,
   VehicleEntityState,
   ArrowEntityState,
   PrimedTntEntityState,
@@ -386,13 +402,16 @@ export const PlayerVitalsDelta = Schema.TaggedStruct('PlayerVitalsDelta', {
   player: PlayerId,
   state: VitalsState,
 })
+const PlayerFishingState = Schema.Union(
+  Schema.Struct({ phase: Schema.Literal('idle'), result: Schema.Literal('invalid-rod', 'no-water', 'cancelled', 'caught', 'too-early', 'too-late', 'lost-water') }),
+  Schema.Struct({ phase: Schema.Literal('waiting'), result: Schema.Literal('cast') }),
+  Schema.Struct({ phase: Schema.Literal('bite'), result: Schema.Literal('bite') }),
+  Schema.Struct({ phase: Schema.Literal('escaped'), result: Schema.Literal('escaped') }),
+).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export const PlayerFishingDelta = Schema.TaggedStruct('PlayerFishingDelta', {
   ...DeltaHeader,
   player: PlayerId,
-  state: Schema.Struct({
-    phase: Schema.Literal('idle', 'waiting', 'bite', 'escaped'),
-    result: Schema.Literal('idle', 'cast', 'bite', 'escaped', 'caught', 'too-early', 'too-late', 'lost-water', 'cancelled', 'invalid-rod', 'no-water'),
-  }),
+  state: PlayerFishingState,
 })
 export const WorldTimeWeatherDelta = Schema.TaggedStruct('WorldTimeWeatherDelta', {
   ...DeltaHeader,
@@ -463,6 +482,18 @@ export const PlayerInventoryAction = Schema.Union(
     source: CommandSlotIndex,
     destination: Schema.Literal('world'),
     count: CommandItemCount,
+  }),
+  Schema.TaggedStruct('swap-items', {
+    source: CommandSlotIndex,
+    destination: CommandSlotIndex,
+  }),
+  Schema.TaggedStruct('equip-item', {
+    source: CommandSlotIndex,
+    equipmentSlot: EquipmentSlot,
+  }),
+  Schema.TaggedStruct('unequip-item', {
+    equipmentSlot: EquipmentSlot,
+    destination: Schema.optional(CommandSlotIndex),
   }),
 ).annotations(strictAction)
 export type PlayerInventoryAction = typeof PlayerInventoryAction.Type
@@ -568,35 +599,38 @@ export const BowUseCommand = Schema.TaggedStruct('BowUseCommand', {
   ...CommandHeader,
   action: Schema.Literal('start', 'release'),
 })
+export type BowUseCommand = typeof BowUseCommand.Type
 export const IgniteTntCommand = Schema.TaggedStruct('IgniteTntCommand', {
   ...CommandHeader,
   at: BlockPos,
 })
+export type IgniteTntCommand = typeof IgniteTntCommand.Type
+
 /** A client requests End portal use; destination and spawn are server authority. */
 export const EndPortalUseCommand = Schema.TaggedStruct('EndPortalUseCommand', {
   ...CommandHeader,
   portal: BlockPos,
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
-export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', {
-  ...CommandHeader,
-})
-export const BucketUseCommand = Schema.TaggedStruct('BucketUseCommand', {
-  ...CommandHeader,
-})
-export const VehicleUseCommand = Schema.TaggedStruct('VehicleUseCommand', {
-  ...CommandHeader,
-})
+export type EndPortalUseCommand = typeof EndPortalUseCommand.Type
+
+export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', { ...CommandHeader })
+export type EnderPearlCommand = typeof EnderPearlCommand.Type
+export const BucketUseCommand = Schema.TaggedStruct('BucketUseCommand', { ...CommandHeader })
+export type BucketUseCommand = typeof BucketUseCommand.Type
+export const VehicleUseCommand = Schema.TaggedStruct('VehicleUseCommand', { ...CommandHeader })
+export type VehicleUseCommand = typeof VehicleUseCommand.Type
 export const FishingCommand = Schema.TaggedStruct('FishingCommand', {
   ...CommandHeader,
   action: Schema.Literal('cast', 'reel'),
 })
+export type FishingCommand = typeof FishingCommand.Type
 export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   ...CommandHeader,
   entityId: EntityId,
   action: Schema.Union(
     Schema.Literal('mount', 'dismount'),
     Schema.TaggedStruct('move', { direction: Schema.Literal('forward', 'backward') }),
-  ),
+  ).annotations(strictAction),
 })
 export const AuthoritativeCommand = Schema.Union(
   PlayerInventoryCommand,
