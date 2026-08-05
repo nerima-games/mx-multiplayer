@@ -10,6 +10,7 @@ on:
 # managed in Terraform.
 permissions:
   contents: read
+  packages: read
 
 jobs:
   ci:
@@ -38,6 +39,11 @@ jobs:
         with:
           node-version: "24"
           cache: "pnpm"
+
+      - name: Configure GitHub Packages authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm config set --location=user //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
 
       - name: Install dependencies
         # --ignore-scripts: pnpm runs postinstall, and a fork PR can edit
@@ -105,6 +111,11 @@ jobs:
         with:
           node-version: "24"
           cache: "pnpm"
+
+      - name: Configure GitHub Packages authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm config set --location=user //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
