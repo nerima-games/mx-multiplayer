@@ -1,11 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Either, Schema } from 'effect'
+import { Either, Schema, SchemaAST } from 'effect'
 import {
   AuthoritativeCommand,
   AuthoritativeEntityState,
   AuthoritativeSession,
   AuthoritativeSnapshot,
   CommandId,
+  PlayerInventoryAction,
   PlayerId,
   WorldId,
 } from '../src/index'
@@ -34,6 +35,20 @@ const command = (id: string, expectedRevision = 4): Extract<AuthoritativeCommand
 })
 
 describe('authoritative protocol schemas', () => {
+  it('defines each authoritative entity and inventory action variant once', () => {
+    const entityStateAst = AuthoritativeEntityState.ast
+    const inventoryActionAst = PlayerInventoryAction.ast
+
+    expect(SchemaAST.isUnion(entityStateAst)).toBe(true)
+    expect(SchemaAST.isUnion(inventoryActionAst)).toBe(true)
+    if (!SchemaAST.isUnion(entityStateAst) || !SchemaAST.isUnion(inventoryActionAst)) {
+      throw new Error('authoritative schemas must remain unions')
+    }
+
+    expect(entityStateAst.types).toHaveLength(5)
+    expect(inventoryActionAst.types).toHaveLength(6)
+  })
+
   it('decodes complete reconnect snapshots and every command domain', () => {
     expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeSnapshot)(snapshot))).toBe(true)
 
@@ -148,6 +163,51 @@ describe('authoritative command session', () => {
     expect(subject.execute(command('same'), apply)).toStrictEqual(first)
     expect(applications).toBe(1)
     expect(subject.revision(world)).toBe(5)
+  })
+
+  it('does not let one player command id suppress another player command', () => {
+    const subject = new AuthoritativeSession()
+    subject.restore(snapshot)
+    let applications = 0
+    const apply = () => {
+      applications += 1
+      return { accepted: true } as const
+    }
+
+    subject.execute(command('same-id'), apply)
+    const bobCommand = {
+      ...command('same-id', 5),
+      player: PlayerId.make('bob'),
+    }
+    expect(subject.execute(bobCommand, apply)).toMatchObject({
+      _tag: 'AuthoritativeCommandAccepted',
+      revision: 6,
+    })
+    expect(applications).toBe(2)
+    expect(subject.revision(world)).toBe(6)
+  })
+
+  it('does not let a command id in one world suppress the same player in another world', () => {
+    const subject = new AuthoritativeSession()
+    const nether = WorldId.make('nether')
+    subject.restore(snapshot)
+    subject.restore({ ...snapshot, world: nether, revision: 7 })
+    let applications = 0
+    const apply = () => {
+      applications += 1
+      return { accepted: true } as const
+    }
+
+    subject.execute(command('same-id'), apply)
+    const netherCommand = { ...command('same-id', 7), world: nether }
+    expect(subject.execute(netherCommand, apply)).toMatchObject({
+      _tag: 'AuthoritativeCommandAccepted',
+      revision: 8,
+      world: nether,
+    })
+    expect(applications).toBe(2)
+    expect(subject.revision(world)).toBe(5)
+    expect(subject.revision(nether)).toBe(8)
   })
 
   it('rejects stale revisions without invoking game rules or advancing state', () => {

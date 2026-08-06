@@ -11,7 +11,7 @@
 
 | 名前 | 種別 | 契約 |
 | --- | --- | --- |
-| `PROTOCOL_VERSION` | `number` | このビルドが話すプロトコルバージョン。現在 `1` |
+| `PROTOCOL_VERSION` | `number` | このビルドが話すプロトコルバージョン。現在 `3` |
 | `PlayerId` / `PlayerName` / `WorldId` | branded Schema | 非空文字列。`.make(...)` でコンストラクト |
 | `Vec3` | Schema | `{ x, y, z }` すべて `finite()` |
 | `BlockPos` | Schema | `{ x, y, z }` すべて `int()` |
@@ -21,26 +21,22 @@
 | `MESSAGE_TAGS` | `ReadonlyArray` | 既知タグの一覧。網羅性テスト用 |
 | `Frame` | Schema | `{ protocolVersion, message }` |
 
-### メッセージ一覧(叩き台 9 種)
+### メッセージ一覧（42 タグ）
 
-| タグ | ペイロード | 意味 |
-| --- | --- | --- |
-| `PlayerJoin` | `player`, `name`, `at` | ピアが参加した |
-| `PlayerLeave` | `player` | ピアが離脱した |
-| `PlayerMove` | `player`, `at`, `facing` | ピアの位置と姿勢 |
-| `BlockPlace` | `player`, `at`, `block` | ピアがブロックを置いたと**主張している** |
-| `BlockBreak` | `player`, `at` | ピアがブロックを壊したと**主張している** |
-| `Chat` | `player`, `text`(1〜256 文字) | チャット |
-| `WorldInfo` | `world`, `seed`(int) | ワールド識別とシード |
-| `Ping` / `Pong` | `nonce`(int) | 生存確認。**タイムスタンプではない**([design-notes.md](./design-notes.md) DN-3) |
+| タグ群 | 意味 |
+| --- | --- |
+| `PlayerJoin` から `BlockMutationRejected` | 接続、移動、ブロック操作、チャット、world 情報とブロック操作の拒否 |
+| `AuthoritativeSnapshot` / `RealmTransferSnapshot` | 接続・再接続・realm 移動の完全な authoritative state |
+| `PlayerInventoryDelta` から `EntityDespawnDelta` | inventory、vitals、container、furnace、villager、entity の差分同期 |
+| `PlayerInventoryCommand` から `VehicleCommand` | authoritative server に送る操作要求 |
+| `AuthoritativeCommandAccepted` / `AuthoritativeCommandRejected` / `AuthoritativeResyncRequest` | command 結果と再同期要求 |
+| `Ping` / `Pong` | 生存確認。**タイムスタンプではない**([design-notes.md](./design-notes.md) DN-3) |
 
 > **「主張している」**の含意: `BlockBreak` はドロップが何であるかを言わない。
 > それはルールであり、mx-gameplay と mc-sim のものである。
 
-参照実装は 18 種(`EntitySnapshot` / `EntityDamage` / `ContainerUpdate` /
-`DroppedItemSpawn` / `DroppedItemRemove` / `ParkedVehicleUpdate` /
-`ParkedVehicleRemove` / `ClaimDenied` / `Error` を含む)。
-残りは [porting.md](./porting.md) の順序で追加する。
+タグの完全な列挙は `domain/protocol.ts` の `MESSAGE_TAGS` が正本であり、
+codec test が集合と union の一致を検証する。
 
 ## 2. コーデック(`domain/codec.ts`)
 
@@ -187,14 +183,14 @@ class AuthoritativeRevisionTracker {
 tracker はゲーム状態を保持・変更せず、再接続や snapshot 要求の transport 方針も決めない。
 それらを所有する platform adapter が admission 結果を使って再取得を開始する。
 
-## 8. まだ無いもの
+## 8. プラットフォーム境界
 
-| 未実装 | 追加時期 |
+| 境界 | 所有者 |
 | --- | --- |
-| ~~`GameModule` / `StageRegistration` の実装~~ | **実装済み**（`stages/`)。下記参照 |
-| mc-sim サービスへの反映 | mc-sim 公開後。接ぎ目は `MultiplayerFrameState.inbound` にある |
-| 実 WebSocket アダプタ | プラットフォーム層の所在が決まってから |
-| **mc-compose 側の `multiplayer:` フェーズ** | **mc-compose の作業**。無いあいだ 2 stage は HUD の後ろで走る |
+| `GameModule` / `StageRegistration` | mx-multiplayer の `stages/`。実装済み |
+| decoded message を authoritative state に反映する処理 | host/server。mc-compose の multiplayer server は `mc-sim` とゲーム規則を使って所有する |
+| 実 WebSocket server と認証・origin policy | platform host。mc-compose の multiplayer server が所有する |
+| network phase の全体配置 | mc-compose の stage skeleton。実装済み |
 
 ### 8.1 stage 登録
 
@@ -212,9 +208,8 @@ const makeMultiplayerStagesForPreview: Effect<{ state; stages }, never, Transpor
 つまり `RRegister` は外から満たされねばならない本物の要求であり、
 `RRegister` を `RIn` に畳めない理由の最も分かりやすい実例になっている。
 
-**骨格の欠落については [responsibility.md](./responsibility.md) §2.1 と
-`stages/stage-ids.ts` 冒頭を読むこと。** ここに書いていないのは、これが
-mc-compose に対する要求であって本リポジトリの公開 API ではないからである。
+全体の stage 順序は [responsibility.md](./responsibility.md) §2.1 を参照。これは
+mx-multiplayer の公開 API ではなく、mc-compose が所有するフレーム契約である。
 
 **API ロックファイルはこの表から外れた。** plan.md §9 の未決事項
 「API ロックファイルのツール選定（api-extractor 相当の Effect-TS 互換手段）」は決着し、

@@ -8,15 +8,15 @@
 
 | 責務 | 具体物 | 現状 |
 | --- | --- | --- |
-| プロトコル定義 | `NetworkMessage` の集合、`Frame` エンベロープ、`PROTOCOL_VERSION` | `domain/protocol.ts`(9 種。参照実装は 18 種) |
+| プロトコル定義 | `NetworkMessage` の集合、`Frame` エンベロープ、`PROTOCOL_VERSION` | `domain/protocol.ts`（Protocol v3、42 タグ） |
 | フレームコーデック | `encodeFrame` / `decodeFrame`。ラウンドトリップが契約 | `domain/codec.ts` |
 | 障害分類 | `ProtocolError`(再送無意味)/ `TransportError`(再送が正解) | `domain/errors.ts` |
 | 接続ライフサイクル | 明示的な状態機械。合法遷移の表 | `domain/connection.ts` |
 | トランスポート Port | `TransportPort` とループバック実装 | `domain/transport.ts` |
-| 状態同期 | mc-sim のサービスへの書き込み(受信 → 反映) | **接ぎ目のみ**。`stages/registration.ts` の `state.inbound` が受け口。mc-sim 公開後に置き換える |
-| stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | 実装済 `stages/registration.ts`。**ただし下記の骨格欠落を読むこと** |
+| 状態同期 | 受信フレームを decode して host に渡し、host が `mc-sim` の authoritative state を反映する | `stages/registration.ts` はルールを持たない queue seam。状態変換は host/server の責務 |
+| stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | 実装済 `stages/registration.ts`。配置は mc-compose の skeleton が所有 |
 
-### 2.1 登録した 2 stage と、mc-compose 側に空いている穴
+### 2.1 登録した 2 stage と、mc-compose 側の配置
 
 `multiplayer:inbound` と `multiplayer:outbound` の 2 本。分けた理由は順序要求が逆だからである
 ——受信は**シミュレーションが読む前**に、送信は**シミュレーションが書いた後**に走らねばならず、
@@ -25,15 +25,13 @@
 `after` は `outbound` の `sim:physics` **1 本だけ**。`inbound` は 1 本も宣言しない
 ——必要なのは「`sim:physics` の**前**」であり、`StageRegistration` に `before` は無いからである。
 
-**その結果、今日この 2 本は HUD より後ろで走る。** mc-compose の
-`domain/stage-skeleton.ts` は stage 名(id の最後のコロンより後ろ)でフェーズを判定するが、
-`inbound` / `outbound` / `multiplayer:` を拾うフェーズが 1 つも無い。実測(mc-compose の
-resolver に現ロスター + `sim:physics` を通したもの)では両者が 14 番・15 番、
-`ui:overlay-sync` の後ろに落ち、`unmatchedPhase` に両方が報告される。
+mc-compose の `domain/stage-skeleton.ts` は network phase を二つ所有している。
+`network:inbound` は input と simulation の間、`network:outbound` は simulation と presentation
+の間である。`test/e2e/roster-frame-order.test.ts` が `multiplayer:inbound` と
+`multiplayer:outbound` の順序を回帰検証する。
 
-必要なのは mc-compose 側のフェーズ 2 つで、位置と `members` は
-[`stages/stage-ids.ts`](../stages/stage-ids.ts) の冒頭に書いてある。
-**plan.md §2.3-3 により骨格は mc-compose の唯一の所有物なので、ここからは直せない。**
+**骨格の所有者は mc-compose のままである。** mx-multiplayer は stage の意味と最小の
+`after` 制約だけを宣言し、全体フレーム内の配置は変更しない。
 
 ## 3. 持たないもの ― mx-ui との境界線
 

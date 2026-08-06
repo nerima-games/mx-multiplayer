@@ -2,8 +2,8 @@
 
 ## 1. 現在地
 
-- **package version**: `0.1.0`
-- **公開状態**: **未公開。** ビルド / publish パイプラインはまだ存在しない
+- **package version**: `0.4.0`
+- **公開状態**: GitHub Packages に公開済み
 - **`package.json#exports`**: TypeScript ソースを直接指している(`./index.ts`)
 
 ## 2. なぜ公開しないのか(plan.md §6 Step 0 / Step 3)
@@ -43,7 +43,7 @@ mc-sim が既に宣言してある** ので、契約は最初から機械可読�
 | --- | --- |
 | 公開 API | **破壊的変更を予告なく入れてよい。** 0.x とはそういう意味である |
 | バージョン | 変更のたびに patch/minor を上げるが、semver の保証はしない |
-| プロトコル | `PROTOCOL_VERSION` は 1 のまま。互換性の保証は**開始していない** |
+| プロトコル | `PROTOCOL_VERSION` は 7。`EyeOfEnderThrown` を追加したため、Protocol v6 以前の peer とは互換でない |
 | ドキュメント | `docs/` は実装と同時に更新する。ここだけは 0.x でも守る |
 
 ## 5. 1.0.0 の条件

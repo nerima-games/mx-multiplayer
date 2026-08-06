@@ -7,6 +7,7 @@ import {
   PROTOCOL_VERSION,
   CommandId,
   EndPortalUseCommand,
+  NetherPortalUseCommand,
   EntityId,
   PlayerId,
   PlayerName,
@@ -30,7 +31,7 @@ const living = {
   at: { x: 1, y: 64, z: 1 },
   health: 20,
   maxHealth: 20,
-  mobState: { attackCooldownSecs: 0, motionPhase: 0.5, provoked: false, persistent: true },
+  mobState: { attackCooldownSecs: 0, motionPhase: 0.5, provoked: false, persistent: true, charged: true },
 }
 const itemDrop = { _tag: 'item-drop' as const, entityId: EntityId.make('drop-1'), at: { x: 2, y: 64, z: 1 }, stack: item, ageTicks: 1 }
 const arrow = { _tag: 'arrow' as const, entityId: EntityId.make('arrow-1'), at: { x: 2, y: 65, z: 1 }, velocity: { x: 0, y: 0.1, z: 1 }, damage: 4, owner: alice, ageTicks: 2 }
@@ -56,6 +57,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   },
   BlockPlace: { _tag: 'BlockPlace', player: alice, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
   BlockBreak: { _tag: 'BlockBreak', player: alice, at: { x: -1, y: 0, z: -3 } },
+  ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...commandHeader, lever: { x: 1, y: 64, z: 2 } },
   Chat: { _tag: 'Chat', player: alice, text: 'hello 世界' },
   WorldInfo: { _tag: 'WorldInfo', world: overworld, seed: -1_234_567 },
   WorldSnapshot: {
@@ -76,6 +78,8 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
       { world: overworld, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
       { world: overworld, at: { x: -1, y: 0, z: -3 }, block: null },
     ],
+    poweredRails: [{ at: { x: 2, y: 64, z: 3 }, powered: true }],
+    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
   },
   BlockMutationRejected: {
     _tag: 'BlockMutationRejected',
@@ -95,7 +99,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   RealmTransferSnapshot: {
     _tag: 'RealmTransferSnapshot', commandId, player: alice, fromWorld: overworld, destinationWorld: end,
     at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
-    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [] },
+    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [], levers: [] },
     authoritativeSnapshot: {
       _tag: 'AuthoritativeSnapshot', world: end, revision: 1,
       inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }],
@@ -107,12 +111,17 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: overworld, revision: 13, player: alice, state: { health: 19, hunger: 18, experience: 1 } },
   PlayerFishingDelta: { _tag: 'PlayerFishingDelta', world: overworld, revision: 13, player: alice, state: { phase: 'bite', result: 'bite' } },
   WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: overworld, revision: 13, state: { timeOfDay: 7000, weather: 'rain' } },
-  ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'chest:1', kind: 'chest', slots: [item] } },
+  ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'dropper:1', kind: 'dropper', slots: [item] } },
   FurnaceDelta: { _tag: 'FurnaceDelta', world: overworld, revision: 13, state: { furnaceId: 'furnace:1', input: item, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
   VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: overworld, revision: 13, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [item], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: overworld, revision: 13, entity: living },
   EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: overworld, revision: 13, entity: { ...living, health: 19 } },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: overworld, revision: 13, entityId },
+  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', world: overworld, revision: 13, at: { x: 3.5, y: 72, z: -4.5 } },
+  EyeOfEnderThrown: {
+    _tag: 'EyeOfEnderThrown', world: overworld, revision: 13, player: alice,
+    origin: { x: 1, y: 65, z: 1 }, target: { x: 100, y: 72, z: 100 }, breaks: false,
+  },
   PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 2 } },
   PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...commandHeader, action: { _tag: 'activity', activity: 'swim', amount: 3 } },
   WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 6000 } },
@@ -124,6 +133,13 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 1 } },
   EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
+  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...commandHeader },
+  InsertEyeIntoEndPortalFrameCommand: {
+    _tag: 'InsertEyeIntoEndPortalFrameCommand',
+    ...commandHeader,
+    frame: { x: 1, y: 64, z: 1 },
+  },
+  NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },
   VehicleUseCommand: { _tag: 'VehicleUseCommand', ...commandHeader },
@@ -372,6 +388,7 @@ describe('malformed input', () => {
             revision,
             players: [],
             blocks: [],
+            poweredRails: [],
           },
         })
         expect(rejected(text)?.reason).toBe('malformed-frame')
@@ -390,6 +407,19 @@ describe('malformed input', () => {
           revision: 0,
           players: [{ player: 'alice', name: '', at: { x: 0, y: 0, z: 0 }, facing: { yawRadians: 0, pitchRadians: 0 } }],
           blocks: [],
+          poweredRails: [],
+        },
+      })
+      const malformedPoweredRail = JSON.stringify({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          _tag: 'WorldSnapshot',
+          world: 'overworld',
+          seed: 1,
+          revision: 0,
+          players: [],
+          blocks: [],
+          poweredRails: [{ at: { x: 0, y: 64, z: 0 }, powered: true, requestedBy: 'client' }],
         },
       })
       const unknownReason = JSON.stringify({
@@ -415,6 +445,7 @@ describe('malformed input', () => {
       })
 
       expect(rejected(malformedPlayer)?.reason).toBe('malformed-frame')
+      expect(rejected(malformedPoweredRail)?.reason).toBe('malformed-frame')
       expect(rejected(unknownReason)?.reason).toBe('malformed-frame')
       expect(rejected(missingContainerKind)?.reason).toBe('malformed-frame')
     }),
@@ -551,10 +582,16 @@ describe('malformed input', () => {
     ).toThrow()
   })
 
-  it('rejects client-selected End transfer state without decoder options', () => {
+  it('rejects client-selected portal transfer state without decoder options', () => {
     expect(() =>
       Schema.decodeUnknownSync(EndPortalUseCommand)({
         ...SAMPLES.EndPortalUseCommand,
+        destinationWorld: end,
+      }),
+    ).toThrow()
+    expect(() =>
+      Schema.decodeUnknownSync(NetherPortalUseCommand)({
+        ...SAMPLES.NetherPortalUseCommand,
         destinationWorld: end,
       }),
     ).toThrow()

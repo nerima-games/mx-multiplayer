@@ -94,6 +94,8 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
       },
     ],
     blocks: [{ world: OVERWORLD, at: { x: 1, y: 2, z: 3 }, block: 'stone' }],
+    poweredRails: [{ at: { x: 2, y: 64, z: 3 }, powered: true }],
+    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
   },
   BlockMutationRejected: {
     _tag: 'BlockMutationRejected',
@@ -113,7 +115,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   RealmTransferSnapshot: {
     _tag: 'RealmTransferSnapshot', commandId: COMMAND_ID, player: ALICE, fromWorld: OVERWORLD, destinationWorld: END,
     at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
-    worldSnapshot: { _tag: 'WorldSnapshot', world: END, seed: 42, revision: 1, players: [], blocks: [] },
+    worldSnapshot: { _tag: 'WorldSnapshot', world: END, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [], levers: [] },
     authoritativeSnapshot: {
       _tag: 'AuthoritativeSnapshot', world: END, revision: 1,
       inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
@@ -131,6 +133,11 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: OVERWORLD, revision: 2, entity: ENTITY },
   EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: OVERWORLD, revision: 2, entity: { ...ENTITY, health: 19 } },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: OVERWORLD, revision: 2, entityId: ENTITY_ID },
+  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', world: OVERWORLD, revision: 2, at: { x: 3.5, y: 72, z: -4.5 } },
+  EyeOfEnderThrown: {
+    _tag: 'EyeOfEnderThrown', world: OVERWORLD, revision: 2, player: ALICE,
+    origin: { x: 1, y: 65, z: 1 }, target: { x: 100, y: 72, z: 100 }, breaks: false,
+  },
   PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...COMMAND_HEADER, action: { _tag: 'select-slot', slot: 0 } },
   PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...COMMAND_HEADER, action: 'respawn' },
   WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...COMMAND_HEADER, action: { _tag: 'set-time', timeOfDay: 6000 } },
@@ -140,7 +147,11 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
+  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...COMMAND_HEADER },
+  InsertEyeIntoEndPortalFrameCommand: { _tag: 'InsertEyeIntoEndPortalFrameCommand', ...COMMAND_HEADER, frame: { x: 1, y: 64, z: 0 } },
   EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
+  NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
+  ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...COMMAND_HEADER, lever: { x: 1, y: 64, z: 0 } },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...COMMAND_HEADER },
   VehicleUseCommand: { _tag: 'VehicleUseCommand', ...COMMAND_HEADER },

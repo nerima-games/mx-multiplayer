@@ -2,10 +2,6 @@
  * The wire protocol: the set of messages two peers may exchange, and nothing
  * else.
  *
- * PRE-AUDIT FIRST CUT (叩き台). The message roster below is a representative
- * subset, not the reference implementation's full set — see
- * `docs/porting.md`.
- *
  * ---------------------------------------------------------------------------
  * Scope
  * ---------------------------------------------------------------------------
@@ -20,18 +16,11 @@
  * Why the payload types are re-declared here instead of imported from kernel
  * ---------------------------------------------------------------------------
  *
- * `Vec3` and `BlockPos` below look like `@nerima-games/mc-kernel`'s `Position`
- * and chunk coordinates, and eventually the *domain-side* of the codec should
- * decode into kernel types. It does not yet, for two reasons:
- *
- * 1. Nothing in the 16-repository roster is published (plan.md §6 Step 3), so
- *    this skeleton has no sibling package to depend on.
- * 2. More durably: a wire format and a domain type have different change
- *    budgets. Kernel's `Position` may be refactored freely; the wire encoding
- *    of a position may not, because an old client is still sending it. Keeping
- *    a declared wire schema — even one that currently mirrors kernel exactly —
- *    is what makes "kernel changed" and "the protocol changed" two separate
- *    events. See docs/design-notes.md.
+ * `Vec3` and `BlockPos` below deliberately resemble `@nerima-games/mc-kernel`
+ * value types but are not imported from them. A wire format and a domain type
+ * have different change budgets: kernel values may be refactored without
+ * changing the protocol, while wire changes require a version transition.
+ * Keeping their schemas separate makes those two events explicit.
  */
 import { Schema } from 'effect'
 
@@ -43,7 +32,7 @@ import { Schema } from 'effect'
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 2
+export const PROTOCOL_VERSION = 8
 
 // ---------------------------------------------------------------------------
 // Identifiers and payload shapes
@@ -192,6 +181,19 @@ export const BlockMutationSnapshot = Schema.Struct({
 })
 export type BlockMutationSnapshot = typeof BlockMutationSnapshot.Type
 
+/** The authoritative powered state of one rail block in a world snapshot. */
+export const PoweredRailSnapshot = Schema.Struct({
+  at: BlockPos,
+  powered: Schema.Boolean,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type PoweredRailSnapshot = typeof PoweredRailSnapshot.Type
+
+export const LeverSnapshot = Schema.Struct({
+  at: BlockPos,
+  active: Schema.Boolean,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type LeverSnapshot = typeof LeverSnapshot.Type
+
 /**
  * Complete state needed by a late joiner or reconnecting client.
  *
@@ -205,6 +207,8 @@ export const WorldSnapshot = Schema.TaggedStruct('WorldSnapshot', {
   revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
   players: Schema.Array(PlayerSnapshot),
   blocks: Schema.Array(BlockMutationSnapshot),
+  poweredRails: Schema.Array(PoweredRailSnapshot),
+  levers: Schema.Array(LeverSnapshot),
 })
 export type WorldSnapshot = typeof WorldSnapshot.Type
 
@@ -276,7 +280,7 @@ const TimeWeatherState = Schema.Struct({
   weather: Schema.Literal('clear', 'rain', 'thunder'),
 })
 
-export const ContainerKind = Schema.Literal('chest', 'shulker_box', 'dispenser', 'hopper')
+export const ContainerKind = Schema.Literal('chest', 'shulker_box', 'dispenser', 'dropper', 'hopper')
 export type ContainerKind = typeof ContainerKind.Type
 
 const ContainerState = Schema.Struct({
@@ -315,6 +319,8 @@ const MobState = Schema.Struct({
   persistent: Schema.optional(Schema.Boolean),
   named: Schema.optional(Schema.Boolean),
   tamed: Schema.optional(Schema.Boolean),
+  /** Present only for creepers struck by server-authoritative lightning. */
+  charged: Schema.optional(Schema.Boolean),
 })
 
 export const LivingEntityState = Schema.TaggedStruct('living', {
@@ -359,8 +365,6 @@ export const AuthoritativeEntityState = Schema.Union(
   ArrowEntityState,
   PrimedTntEntityState,
   VehicleEntityState,
-  ArrowEntityState,
-  PrimedTntEntityState,
 )
 export type AuthoritativeEntityState = typeof AuthoritativeEntityState.Type
 
@@ -441,6 +445,24 @@ export const EntityDespawnDelta = Schema.TaggedStruct('EntityDespawnDelta', {
   ...DeltaHeader,
   entityId: EntityId,
 })
+/** A server-authoritative lightning impact rendered by connected clients. */
+export const LightningStrikeDelta = Schema.TaggedStruct('LightningStrikeDelta', {
+  ...DeltaHeader,
+  at: Vec3,
+})
+/**
+ * A server-derived Eye of Ender flight. It is deliberately separate from
+ * persistent entity deltas: the client renders the short-lived flight, while
+ * a recoverable Eye becomes an ordinary server-owned item drop afterwards.
+ */
+export const EyeOfEnderThrown = Schema.TaggedStruct('EyeOfEnderThrown', {
+  ...DeltaHeader,
+  player: PlayerId,
+  origin: Vec3,
+  target: Vec3,
+  breaks: Schema.Boolean,
+})
+export type EyeOfEnderThrown = typeof EyeOfEnderThrown.Type
 export const AuthoritativeDelta = Schema.Union(
   PlayerInventoryDelta,
   PlayerVitalsDelta,
@@ -452,6 +474,7 @@ export const AuthoritativeDelta = Schema.Union(
   EntitySpawnDelta,
   EntityUpdateDelta,
   EntityDespawnDelta,
+  LightningStrikeDelta,
 )
 export type AuthoritativeDelta = typeof AuthoritativeDelta.Type
 
@@ -482,10 +505,6 @@ export const PlayerInventoryAction = Schema.Union(
     source: CommandSlotIndex,
     destination: Schema.Literal('world'),
     count: CommandItemCount,
-  }),
-  Schema.TaggedStruct('swap-items', {
-    source: CommandSlotIndex,
-    destination: CommandSlotIndex,
   }),
   Schema.TaggedStruct('equip-item', {
     source: CommandSlotIndex,
@@ -613,6 +632,33 @@ export const EndPortalUseCommand = Schema.TaggedStruct('EndPortalUseCommand', {
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export type EndPortalUseCommand = typeof EndPortalUseCommand.Type
 
+/** The server validates the held Eye and derives the stronghold from the world seed. */
+export const ThrowEyeOfEnderCommand = Schema.TaggedStruct('ThrowEyeOfEnderCommand', {
+  ...CommandHeader,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type ThrowEyeOfEnderCommand = typeof ThrowEyeOfEnderCommand.Type
+
+/** The server validates that this is an empty generated stronghold frame. */
+export const InsertEyeIntoEndPortalFrameCommand = Schema.TaggedStruct('InsertEyeIntoEndPortalFrameCommand', {
+  ...CommandHeader,
+  frame: BlockPos,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type InsertEyeIntoEndPortalFrameCommand = typeof InsertEyeIntoEndPortalFrameCommand.Type
+
+/** A client requests Nether portal use; destination and spawn are server authority. */
+export const NetherPortalUseCommand = Schema.TaggedStruct('NetherPortalUseCommand', {
+  ...CommandHeader,
+  portal: BlockPos,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type NetherPortalUseCommand = typeof NetherPortalUseCommand.Type
+
+/** A client requests a lever toggle; the server owns its active state. */
+export const ToggleLeverCommand = Schema.TaggedStruct('ToggleLeverCommand', {
+  ...CommandHeader,
+  lever: BlockPos,
+}).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
+export type ToggleLeverCommand = typeof ToggleLeverCommand.Type
+
 export const EnderPearlCommand = Schema.TaggedStruct('EnderPearlCommand', { ...CommandHeader })
 export type EnderPearlCommand = typeof EnderPearlCommand.Type
 export const BucketUseCommand = Schema.TaggedStruct('BucketUseCommand', { ...CommandHeader })
@@ -644,6 +690,10 @@ export const AuthoritativeCommand = Schema.Union(
   BowUseCommand,
   IgniteTntCommand,
   EndPortalUseCommand,
+  ThrowEyeOfEnderCommand,
+  InsertEyeIntoEndPortalFrameCommand,
+  NetherPortalUseCommand,
+  ToggleLeverCommand,
   EnderPearlCommand,
   BucketUseCommand,
   VehicleUseCommand,
@@ -727,6 +777,7 @@ export const NetworkMessage = Schema.Union(
   BlockMutationRejected,
   AuthoritativeSnapshot,
   RealmTransferSnapshot,
+  EyeOfEnderThrown,
   AuthoritativeDelta,
   AuthoritativeCommand,
   AuthoritativeCommandResult,
@@ -749,6 +800,7 @@ export const MESSAGE_TAGS = [
   'BlockMutationRejected',
   'AuthoritativeSnapshot',
   'RealmTransferSnapshot',
+  'EyeOfEnderThrown',
   'PlayerInventoryDelta',
   'PlayerVitalsDelta',
   'PlayerFishingDelta',
@@ -759,6 +811,7 @@ export const MESSAGE_TAGS = [
   'EntitySpawnDelta',
   'EntityUpdateDelta',
   'EntityDespawnDelta',
+  'LightningStrikeDelta',
   'PlayerInventoryCommand',
   'PlayerVitalsCommand',
   'WorldTimeWeatherCommand',
@@ -770,6 +823,10 @@ export const MESSAGE_TAGS = [
   'BowUseCommand',
   'IgniteTntCommand',
   'EndPortalUseCommand',
+  'ThrowEyeOfEnderCommand',
+  'InsertEyeIntoEndPortalFrameCommand',
+  'NetherPortalUseCommand',
+  'ToggleLeverCommand',
   'EnderPearlCommand',
   'BucketUseCommand',
   'VehicleUseCommand',
