@@ -100,7 +100,8 @@ export class HungerAuthority {
       health = Math.max(floor, health - 1)
     }
     const next = { food, saturation, exhaustion, health }
-    if (JSON.stringify(next) === JSON.stringify(actor.state)) return actor
+    const unchanged = next.food === actor.state.food && next.saturation === actor.state.saturation && next.exhaustion === actor.state.exhaustion && next.health === actor.state.health
+    if (unchanged) return actor
     events.push({ _tag: 'HungerChanged', player: actor.player, state: next })
     if (health === 0) events.push({ _tag: 'HungerDeath', player: actor.player })
     return { ...actor, state: next }
