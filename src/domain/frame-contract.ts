@@ -32,8 +32,7 @@
  * not wire types, and there is no version of them that an old peer is still
  * sending.
  */
-import type { Effect, Layer } from 'effect'
-import { Brand } from 'effect'
+import { Brand, type Effect, type Layer } from 'effect'
 
 /**
  * Identifies a frame stage. Stage ids are the vertices of the per-frame ordering
@@ -48,8 +47,11 @@ import { Brand } from 'effect'
  */
 export type StageId = string & Brand.Brand<'StageId'>
 
+/** A trimmed `StageId` shorter than this (i.e. empty) fails the brand's refinement. */
+const MIN_STAGE_ID_LENGTH = 0
+
 export const StageId = Brand.refined<StageId>(
-  (value) => value.trim().length > 0,
+  (value) => value.trim().length > MIN_STAGE_ID_LENGTH,
   (value) => Brand.error(`StageId must be a non-blank string, received ${JSON.stringify(value)}`),
 )
 
@@ -63,8 +65,11 @@ export const StageId = Brand.refined<StageId>(
  */
 export type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>
 
+/** A zero delta is legal (see the header comment above); only a negative one fails the brand's refinement. */
+const MIN_DELTA_TIME_SECS = 0
+
 export const DeltaTimeSecs = Brand.refined<DeltaTimeSecs>(
-  (value) => Number.isFinite(value) && value >= 0,
+  (value) => Number.isFinite(value) && value >= MIN_DELTA_TIME_SECS,
   (value) => Brand.error(`DeltaTimeSecs must be a finite, non-negative number of seconds, received ${value}`),
 )
 
@@ -119,7 +124,7 @@ export interface StageRegistration {
  * A repository's contribution to a running game.
  *
  * `ROut`      — services this module provides.
- * `E`         — errors that can occur while *building* those services.
+ * `Err`       — errors that can occur while *building* those services.
  * `RIn`       — services this module needs to be given in order to build.
  * `RRegister` — services this module needs in order to REGISTER its stages.
  *
@@ -138,7 +143,7 @@ export interface StageRegistration {
  * requirement with `ROut = never`, and a host has to satisfy it before a single
  * `multiplayer:` stage can be registered.
  */
-export interface GameModule<ROut, E, RIn, RRegister = never> {
-  readonly layers: Layer.Layer<ROut, E, RIn>
+export interface GameModule<ROut, Err, RIn, RRegister = never> {
+  readonly layers: Layer.Layer<ROut, Err, RIn>
   readonly frameStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, RRegister>
 }

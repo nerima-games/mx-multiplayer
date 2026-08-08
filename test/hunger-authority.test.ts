@@ -53,4 +53,123 @@ describe('hunger authority', () => {
     authority.disconnect(alice)
     expect(authority.snapshot()).toMatchObject({ revision: 3, actors: [] })
   })
+
+  it('leaves state untouched when disconnect targets a player who is not present', () => {
+    const authority = createHungerAuthority(snapshot())
+    const before = authority.snapshot()
+    authority.disconnect(PlayerId.make('ghost'))
+    expect(authority.snapshot()).toStrictEqual(before)
+  })
+
+  it('rejects a rejoin with a blank session, an unknown player, or a mismatched previous session', () => {
+    const authority = createHungerAuthority(snapshot())
+    expect(authority.rejoin(alice, 'one', '')).toBe(false)
+    expect(authority.rejoin(PlayerId.make('ghost'), 'one', 'two')).toBe(false)
+    expect(authority.rejoin(alice, 'wrong-previous', 'two')).toBe(false)
+    expect(authority.snapshot()).toMatchObject({ actors: [{ session: 'one' }] })
+  })
+
+  it('rejoins only the named actor, leaving every other actor in the world untouched', () => {
+    const bob = PlayerId.make('bob')
+    const base = snapshot()
+    const withBob = {
+      ...base,
+      actors: [
+        ...base.actors,
+        { player: bob, session: 'bob-one', state: { food: 15, saturation: 1, exhaustion: 0, health: 20 }, food: {} },
+      ],
+    }
+    const authority = createHungerAuthority(withBob)
+    expect(authority.rejoin(alice, 'one', 'alice-two')).toBe(true)
+    expect(authority.snapshot().actors).toStrictEqual([
+      { player: alice, session: 'alice-two', state: withBob.actors[0]!.state, food: withBob.actors[0]!.food },
+      withBob.actors[1],
+    ])
+  })
+
+  it('rejects a command with a blank commandId or session, and a command from an unknown or mismatched player', () => {
+    const authority = createHungerAuthority(snapshot())
+    expect(authority.execute({ player: alice, session: 'one', commandId: '', expectedRevision: 2, _tag: 'Respawn' })).toMatchObject({ reason: 'invalid-command' })
+    expect(authority.execute({ player: alice, session: '', commandId: 'x', expectedRevision: 2, _tag: 'Respawn' })).toMatchObject({ reason: 'invalid-command' })
+    expect(authority.execute({ player: PlayerId.make('ghost'), session: 'one', commandId: 'x', expectedRevision: 2, _tag: 'Respawn' })).toMatchObject({ reason: 'unauthorized-player' })
+    expect(authority.execute({ player: alice, session: 'wrong', commandId: 'x', expectedRevision: 2, _tag: 'Respawn' })).toMatchObject({ reason: 'session-mismatch' })
+  })
+
+  it('rejects every non-Respawn command from a dead actor, and accepts Respawn to revive them', () => {
+    const base = snapshot()
+    const dead = { ...base, actors: [{ ...base.actors[0]!, state: { ...base.actors[0]!.state, health: 0 } }] }
+    const authority = createHungerAuthority(dead)
+    expect(authority.execute({ ...header('move'), _tag: 'Activity', activity: 'walk', amount: 1 })).toMatchObject({ reason: 'invalid-command' })
+    expect(authority.execute({ ...header('respawn'), _tag: 'Respawn' })).toMatchObject({ accepted: true })
+    expect(authority.snapshot().actors[0]?.state.health).toBe(20)
+  })
+
+  it('rejects eating a food this authority does not recognize, one the actor holds none of, and eating while already full', () => {
+    const authority = createHungerAuthority(snapshot())
+    expect(authority.execute({ ...header('unknown'), _tag: 'Eat', item: 'diamond' })).toMatchObject({ reason: 'insufficient-items' })
+    expect(authority.execute({ ...header('none-held'), _tag: 'Eat', item: 'bread' })).toMatchObject({ reason: 'insufficient-items' })
+
+    const full = snapshot()
+    const authorityFull = createHungerAuthority({
+      ...full,
+      actors: [{ ...full.actors[0]!, state: { ...full.actors[0]!.state, food: 20 } }],
+    })
+    expect(authorityFull.execute({ ...header('full'), _tag: 'Eat', item: 'apple' })).toMatchObject({ reason: 'cannot-eat' })
+  })
+
+  it('advances only the actor named by the command, leaving every other actor in the world untouched', () => {
+    const bob = PlayerId.make('bob')
+    const base = snapshot()
+    const withBob = {
+      ...base,
+      actors: [
+        ...base.actors,
+        { player: bob, session: 'bob-one', state: { food: 15, saturation: 1, exhaustion: 0, health: 20 }, food: {} },
+      ],
+    }
+    const authority = createHungerAuthority(withBob)
+    authority.execute({ ...header('jump'), _tag: 'Activity', activity: 'jump', amount: 1 })
+    expect(authority.snapshot().actors[1]).toStrictEqual(withBob.actors[1])
+  })
+
+  it('treats a non-finite or negative elapsed time as a no-op tick', () => {
+    const authority = createHungerAuthority(snapshot())
+    const before = authority.snapshot()
+    expect(authority.tick(Number.NaN)).toStrictEqual([])
+    expect(authority.tick(-1)).toStrictEqual([])
+    expect(authority.snapshot()).toStrictEqual(before)
+  })
+
+  it('drains saturation before food, and leaves an already-dead actor unticked', () => {
+    const base = snapshot()
+    const saturated = createHungerAuthority({
+      ...base,
+      actors: [{ ...base.actors[0]!, state: { food: 15, saturation: 1, exhaustion: 4, health: 18 } }],
+    })
+    // The actor already carries a full drain unit (exhaustion 4) before this
+    // Tick; the while loop fires once, and saturation (currently 1) is
+    // Preferred over food, clamped at 0 rather than going negative.
+    saturated.tick(4000)
+    expect(saturated.snapshot().actors[0]?.state).toMatchObject({ food: 15, saturation: 0 })
+
+    const dead = createHungerAuthority({
+      ...base,
+      actors: [{ ...base.actors[0]!, state: { food: 10, saturation: 0, exhaustion: 0, health: 0 } }],
+    })
+    expect(dead.tick(4000)).toStrictEqual([])
+    expect(dead.snapshot().actors[0]?.state).toStrictEqual({ food: 10, saturation: 0, exhaustion: 0, health: 0 })
+  })
+
+  it('drains food across more than one exhaustion unit per tick, floored at zero rather than going negative', () => {
+    const base = snapshot()
+    const starving = createHungerAuthority({
+      ...base,
+      actors: [{ ...base.actors[0]!, state: { food: 1, saturation: 0, exhaustion: 8, health: 18 } }],
+    })
+    // Two full drain units (exhaustion 8) with no saturation to spend first:
+    // Food loses two units, but only has one to give before the floor clamps
+    // The second unit at zero instead of going negative.
+    starving.tick(4000)
+    expect(starving.snapshot().actors[0]?.state.food).toBe(0)
+  })
 })

@@ -20,11 +20,29 @@ export type SnapshotIngestResult =
   | { readonly accepted: true; readonly historySize: number }
   | { readonly accepted: false; readonly reason: 'invalid' | 'duplicate-or-stale' }
 
+/** Shared lower bound for `sequence` and `tick`: both are counts, never negative. */
+const MIN_SEQUENCE_OR_TICK = 0
+
+/** The literal zero, named at each call site below for what that particular zero means. */
+const ZERO = 0
+
+/** `Array#at`'s index for "the last element". */
+const LAST_INDEX = -1
+
+/** A full turn is two half turns (`Math.PI` each). */
+const FULL_TURN_MULTIPLIER = 2
+
+/** Below this, `sample`'s neighbor-pair scan has no earlier snapshot to interpolate from. */
+const NEIGHBOR_OFFSET = 1
+
+/** A buffer holding fewer than this cannot bracket a render tick between two snapshots. */
+const MIN_HISTORY_LIMIT = 2
+
 const validSnapshot = (snapshot: PlayerTransformSnapshot): boolean =>
   Number.isSafeInteger(snapshot.sequence) &&
-  snapshot.sequence >= 0 &&
+  snapshot.sequence >= MIN_SEQUENCE_OR_TICK &&
   Number.isSafeInteger(snapshot.tick) &&
-  snapshot.tick >= 0 &&
+  snapshot.tick >= MIN_SEQUENCE_OR_TICK &&
   Number.isFinite(snapshot.at.x) &&
   Number.isFinite(snapshot.at.y) &&
   Number.isFinite(snapshot.at.z) &&
@@ -38,7 +56,7 @@ const lerp = (left: number, right: number, alpha: number): number =>
   left + (right - left) * alpha
 
 const interpolateYaw = (left: number, right: number, alpha: number): number => {
-  const fullTurn = Math.PI * 2
+  const fullTurn = Math.PI * FULL_TURN_MULTIPLIER
   const shortest = ((right - left + Math.PI) % fullTurn + fullTurn) % fullTurn - Math.PI
   return left + shortest * alpha
 }
@@ -55,81 +73,132 @@ export class SnapshotInterpolator {
   readonly #history = new Map<PlayerId, Array<PlayerTransformSnapshot>>()
 
   constructor(config: SnapshotInterpolatorConfig) {
-    if (!Number.isSafeInteger(config.historyLimit) || config.historyLimit < 2) {
+    if (!Number.isSafeInteger(config.historyLimit) || config.historyLimit < MIN_HISTORY_LIMIT) {
       throw new RangeError('historyLimit must be a safe integer of at least 2')
     }
-    if (!Number.isFinite(config.teleportDistance) || config.teleportDistance <= 0) {
+    if (!Number.isFinite(config.teleportDistance) || config.teleportDistance <= ZERO) {
       throw new RangeError('teleportDistance must be finite and greater than zero')
     }
     this.#config = config
   }
 
   ingest(player: PlayerId, snapshot: PlayerTransformSnapshot): SnapshotIngestResult {
-    if (!validSnapshot(snapshot)) return { accepted: false, reason: 'invalid' }
+    if (!validSnapshot(snapshot)) {
+      return { accepted: false, reason: 'invalid' }
+    }
 
     const history = this.#history.get(player) ?? []
-    const newest = history.at(-1)
-    if (
-      newest !== undefined &&
-      (snapshot.sequence <= newest.sequence || snapshot.tick <= newest.tick)
-    ) {
+    if (SnapshotInterpolator.#isStaleOrDuplicate(history, snapshot)) {
       return { accepted: false, reason: 'duplicate-or-stale' }
     }
 
     history.push(snapshot)
-    if (history.length > this.#config.historyLimit) {
-      history.splice(0, history.length - this.#config.historyLimit)
-    }
+    this.#trimToLimit(history)
     this.#history.set(player, history)
     return { accepted: true, historySize: history.length }
   }
 
+  static #isStaleOrDuplicate(history: ReadonlyArray<PlayerTransformSnapshot>, snapshot: PlayerTransformSnapshot): boolean {
+    const newest = history.at(LAST_INDEX)
+    return newest !== undefined && (snapshot.sequence <= newest.sequence || snapshot.tick <= newest.tick)
+  }
+
+  #trimToLimit(history: Array<PlayerTransformSnapshot>): void {
+    if (history.length > this.#config.historyLimit) {
+      history.splice(ZERO, history.length - this.#config.historyLimit)
+    }
+  }
+
   sample(player: PlayerId, renderTick: number): PlayerTransformSnapshot | undefined {
-    if (!Number.isFinite(renderTick)) return undefined
+    if (!Number.isFinite(renderTick)) {
+      return undefined
+    }
     const history = this.#history.get(player)
-    if (history === undefined || history.length === 0) return undefined
-
-    const first = history[0]
-    const last = history.at(-1)
-    if (first === undefined || last === undefined) return undefined
-    if (renderTick <= first.tick) return first
-    if (renderTick >= last.tick) return last
-
-    for (let index = 1; index < history.length; index += 1) {
-      const right = history[index]
-      const left = history[index - 1]
-      if (left === undefined || right === undefined || renderTick > right.tick) continue
-
-      if (distance(left.at, right.at) >= this.#config.teleportDistance) {
-        return renderTick < right.tick ? left : right
-      }
-
-      const alpha = (renderTick - left.tick) / (right.tick - left.tick)
-      return {
-        sequence: right.sequence,
-        tick: renderTick,
-        at: {
-          x: lerp(left.at.x, right.at.x, alpha),
-          y: lerp(left.at.y, right.at.y, alpha),
-          z: lerp(left.at.z, right.at.z, alpha),
-        },
-        facing: {
-          yawRadians: interpolateYaw(left.facing.yawRadians, right.facing.yawRadians, alpha),
-          pitchRadians: lerp(left.facing.pitchRadians, right.facing.pitchRadians, alpha),
-        },
-      }
+    if (history === undefined || history.length === ZERO) {
+      return undefined
     }
 
-    return last
+    const boundary = SnapshotInterpolator.#sampleAtBoundary(history, renderTick)
+    if (boundary !== undefined) {
+      return boundary
+    }
+
+    return this.#interpolate(history, renderTick)
+  }
+
+  /** Precondition, enforced by the only caller (`sample`): `history` is non-empty. */
+  static #sampleAtBoundary(
+    history: ReadonlyArray<PlayerTransformSnapshot>,
+    renderTick: number,
+  ): PlayerTransformSnapshot | undefined {
+    // Non-null: a non-empty array's first element and `.at(-1)` are always
+    // Present; there is no runtime path here where either is `undefined`.
+    const [first] = history as [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>]
+    const last = history.at(LAST_INDEX) as PlayerTransformSnapshot
+    if (renderTick <= first.tick) {
+      return first
+    }
+    if (renderTick >= last.tick) {
+      return last
+    }
+    return undefined
+  }
+
+  /** Precondition, enforced by the only caller (`sample`): `first.tick < renderTick < last.tick`. */
+  #interpolate(history: ReadonlyArray<PlayerTransformSnapshot>, renderTick: number): PlayerTransformSnapshot {
+    for (let index = NEIGHBOR_OFFSET; index < history.length; index += NEIGHBOR_OFFSET) {
+      const right = history[index]
+      const left = history[index - NEIGHBOR_OFFSET]
+      if (left !== undefined && right !== undefined && renderTick <= right.tick) {
+        return this.#interpolatePair(left, right, renderTick)
+      }
+      // Unreachable: the precondition above guarantees some `right` in this
+      // Loop satisfies `renderTick <= right.tick` no later than the final
+      // Element, so the loop always returns from inside the `if` above. The
+      // `v8 ignore` line below suppresses the loop's own "completed without
+      // Matching" branch, which no input reaches without violating a
+      // Precondition `sample` already enforces before calling here.
+      /* v8 ignore next */
+    }
+    /* v8 ignore next */
+    throw new Error('unreachable: renderTick was not strictly within the sampled history')
+  }
+
+  #interpolatePair(
+    left: PlayerTransformSnapshot,
+    right: PlayerTransformSnapshot,
+    renderTick: number,
+  ): PlayerTransformSnapshot {
+    if (distance(left.at, right.at) >= this.#config.teleportDistance) {
+      if (renderTick < right.tick) {
+        return left
+      }
+      return right
+    }
+
+    const alpha = (renderTick - left.tick) / (right.tick - left.tick)
+    return {
+      at: {
+        x: lerp(left.at.x, right.at.x, alpha),
+        y: lerp(left.at.y, right.at.y, alpha),
+        z: lerp(left.at.z, right.at.z, alpha),
+      },
+      facing: {
+        pitchRadians: lerp(left.facing.pitchRadians, right.facing.pitchRadians, alpha),
+        yawRadians: interpolateYaw(left.facing.yawRadians, right.facing.yawRadians, alpha),
+      },
+      sequence: right.sequence,
+      tick: renderTick,
+    }
   }
 
   historySize(player: PlayerId): number {
-    return this.#history.get(player)?.length ?? 0
+    return this.#history.get(player)?.length ?? ZERO
   }
 
   /** Remove one peer on leave, or every peer when the transport disconnects. */
   disconnect(player?: PlayerId): void {
-    if (player === undefined) this.#history.clear()
-    else this.#history.delete(player)
+    if (player === undefined) {this.#history.clear()}
+    else {this.#history.delete(player)}
   }
 }

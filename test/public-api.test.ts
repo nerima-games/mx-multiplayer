@@ -6,12 +6,12 @@ import { MESSAGE_TAGS, PROTOCOL_VERSION } from '../src/domain/protocol'
 
 describe('public API surface', () => {
   // The barrel is what mc-compose imports. A re-export dropped here is
-  // invisible to every other test in this repository but breaks the composition
-  // repository, so it is pinned explicitly.
+  // Invisible to every other test in this repository but breaks the composition
+  // Repository, so it is pinned explicitly.
   it.effect('re-exports every value a consumer is expected to import', () =>
     Effect.sync(() => {
       const expected = [
-        // protocol
+        // Protocol
         'PROTOCOL_VERSION',
         'PlayerId',
         'PlayerName',
@@ -30,22 +30,22 @@ describe('public API surface', () => {
         'NetworkMessage',
         'MESSAGE_TAGS',
         'Frame',
-        // codec
+        // Codec
         'encodeFrame',
         'encodeFrameAsVersion',
         'decodeFrame',
-        // errors
+        // Errors
         'ProtocolError',
         'TransportError',
-        // connection
+        // Connection
         'initialConnectionState',
         'transition',
         'runTransitions',
         'canSend',
         'isSettled',
-        // authoritative resync admission
+        // Authoritative resync admission
         'AuthoritativeRevisionTracker',
-        // transport
+        // Transport
         'TransportPort',
         'connectionGatedTransport',
         'sendMessage',
@@ -53,9 +53,9 @@ describe('public API surface', () => {
         'makeLoopbackPair',
         'LoopbackTransportLayer',
         'disconnectedTransport',
-        // deterministic client-side snapshot interpolation
+        // Deterministic client-side snapshot interpolation
         'SnapshotInterpolator',
-        // stages — what mc-compose merges and what a consumer names
+        // Stages — what mc-compose merges and what a consumer names
         'MULTIPLAYER_STAGE_IDS',
         'UPSTREAM_STAGE_IDS',
         'EXPERIENCE_MODULE_STAGE_PREFIXES',
@@ -75,12 +75,12 @@ describe('public API surface', () => {
   )
 
   // REGRESSION: `domain/frame-contract.ts` is a stand-in for mc-kernel and
-  // carries a deletion date. Re-exporting it would put `StageId`,
+  // Carries a deletion date. Re-exporting it would put `StageId`,
   // `DeltaTimeSecs` and `StageRegistration` into THIS package's published
-  // surface, so a consumer would still be importing them from here on the day
-  // the file is deleted — and two `StageId` brands with one name are one type to
+  // Surface, so a consumer would still be importing them from here on the day
+  // The file is deleted — and two `StageId` brands with one name are one type to
   // TypeScript however differently they validate. mx-gameplay and mx-redstone
-  // make the same call; this pins it.
+  // Make the same call; this pins it.
   it.effect('does not re-export the local mc-kernel stand-in', () =>
     Effect.sync(() => {
       for (const name of ['StageId', 'DeltaTimeSecs', 'StageRegistration', 'GameModule']) {
@@ -100,8 +100,8 @@ describe('public API surface', () => {
 
   // REGRESSION: plan.md §3.14 — "transport and protocol only". A renderer, a
   // DOM node or a screen component appearing in this barrel means the mx-ui
-  // boundary has been crossed. This is a weak check (a name test), and it is
-  // here to make the intent visible at the place a new export gets added.
+  // Boundary has been crossed. This is a weak check (a name test), and it is
+  // Here to make the intent visible at the place a new export gets added.
   it.effect('exports nothing that sounds like a screen, a view or a renderer', () =>
     Effect.sync(() => {
       const forbidden = /screen|menu|hud|render|dom|element|widget|overlay/iu
@@ -111,8 +111,8 @@ describe('public API surface', () => {
   )
 
   // REGRESSION: the protocol version is part of the published contract. Bumping
-  // it is a deliberate act that has to be paired with a compatibility note in
-  // docs/versioning.md, not something that happens by accident.
+  // It is a deliberate act that has to be paired with a compatibility note in
+  // Docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
       expect(PROTOCOL_VERSION).toBe(8)

@@ -20,8 +20,8 @@
  * the unchanged state cannot tell "nothing to do" from "you asked for something
  * incoherent".
  */
-import type { TransportErrorReason } from './errors'
 import type { PlayerId, WorldId } from './protocol'
+import type { TransportErrorReason } from './errors'
 
 export type ConnectionState =
   /** Nothing open. The only state from which a connect may be requested. */
@@ -56,6 +56,9 @@ export type ConnectionEvent =
 
 export const initialConnectionState: ConnectionState = { _tag: 'Disconnected' }
 
+/** The `attempt` counter's value for a connection's first try, from either `Disconnected` or `Closed`. */
+const FIRST_ATTEMPT = 1
+
 /** Frames may only be sent from `Connected`. Used by the transport and stage gates. */
 export const canSend = (state: ConnectionState): boolean => state._tag === 'Connected'
 
@@ -77,7 +80,10 @@ export const transition = (
 ): ConnectionState | undefined => {
   switch (state._tag) {
     case 'Disconnected':
-      return event._tag === 'ConnectRequested' ? { _tag: 'Connecting', attempt: 1 } : undefined
+      if (event._tag === 'ConnectRequested') {
+        return { _tag: 'Connecting', attempt: FIRST_ATTEMPT }
+      }
+      return undefined
 
     case 'Connecting':
       switch (event._tag) {
@@ -93,8 +99,8 @@ export const transition = (
           return { _tag: 'Disconnected' }
         default:
           // A second ConnectRequested while already connecting is the reconnect
-          // storm this machine exists to prevent, so it is illegal rather than
-          // idempotent: the caller has lost track of its own state.
+          // Storm this machine exists to prevent, so it is illegal rather than
+          // Idempotent: the caller has lost track of its own state.
           return undefined
       }
 
@@ -113,12 +119,24 @@ export const transition = (
     case 'Closed':
       switch (event._tag) {
         case 'RetryRequested':
-          return { _tag: 'Connecting', attempt: 1 }
+          return { _tag: 'Connecting', attempt: FIRST_ATTEMPT }
         case 'CloseRequested':
           return { _tag: 'Disconnected' }
         default:
           return undefined
       }
+
+    /* v8 ignore start */
+    default:
+      // The outer switch is exhaustive over ConnectionState['_tag']; this arm
+      // Is unreachable and exists only because oxlint's `default-case` wants
+      // One regardless of TypeScript-proven exhaustiveness. `ConnectionState`
+      // Is a closed union of exactly the four cases above; there is no fifth
+      // `_tag` value a caller inside this module's type system can construct
+      // To reach this branch, so no test can exercise it without an `as`
+      // Cast that lies to the compiler about the value's type.
+      return undefined
+    /* v8 ignore stop */
   }
 }
 
@@ -136,13 +154,12 @@ export const runTransitions = (
   readonly rejectedAt: number | undefined
 } => {
   let state = from
-  for (let index = 0; index < events.length; index += 1) {
-    const event = events[index]
-    const next = event === undefined ? undefined : transition(state, event)
+  for (const [index, event] of events.entries()) {
+    const next = transition(state, event)
     if (next === undefined) {
-      return { state, rejectedAt: index }
+      return { rejectedAt: index, state }
     }
     state = next
   }
-  return { state, rejectedAt: undefined }
+  return { rejectedAt: undefined, state }
 }

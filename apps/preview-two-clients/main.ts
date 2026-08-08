@@ -74,29 +74,30 @@
  */
 import { Effect } from 'effect'
 import { ANSI_STYLE, PLAIN_STYLE, type Style } from './ansi'
-import { buildHelp, buildHud, HUD_ROWS, type HudState } from './hud'
-import { parseArguments, USAGE, type PreviewOptions } from './options'
+import { HUD_ROWS, type HudState, buildHelp, buildHud } from './hud'
+import { type PreviewOptions, USAGE, parseArguments } from './options'
 import {
+  VIEW_MODES,
+  type ViewMode,
   renderFaults,
   renderMachine,
   renderWire,
   stepBanner,
-  VIEW_MODES,
-  type ViewMode,
 } from './render'
 import { buildStatsReport } from './stats'
 import {
+  MACHINE_FAULTS,
+  SCRIPT,
+  type Session,
+  WIRE_FAULTS,
+  type WireFault,
   advance,
   makeSession,
-  MACHINE_FAULTS,
   runScript,
-  SCRIPT,
-  WIRE_FAULTS,
-  type Session,
-  type WireFault,
 } from './session'
 import {
   enterFullScreen,
+  guardBrokenPipe,
   isInteractive,
   leaveFullScreen,
   onExit,
@@ -104,7 +105,6 @@ import {
   onKey,
   onResize,
   paintFrame,
-  guardBrokenPipe,
   screenSize,
   writeLine,
 } from './terminal'
@@ -138,8 +138,8 @@ const render = (state: State, options: PreviewOptions, style: Style): ReadonlyAr
         : renderWire(state.session, style, frame.rows, state.showText)
 
   const hud: HudState = {
-    view: state.view,
     showText: state.showText,
+    view: state.view,
   }
 
   return [...stepBanner(state.session, style), '', ...body, '', ...buildHud(hud, state.session, style)]
@@ -156,7 +156,7 @@ const handleKey = (state: State, key: string): Effect.Effect<boolean> =>
       return true
     }
 
-    const session = state.session
+    const {session} = state
 
     switch (key) {
       case 'x':
@@ -291,14 +291,14 @@ const program: Effect.Effect<number> = Effect.gen(function* () {
 
   const state: State = {
     session: yield* makeSession,
-    view: options.view,
-    showText: options.frames,
     showHelp: false,
+    showText: options.frames,
+    view: options.view,
   }
 
   // Advance to the step the fault is armed at, arm it, then carry on. That is
-  // what "kill the transport MID-handshake" means: the fault has to land between
-  // two steps, not before the session starts.
+  // What "kill the transport MID-handshake" means: the fault has to land between
+  // Two steps, not before the session starts.
   const target = options.script ? SCRIPT.length : options.steps
   while (state.session.step < target) {
     if (state.session.step === options.faultAt && options.fault !== 'none') {

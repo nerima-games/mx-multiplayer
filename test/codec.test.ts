@@ -3,68 +3,127 @@ import { Effect, Either, Option, Schema } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
 import type { ProtocolError } from '../src/domain/errors'
 import {
-  MESSAGE_TAGS,
-  PROTOCOL_VERSION,
   CommandId,
   EndPortalUseCommand,
-  NetherPortalUseCommand,
   EntityId,
+  MESSAGE_TAGS,
+  NetherPortalUseCommand,
+  type NetworkMessage,
+  PROTOCOL_VERSION,
   PlayerId,
   PlayerName,
-  WorldTimeWeatherAction,
-  WorldId,
   RealmTransferSnapshot,
-  type NetworkMessage,
+  WorldId,
+  WorldTimeWeatherAction,
 } from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
 const overworld = WorldId.make('overworld')
 const end = WorldId.make('end')
 const commandId = CommandId.make('command-1')
-const commandHeader = { commandId, player: alice, world: overworld, expectedRevision: 12 }
-const item = { item: 'stone', count: 2, durability: { current: 63, max: 64 } }
+const commandHeader = { commandId, expectedRevision: 12, player: alice, world: overworld }
+const item = { count: 2, durability: { current: 63, max: 64 }, item: 'stone' }
 const entityId = EntityId.make('entity-1')
 const living = {
   _tag: 'living' as const,
+  at: { x: 1, y: 64, z: 1 },
   entityId,
   entityType: 'zombie',
-  at: { x: 1, y: 64, z: 1 },
   health: 20,
   maxHealth: 20,
-  mobState: { attackCooldownSecs: 0, motionPhase: 0.5, provoked: false, persistent: true, charged: true },
+  mobState: { attackCooldownSecs: 0, charged: true, motionPhase: 0.5, persistent: true, provoked: false },
 }
-const itemDrop = { _tag: 'item-drop' as const, entityId: EntityId.make('drop-1'), at: { x: 2, y: 64, z: 1 }, stack: item, ageTicks: 1 }
-const arrow = { _tag: 'arrow' as const, entityId: EntityId.make('arrow-1'), at: { x: 2, y: 65, z: 1 }, velocity: { x: 0, y: 0.1, z: 1 }, damage: 4, owner: alice, ageTicks: 2 }
-const primedTnt = { _tag: 'primed-tnt' as const, entityId: EntityId.make('tnt-1'), at: { x: 3, y: 64, z: 1 }, burnedSecs: 1.5, owner: alice }
+const itemDrop = { _tag: 'item-drop' as const, ageTicks: 1, at: { x: 2, y: 64, z: 1 }, entityId: EntityId.make('drop-1'), stack: item }
+const arrow = { _tag: 'arrow' as const, ageTicks: 2, at: { x: 2, y: 65, z: 1 }, damage: 4, entityId: EntityId.make('arrow-1'), owner: alice, velocity: { x: 0, y: 0.1, z: 1 } }
+const primedTnt = { _tag: 'primed-tnt' as const, at: { x: 3, y: 64, z: 1 }, burnedSecs: 1.5, entityId: EntityId.make('tnt-1'), owner: alice }
 
 /**
  * One sample per message tag. `SAMPLES` is keyed by tag so that the
  * exhaustiveness test below can prove no message escapes the round-trip check.
  */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
+  AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, revision: 13, world: overworld },
+  AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, reason: 'stale-revision', resyncRequired: true, revision: 12, world: overworld },
+  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', lastKnownRevision: 12, world: overworld },
+  AuthoritativeSnapshot: {
+    _tag: 'AuthoritativeSnapshot', containers: [], entities: [living, itemDrop, arrow, primedTnt], furnaces: [], inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }], revision: 12, timeWeather: { timeOfDay: 6000, weather: 'clear' }, villagerTrades: [], vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }], world: overworld,
+  },
+  BlockBreak: { _tag: 'BlockBreak', at: { x: -1, y: 0, z: -3 }, player: alice },
+  BlockMutationRejected: {
+    _tag: 'BlockMutationRejected',
+    at: { x: 1, y: 2, z: 3 },
+    operation: 'place',
+    player: alice,
+    reason: 'occupied',
+    revision: 12,
+    world: overworld,
+  },
+  BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: alice },
+  BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
+  BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },
+  Chat: { _tag: 'Chat', player: alice, text: 'hello 世界' },
+  ContainerCommand: { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'open' } },
+  ContainerDelta: { _tag: 'ContainerDelta', revision: 13, state: { containerId: 'dropper:1', kind: 'dropper', slots: [item] }, world: overworld },
+  EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
+  EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
+  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...commandHeader, entityId },
+  EntityDespawnDelta: { _tag: 'EntityDespawnDelta', entityId, revision: 13, world: overworld },
+  EntityPickupCommand: { _tag: 'EntityPickupCommand', ...commandHeader, entityId },
+  EntitySpawnDelta: { _tag: 'EntitySpawnDelta', entity: living, revision: 13, world: overworld },
+  EntityUpdateDelta: { _tag: 'EntityUpdateDelta', entity: { ...living, health: 19 }, revision: 13, world: overworld },
+  EyeOfEnderThrown: {
+    _tag: 'EyeOfEnderThrown', breaks: false, origin: { x: 1, y: 65, z: 1 }, player: alice, revision: 13, target: { x: 100, y: 72, z: 100 }, world: overworld,
+  },
+  FishingCommand: { _tag: 'FishingCommand', ...commandHeader, action: 'cast' },
+  FurnaceCommand: { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 3 }, count: 1 } },
+  FurnaceDelta: { _tag: 'FurnaceDelta', revision: 13, state: { burnTicksRemaining: 10, cookTicks: 5, fuel: null, furnaceId: 'furnace:1', input: item, output: null }, world: overworld },
+  IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 1 } },
+  InsertEyeIntoEndPortalFrameCommand: {
+    _tag: 'InsertEyeIntoEndPortalFrameCommand',
+    ...commandHeader,
+    frame: { x: 1, y: 64, z: 1 },
+  },
+  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', at: { x: 3.5, y: 72, z: -4.5 }, revision: 13, world: overworld },
+  NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
+  Ping: { _tag: 'Ping', nonce: 7 },
+  PlayerFishingDelta: { _tag: 'PlayerFishingDelta', player: alice, revision: 13, state: { phase: 'bite', result: 'bite' }, world: overworld },
+  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 2 } },
+  PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', player: alice, revision: 13, state: { selectedSlot: 0, slots: [item] }, world: overworld },
   PlayerJoin: {
     _tag: 'PlayerJoin',
-    player: alice,
-    name: PlayerName.make('Alice'),
     at: { x: 8.5, y: 65, z: -12.25 },
+    name: PlayerName.make('Alice'),
+    player: alice,
   },
   PlayerLeave: { _tag: 'PlayerLeave', player: alice },
   PlayerMove: {
     _tag: 'PlayerMove',
-    player: alice,
     at: { x: -0.5, y: 64.125, z: 1024 },
-    facing: { yawRadians: 3.14159, pitchRadians: -1.5 },
+    facing: { pitchRadians: -1.5, yawRadians: 3.14159 },
+    player: alice,
   },
-  BlockPlace: { _tag: 'BlockPlace', player: alice, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
-  BlockBreak: { _tag: 'BlockBreak', player: alice, at: { x: -1, y: 0, z: -3 } },
+  PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...commandHeader, action: { _tag: 'activity', activity: 'swim', amount: 3 } },
+  PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', player: alice, revision: 13, state: { experience: 1, health: 19, hunger: 18 }, world: overworld },
+  Pong: { _tag: 'Pong', nonce: 7 },
+  RealmTransferSnapshot: {
+    _tag: 'RealmTransferSnapshot', at: { x: 0.5, y: 64, z: -4.25 }, authoritativeSnapshot: {
+      _tag: 'AuthoritativeSnapshot', containers: [], entities: [], furnaces: [], inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }], revision: 1, timeWeather: { timeOfDay: 6000, weather: 'clear' }, villagerTrades: [], vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }], world: end,
+    }, commandId, destinationWorld: end, facing: { pitchRadians: -0.25, yawRadians: 1.5 }, fromWorld: overworld, player: alice, worldSnapshot: { _tag: 'WorldSnapshot', blocks: [], levers: [], players: [], poweredRails: [], revision: 1, seed: 42, world: end },
+  },
+  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...commandHeader },
   ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...commandHeader, lever: { x: 1, y: 64, z: 2 } },
-  Chat: { _tag: 'Chat', player: alice, text: 'hello 世界' },
-  WorldInfo: { _tag: 'WorldInfo', world: overworld, seed: -1_234_567 },
+  VehicleCommand: { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', direction: 'forward' } },
+  VehicleUseCommand: { _tag: 'VehicleUseCommand', ...commandHeader },
+  VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...commandHeader, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
+  VillagerTradeDelta: { _tag: 'VillagerTradeDelta', revision: 13, state: { offers: [{ offerId: 'offer:1', input: [item], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }], villagerId: 'villager:1' }, world: overworld },
+  WorldInfo: { _tag: 'WorldInfo', seed: -1_234_567, world: overworld },
   WorldSnapshot: {
     _tag: 'WorldSnapshot',
-    world: overworld,
-    seed: -1_234_567,
-    revision: 12,
+    blocks: [
+      { world: overworld, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
+      { world: overworld, at: { x: -1, y: 0, z: -3 }, block: null },
+    ],
+    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
     players: [
       {
         player: alice,
@@ -74,82 +133,13 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
         facing: { yawRadians: 3.14159, pitchRadians: -1.5 },
       },
     ],
-    blocks: [
-      { world: overworld, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
-      { world: overworld, at: { x: -1, y: 0, z: -3 }, block: null },
-    ],
     poweredRails: [{ at: { x: 2, y: 64, z: 3 }, powered: true }],
-    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
-  },
-  BlockMutationRejected: {
-    _tag: 'BlockMutationRejected',
-    player: alice,
-    world: overworld,
-    at: { x: 1, y: 2, z: 3 },
-    operation: 'place',
-    reason: 'occupied',
     revision: 12,
+    seed: -1_234_567,
+    world: overworld,
   },
-  AuthoritativeSnapshot: {
-    _tag: 'AuthoritativeSnapshot', world: overworld, revision: 12,
-    inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }],
-    vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }],
-    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [living, itemDrop, arrow, primedTnt],
-  },
-  RealmTransferSnapshot: {
-    _tag: 'RealmTransferSnapshot', commandId, player: alice, fromWorld: overworld, destinationWorld: end,
-    at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
-    worldSnapshot: { _tag: 'WorldSnapshot', world: end, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [], levers: [] },
-    authoritativeSnapshot: {
-      _tag: 'AuthoritativeSnapshot', world: end, revision: 1,
-      inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }],
-      vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }],
-      timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [],
-    },
-  },
-  PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: overworld, revision: 13, player: alice, state: { slots: [item], selectedSlot: 0 } },
-  PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: overworld, revision: 13, player: alice, state: { health: 19, hunger: 18, experience: 1 } },
-  PlayerFishingDelta: { _tag: 'PlayerFishingDelta', world: overworld, revision: 13, player: alice, state: { phase: 'bite', result: 'bite' } },
-  WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: overworld, revision: 13, state: { timeOfDay: 7000, weather: 'rain' } },
-  ContainerDelta: { _tag: 'ContainerDelta', world: overworld, revision: 13, state: { containerId: 'dropper:1', kind: 'dropper', slots: [item] } },
-  FurnaceDelta: { _tag: 'FurnaceDelta', world: overworld, revision: 13, state: { furnaceId: 'furnace:1', input: item, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
-  VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: overworld, revision: 13, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [item], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
-  EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: overworld, revision: 13, entity: living },
-  EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: overworld, revision: 13, entity: { ...living, health: 19 } },
-  EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: overworld, revision: 13, entityId },
-  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', world: overworld, revision: 13, at: { x: 3.5, y: 72, z: -4.5 } },
-  EyeOfEnderThrown: {
-    _tag: 'EyeOfEnderThrown', world: overworld, revision: 13, player: alice,
-    origin: { x: 1, y: 65, z: 1 }, target: { x: 100, y: 72, z: 100 }, breaks: false,
-  },
-  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 2 } },
-  PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...commandHeader, action: { _tag: 'activity', activity: 'swim', amount: 3 } },
   WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 6000 } },
-  ContainerCommand: { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'open' } },
-  FurnaceCommand: { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 3 }, count: 1 } },
-  VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...commandHeader, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
-  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...commandHeader, entityId },
-  EntityPickupCommand: { _tag: 'EntityPickupCommand', ...commandHeader, entityId },
-  BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
-  IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 1 } },
-  EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
-  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...commandHeader },
-  InsertEyeIntoEndPortalFrameCommand: {
-    _tag: 'InsertEyeIntoEndPortalFrameCommand',
-    ...commandHeader,
-    frame: { x: 1, y: 64, z: 1 },
-  },
-  NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
-  EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
-  BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },
-  VehicleUseCommand: { _tag: 'VehicleUseCommand', ...commandHeader },
-  FishingCommand: { _tag: 'FishingCommand', ...commandHeader, action: 'cast' },
-  VehicleCommand: { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', direction: 'forward' } },
-  AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, world: overworld, revision: 13 },
-  AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, world: overworld, revision: 12, reason: 'stale-revision', resyncRequired: true },
-  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', world: overworld, lastKnownRevision: 12 },
-  Ping: { _tag: 'Ping', nonce: 7 },
-  Pong: { _tag: 'Pong', nonce: 7 },
+  WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', revision: 13, state: { timeOfDay: 7000, weather: 'rain' }, world: overworld },
 }
 
 const encoded = (message: NetworkMessage): string => Either.getOrThrow(encodeFrame(message))
@@ -161,7 +151,7 @@ const failure = (result: Either.Either<unknown, ProtocolError>): ProtocolError |
 describe('frame round trip', () => {
   // REGRESSION: "every message survives encode -> text -> decode unchanged".
   // This is the whole contract of the repository. A protocol change that breaks
-  // it is only observable at the far end of a socket, where the frame is gone.
+  // It is only observable at the far end of a socket, where the frame is gone.
   it.effect('every message decodes back to a value strictly equal to the one encoded', () =>
     Effect.sync(() => {
       for (const tag of MESSAGE_TAGS) {
@@ -175,7 +165,7 @@ describe('frame round trip', () => {
 
   // REGRESSION: "a new message type cannot be added without a round-trip test".
   // Without this, MESSAGE_TAGS and SAMPLES drift and the loop above silently
-  // stops covering the new case.
+  // Stops covering the new case.
   it.effect('has a sample for every declared tag, and declares every sampled tag', () =>
     Effect.sync(() => {
       expect([...MESSAGE_TAGS].sort()).toStrictEqual(Object.keys(SAMPLES).sort())
@@ -187,16 +177,16 @@ describe('frame round trip', () => {
       const frame = encoded(SAMPLES.Ping)
       expect(typeof frame).toBe('string')
       expect(JSON.parse(frame)).toStrictEqual({
-        protocolVersion: PROTOCOL_VERSION,
         message: { _tag: 'Ping', nonce: 7 },
+        protocolVersion: PROTOCOL_VERSION,
       })
     }),
   )
 
   // REGRESSION: "fractional coordinates survive". The reference implementation
-  // carries positions as finite doubles; a codec that rounded, or that went
-  // through a fixed-point integer encoding, would show up as peer avatars
-  // snapping to the block grid rather than as a test failure.
+  // Carries positions as finite doubles; a codec that rounded, or that went
+  // Through a fixed-point integer encoding, would show up as peer avatars
+  // Snapping to the block grid rather than as a test failure.
   it.effect('preserves fractional coordinates exactly rather than snapping them to the grid', () =>
     Effect.sync(() => {
       const moved = decodeFrame(encoded(SAMPLES.PlayerMove))
@@ -221,19 +211,19 @@ describe('frame round trip', () => {
   it.effect('accepts protocol-v1 authoritative state that omits new optional fields', () =>
     Effect.sync(() => {
       const legacySnapshot = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: {
           _tag: 'AuthoritativeSnapshot',
-          world: overworld,
-          revision: 12,
-          inventories: [{ player: alice, state: { slots: [{ item: 'stone', count: 2 }], selectedSlot: 0 } }],
-          vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }],
-          timeWeather: { timeOfDay: 6000, weather: 'clear' },
           containers: [],
-          furnaces: [],
-          villagerTrades: [],
           entities: [{ _tag: 'living', entityId, entityType: 'zombie', at: { x: 1, y: 64, z: 1 }, health: 20, maxHealth: 20 }],
+          furnaces: [],
+          inventories: [{ player: alice, state: { slots: [{ item: 'stone', count: 2 }], selectedSlot: 0 } }],
+          revision: 12,
+          timeWeather: { timeOfDay: 6000, weather: 'clear' },
+          villagerTrades: [],
+          vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }],
+          world: overworld,
         },
+        protocolVersion: PROTOCOL_VERSION,
       })
 
       expect(Either.isRight(decodeFrame(legacySnapshot))).toBe(true)
@@ -244,18 +234,18 @@ describe('frame round trip', () => {
     Effect.sync(() => {
       const commands: ReadonlyArray<NetworkMessage> = [
         { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 4 } },
-        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'move-item', source: 1, destination: 7, count: 2 } },
-        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'swap-items', source: 1, destination: 7 } },
-        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'drop-item', source: 7, destination: 'world', count: 1 } },
-        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'equip-item', source: 1, equipmentSlot: 'head' } },
-        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'unequip-item', equipmentSlot: 'head', destination: 7 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'move-item', count: 2, destination: 7, source: 1 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'swap-items', destination: 7, source: 1 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'drop-item', count: 1, destination: 'world', source: 7 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'equip-item', equipmentSlot: 'head', source: 1 } },
+        { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'unequip-item', destination: 7, equipmentSlot: 'head' } },
         { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-time', timeOfDay: 18_000 } },
         { _tag: 'WorldTimeWeatherCommand', ...commandHeader, action: { _tag: 'set-weather', weather: 'thunder' } },
-        { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'move-item', source: { _tag: 'player-slot', slot: 1 }, destination: { _tag: 'container-slot', slot: 5 }, count: 2 } },
-        { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'move-item', source: { _tag: 'container-slot', slot: 5 }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 } },
-        { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'move-item', source: { _tag: 'player-slot', slot: 1 }, destination: { _tag: 'furnace-slot', slot: 'input' }, count: 2 } },
-          { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'move-item', source: { _tag: 'furnace-slot', slot: 'fuel' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 } },
-          { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 } },
+        { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'move-item', count: 2, destination: { _tag: 'container-slot', slot: 5 }, source: { _tag: 'player-slot', slot: 1 } } },
+        { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'move-item', count: 1, destination: { _tag: 'player-slot', slot: 1 }, source: { _tag: 'container-slot', slot: 5 } } },
+        { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'move-item', count: 2, destination: { _tag: 'furnace-slot', slot: 'input' }, source: { _tag: 'player-slot', slot: 1 } } },
+          { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'move-item', count: 1, destination: { _tag: 'player-slot', slot: 1 }, source: { _tag: 'furnace-slot', slot: 'fuel' } } },
+          { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', count: 1, destination: { _tag: 'player-slot', slot: 1 }, source: { _tag: 'furnace-slot', slot: 'output' } } },
           { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', direction: 'backward' } },
       ]
 
@@ -276,7 +266,7 @@ describe('frame round trip', () => {
 describe('protocol version', () => {
   // REGRESSION: "a rolling upgrade is distinguishable from corruption".
   // The reference implementation had no version field, so a peer on an older
-  // build produced decode failures indistinguishable from a damaged frame.
+  // Build produced decode failures indistinguishable from a damaged frame.
   it.effect('rejects a frame from a version this build does not speak, and says so specifically', () =>
     Effect.sync(() => {
       const fromTheFuture = Either.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, SAMPLES.Ping))
@@ -340,27 +330,27 @@ describe('malformed input', () => {
   )
 
   // REGRESSION: "an unknown tag is rejected, not coerced into a neighbouring
-  // case". A union that fell back to a default would apply a peer's message as
-  // the wrong action.
+  // Case". A union that fell back to a default would apply a peer's message as
+  // The wrong action.
   it.effect('rejects a message tag this build does not know instead of guessing', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: { _tag: 'DetonateEverything', player: 'alice' },
+        protocolVersion: PROTOCOL_VERSION,
       })
       expect(rejected(text)?.reason).toBe('malformed-frame')
     }),
   )
 
   // REGRESSION: "JSON.stringify(NaN) === 'null'". This is why every coordinate
-  // carries `finite()`: without the refinement a NaN produced by a division by
-  // zero on the sender becomes a decode failure on the RECEIVER, where the
-  // originating code is no longer visible.
+  // Carries `finite()`: without the refinement a NaN produced by a division by
+  // Zero on the sender becomes a decode failure on the RECEIVER, where the
+  // Originating code is no longer visible.
   it.effect('rejects a coordinate that arrived as null, which is what a NaN turns into over JSON', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
+        message: { _tag: 'PlayerMove', at: { x: null, y: 1, z: 2 }, facing: { pitchRadians: 0, yawRadians: 0 }, player: 'alice' },
         protocolVersion: PROTOCOL_VERSION,
-        message: { _tag: 'PlayerMove', player: 'alice', at: { x: null, y: 1, z: 2 }, facing: { yawRadians: 0, pitchRadians: 0 } },
       })
       expect(rejected(text)?.reason).toBe('malformed-frame')
     }),
@@ -369,8 +359,8 @@ describe('malformed input', () => {
   it.effect('rejects a non-integral block coordinate', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
+        message: { _tag: 'BlockBreak', at: { x: 0.5, y: 1, z: 2 }, player: 'alice' },
         protocolVersion: PROTOCOL_VERSION,
-        message: { _tag: 'BlockBreak', player: 'alice', at: { x: 0.5, y: 1, z: 2 } },
       })
       expect(rejected(text)?.reason).toBe('malformed-frame')
     }),
@@ -380,16 +370,16 @@ describe('malformed input', () => {
     Effect.sync(() => {
       for (const revision of [-1, 0.5]) {
         const text = JSON.stringify({
-          protocolVersion: PROTOCOL_VERSION,
           message: {
             _tag: 'WorldSnapshot',
-            world: 'overworld',
-            seed: 1,
-            revision,
-            players: [],
             blocks: [],
+            players: [],
             poweredRails: [],
+            revision,
+            seed: 1,
+            world: 'overworld',
           },
+          protocolVersion: PROTOCOL_VERSION,
         })
         expect(rejected(text)?.reason).toBe('malformed-frame')
       }
@@ -399,49 +389,49 @@ describe('malformed input', () => {
   it.effect('rejects malformed snapshot members and unknown rejection reasons', () =>
     Effect.sync(() => {
       const malformedPlayer = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: {
           _tag: 'WorldSnapshot',
-          world: 'overworld',
-          seed: 1,
-          revision: 0,
-          players: [{ player: 'alice', name: '', at: { x: 0, y: 0, z: 0 }, facing: { yawRadians: 0, pitchRadians: 0 } }],
           blocks: [],
+          players: [{ player: 'alice', name: '', at: { x: 0, y: 0, z: 0 }, facing: { yawRadians: 0, pitchRadians: 0 } }],
           poweredRails: [],
+          revision: 0,
+          seed: 1,
+          world: 'overworld',
         },
+        protocolVersion: PROTOCOL_VERSION,
       })
       const malformedPoweredRail = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: {
           _tag: 'WorldSnapshot',
-          world: 'overworld',
-          seed: 1,
-          revision: 0,
-          players: [],
           blocks: [],
+          players: [],
           poweredRails: [{ at: { x: 0, y: 64, z: 0 }, powered: true, requestedBy: 'client' }],
+          revision: 0,
+          seed: 1,
+          world: 'overworld',
         },
+        protocolVersion: PROTOCOL_VERSION,
       })
       const unknownReason = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: {
           _tag: 'BlockMutationRejected',
-          player: 'alice',
-          world: 'overworld',
           at: { x: 0, y: 0, z: 0 },
           operation: 'break',
+          player: 'alice',
           reason: 'because-i-said-so',
           revision: 0,
+          world: 'overworld',
         },
+        protocolVersion: PROTOCOL_VERSION,
       })
       const missingContainerKind = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: {
           _tag: 'ContainerDelta',
-          world: 'overworld',
           revision: 0,
           state: { containerId: 'chest:1', slots: [] },
+          world: 'overworld',
         },
+        protocolVersion: PROTOCOL_VERSION,
       })
 
       expect(rejected(malformedPlayer)?.reason).toBe('malformed-frame')
@@ -453,17 +443,17 @@ describe('malformed input', () => {
 
   // REGRESSION: "pitch outside ±π/2 is not a rotation a player can be in".
   // Letting it through produces an upside-down peer avatar, which nobody files
-  // as a protocol bug.
+  // As a protocol bug.
   it.effect('rejects a pitch outside the range a head can actually turn', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: {
           _tag: 'PlayerMove',
-          player: 'alice',
           at: { x: 0, y: 0, z: 0 },
-          facing: { yawRadians: 0, pitchRadians: 3.2 },
+          facing: { pitchRadians: 3.2, yawRadians: 0 },
+          player: 'alice',
         },
+        protocolVersion: PROTOCOL_VERSION,
       })
       expect(rejected(text)?.reason).toBe('malformed-frame')
     }),
@@ -472,8 +462,8 @@ describe('malformed input', () => {
   it.effect('rejects an empty player id, so an unidentified peer cannot be addressed', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: { _tag: 'PlayerLeave', player: '' },
+        protocolVersion: PROTOCOL_VERSION,
       })
       expect(rejected(text)?.reason).toBe('malformed-frame')
     }),
@@ -484,9 +474,9 @@ describe('malformed input', () => {
       const invalidActions: ReadonlyArray<unknown> = [
         'select-slot',
         { _tag: 'select-slot' },
-        { _tag: 'move-item', source: 0, destination: 1, count: 0 },
+        { _tag: 'move-item', count: 0, destination: 1, source: 0 },
         { _tag: 'swap-items', source: 0 },
-        { _tag: 'drop-item', source: 0, destination: 1, count: 1 },
+        { _tag: 'drop-item', count: 1, destination: 1, source: 0 },
         { _tag: 'equip-item', source: 0 },
         { _tag: 'unequip-item', equipmentSlot: 'helmet' },
         { _tag: 'set-time', weather: 'clear' },
@@ -499,8 +489,8 @@ describe('malformed input', () => {
           ? 'WorldTimeWeatherCommand'
           : 'PlayerInventoryCommand'
         const text = JSON.stringify({
-          protocolVersion: PROTOCOL_VERSION,
           message: { _tag: messageTag, ...commandHeader, action },
+          protocolVersion: PROTOCOL_VERSION,
         })
         expect(rejected(text)?.reason).toBe('malformed-frame')
       }
@@ -514,24 +504,24 @@ describe('malformed input', () => {
           _tag: 'ContainerCommand',
           ...commandHeader,
           containerId: 'chest:1',
-          action: { _tag: 'move-item', source: { _tag: 'player-slot', slot: 0 }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 },
+          action: { _tag: 'move-item', count: 1, destination: { _tag: 'player-slot', slot: 1 }, source: { _tag: 'player-slot', slot: 0 } },
         },
         {
           _tag: 'FurnaceCommand',
           ...commandHeader,
           furnaceId: 'furnace:1',
-          action: { _tag: 'move-item', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 },
+          action: { _tag: 'move-item', count: 1, destination: { _tag: 'player-slot', slot: 1 }, source: { _tag: 'furnace-slot', slot: 'output' } },
         },
         {
           _tag: 'FurnaceCommand',
           ...commandHeader,
           furnaceId: 'furnace:1',
-          action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'input' }, destination: { _tag: 'player-slot', slot: 1 }, count: 1 },
+          action: { _tag: 'take-output', count: 1, destination: { _tag: 'player-slot', slot: 1 }, source: { _tag: 'furnace-slot', slot: 'input' } },
         },
       ]
 
       for (const message of invalidCommands) {
-        const text = JSON.stringify({ protocolVersion: PROTOCOL_VERSION, message })
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
         expect(rejected(text)?.reason).toBe('malformed-frame')
       }
     }),
@@ -540,12 +530,12 @@ describe('malformed input', () => {
   it.effect('rejects payload fields from a different action instead of stripping them', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
-        protocolVersion: PROTOCOL_VERSION,
         message: {
           _tag: 'WorldTimeWeatherCommand',
           ...commandHeader,
           action: { _tag: 'set-time', timeOfDay: 6000, weather: 'rain' },
         },
+        protocolVersion: PROTOCOL_VERSION,
       })
 
       expect(rejected(text)?.reason).toBe('malformed-frame')
@@ -560,13 +550,13 @@ describe('malformed input', () => {
           { _tag: 'FishingCommand', ...commandHeader, action: 'wait' },
           { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move' } },
           { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', direction: 'sideways' } },
-          { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', direction: 'forward', at: { x: 2, y: 64, z: 2 } } },
-          { _tag: 'PlayerFishingDelta', world: overworld, revision: 13, player: alice, state: { phase: 'bite', result: 'cast' } },
-        { _tag: 'PlayerInventoryDelta', world: overworld, revision: 13, player: alice, state: { slots: [{ item: 'bow', count: 1, durability: { current: 1.5, max: 64 } }], selectedSlot: 0 } },
+          { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', at: { x: 2, y: 64, z: 2 }, direction: 'forward' } },
+          { _tag: 'PlayerFishingDelta', player: alice, revision: 13, state: { phase: 'bite', result: 'cast' }, world: overworld },
+        { _tag: 'PlayerInventoryDelta', player: alice, revision: 13, state: { selectedSlot: 0, slots: [{ item: 'bow', count: 1, durability: { current: 1.5, max: 64 } }] }, world: overworld },
       ]
 
       for (const message of invalidMessages) {
-        const text = JSON.stringify({ protocolVersion: PROTOCOL_VERSION, message })
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
         expect(rejected(text)?.reason).toBe('malformed-frame')
       }
     }),
@@ -604,13 +594,13 @@ describe('malformed input', () => {
   })
 
   // A block name this build does not know must still DECODE: rejecting it here
-  // would turn "your client is older than mine" into a parse error. Deciding
-  // what to do with an unknown block is mc-sim's, not the protocol's.
+  // Would turn "your client is older than mine" into a parse error. Deciding
+  // What to do with an unknown block is mc-sim's, not the protocol's.
   it.effect('accepts a block name this build does not know, because content skew is not frame corruption', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
+        message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium', player: 'alice' },
         protocolVersion: PROTOCOL_VERSION,
-        message: { _tag: 'BlockPlace', player: 'alice', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium' },
       })
       expect(Either.isRight(decodeFrame(text))).toBe(true)
     }),

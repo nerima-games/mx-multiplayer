@@ -45,26 +45,26 @@
  * DN-3 removed from the protocol.
  */
 import { Effect, Either, Queue } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion, type WireText } from '../../src/domain/codec'
+import { type WireText, decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
+  type ConnectionEvent,
+  type ConnectionState,
   canSend,
   initialConnectionState,
   transition,
-  type ConnectionEvent,
-  type ConnectionState,
 } from '../../src/domain/connection'
 import { ProtocolError, TransportError } from '../../src/domain/errors'
 import {
+  type TransportService,
   disconnectedTransport,
   makeLoopbackPair,
-  type TransportService,
 } from '../../src/domain/transport'
 import {
+  type NetworkMessage,
   PROTOCOL_VERSION,
   PlayerId,
   PlayerName,
   WorldId,
-  type NetworkMessage,
 } from '../../src/domain/protocol'
 
 export type SideName = 'client' | 'server'
@@ -151,12 +151,12 @@ export const WIRE_FAULTS: ReadonlyArray<WireFault> = [
 ]
 
 export const WIRE_FAULT_HELP: Readonly<Record<WireFault, string>> = {
-  none: 'deliver the next frame intact',
-  drop: 'encode the next frame and never deliver it — the sender learns nothing',
   corrupt: 'flip one character of the next frame text -> malformed-frame at the far end',
-  'wrong-version': `encode the next frame at protocol ${String(PROTOCOL_VERSION + 1)} -> unsupported-protocol-version`,
+  drop: 'encode the next frame and never deliver it — the sender learns nothing',
   'future-message': 'forge a frame from a newer build carrying a tag this build has never heard of',
   'kill-transport': 'replace the sender`s transport with one that refuses every write',
+  none: 'deliver the next frame intact',
+  'wrong-version': `encode the next frame at protocol ${String(PROTOCOL_VERSION + 1)} -> unsupported-protocol-version`,
 }
 
 export type Session = {
@@ -173,26 +173,26 @@ export type Session = {
 }
 
 const peer = (name: SideName, transport: TransportService): Peer => ({
-  name,
-  transport,
-  state: initialConnectionState,
   identity: undefined,
-  rejectedEvents: 0,
+  name,
   outstandingPings: [],
+  rejectedEvents: 0,
+  state: initialConnectionState,
+  transport,
 })
 
 export const makeSession: Effect.Effect<Session> = Effect.gen(function* () {
   const [clientTransport, serverTransport] = yield* makeLoopbackPair
   return {
-    client: peer('client', clientTransport),
-    server: peer('server', serverTransport),
-    wire: [],
-    events: [],
-    seq: 0,
-    step: 0,
     armed: 'none',
+    client: peer('client', clientTransport),
+    events: [],
     nextNonce: 1,
     note: 'press SPACE to advance one step of the handshake, f to arm a fault, ? for help',
+    seq: 0,
+    server: peer('server', serverTransport),
+    step: 0,
+    wire: [],
   }
 })
 
@@ -245,12 +245,12 @@ export const fire = (session: Session, name: SideName, event: ConnectionEvent): 
     session.events = [
       ...session.events,
       {
-        seq: session.seq,
-        side: name,
         event: describeEvent(event),
         from: describeState(before),
-        to: 'REJECTED (transition returned undefined)',
         rejected: true,
+        seq: session.seq,
+        side: name,
+        to: 'REJECTED (transition returned undefined)',
       },
     ]
     return
@@ -263,12 +263,12 @@ export const fire = (session: Session, name: SideName, event: ConnectionEvent): 
   session.events = [
     ...session.events,
     {
-      seq: session.seq,
-      side: name,
       event: describeEvent(event),
       from: describeState(before),
-      to: describeState(next),
       rejected: false,
+      seq: session.seq,
+      side: name,
+      to: describeState(next),
     },
   ]
 }
@@ -278,14 +278,14 @@ const FUTURE_TAG = 'EntitySnapshot'
 
 const forgeFutureFrame = (): WireText =>
   JSON.stringify({
-    protocolVersion: PROTOCOL_VERSION + 1,
     message: { _tag: FUTURE_TAG, entities: [{ id: 'zombie-1', at: { x: 0, y: 64, z: 0 } }] },
+    protocolVersion: PROTOCOL_VERSION + 1,
   })
 
 const corrupt = (text: WireText): WireText => {
   // The middle character, so the damage lands inside the payload rather than on
-  // the opening brace. A frame that fails on its first byte is a less
-  // interesting frame than one that parses halfway.
+  // The opening brace. A frame that fails on its first byte is a less
+  // Interesting frame than one that parses halfway.
   const at = Math.floor(text.length / 2)
   return `${text.slice(0, at)}~${text.slice(at + 1)}`
 }
@@ -320,8 +320,8 @@ export const send = (
 
     if (fault === 'kill-transport') {
       // A socket that died between two writes. `disconnectedTransport` is the
-      // repository's own stand-in for exactly this and fails every send with a
-      // typed `TransportError` (`domain/transport.ts:110-128`).
+      // Repository's own stand-in for exactly this and fails every send with a
+      // Typed `TransportError` (`domain/transport.ts:110-128`).
       sender.transport = yield* disconnectedTransport
     }
 
@@ -334,17 +334,17 @@ export const send = (
 
     if (Either.isLeft(encoded)) {
       // DN-5's whole point: an invalid value fails at the SENDER, where the
-      // originating code is still on the stack, instead of arriving at the far
-      // end as an undebuggable decode failure.
+      // Originating code is still on the stack, instead of arriving at the far
+      // End as an undebuggable decode failure.
       record({
+        bytes: 0,
+        failed: true,
+        fault: fault === 'none' ? undefined : fault,
         from,
         tag: tagOf(message),
-        version: PROTOCOL_VERSION,
-        bytes: 0,
         text: undefined,
-        fault: fault === 'none' ? undefined : fault,
         verdict: `encode refused: ProtocolError(${encoded.left.reason})`,
-        failed: true,
+        version: PROTOCOL_VERSION,
       })
       return
     }
@@ -356,14 +356,14 @@ export const send = (
 
     if (fault === 'drop') {
       record({
+        bytes: text.length,
+        failed: false,
+        fault,
         from,
         tag,
-        version,
-        bytes: text.length,
         text,
-        fault,
         verdict: 'DROPPED in flight — the sender sees success, the receiver sees nothing',
-        failed: false,
+        version,
       })
       return
     }
@@ -372,31 +372,31 @@ export const send = (
     if (Either.isLeft(sent)) {
       const error: TransportError = sent.left
       record({
+        bytes: text.length,
+        failed: true,
+        fault: fault === 'none' ? undefined : fault,
         from,
         tag,
-        version,
-        bytes: text.length,
         text,
-        fault: fault === 'none' ? undefined : fault,
         verdict: `send refused: TransportError(${error.reason})`,
-        failed: true,
+        version,
       })
       // A refused write is a transport problem, and the machine has an event for
-      // it that carries the reason all the way to `Closed` so the UI can be
-      // truthful (`domain/connection.ts:37-41`).
+      // It that carries the reason all the way to `Closed` so the UI can be
+      // Truthful (`domain/connection.ts:37-41`).
       fire(session, from, { _tag: 'TransportFailed', reason: error.reason })
       return
     }
 
     record({
+      bytes: text.length,
+      failed: false,
+      fault: fault === 'none' ? undefined : fault,
       from,
       tag,
-      version,
-      bytes: text.length,
       text,
-      fault: fault === 'none' ? undefined : fault,
       verdict: `in flight -> ${receiver.name}`,
-      failed: false,
+      version,
     })
   })
 
@@ -428,15 +428,15 @@ export const pump = (session: Session, name: SideName): Effect.Effect<Received> 
         session.wire = [
           ...session.wire,
           {
-            seq: session.seq,
-            from: OTHER[name],
-            tag: '?',
-            version: 0,
             bytes: text.length,
-            text,
-            fault: undefined,
-            verdict: `${name} rejected: ProtocolError(${decoded.left.reason})`,
             failed: true,
+            fault: undefined,
+            from: OTHER[name],
+            seq: session.seq,
+            tag: '?',
+            text,
+            verdict: `${name} rejected: ProtocolError(${decoded.left.reason})`,
+            version: 0,
           },
         ]
         continue
@@ -445,20 +445,20 @@ export const pump = (session: Session, name: SideName): Effect.Effect<Received> 
       session.wire = [
         ...session.wire,
         {
-          seq: session.seq,
-          from: OTHER[name],
-          tag: decoded.right._tag,
-          version: PROTOCOL_VERSION,
           bytes: text.length,
-          text,
-          fault: undefined,
-          verdict: `${name} accepted ${decoded.right._tag}`,
           failed: false,
+          fault: undefined,
+          from: OTHER[name],
+          seq: session.seq,
+          tag: decoded.right._tag,
+          text,
+          verdict: `${name} accepted ${decoded.right._tag}`,
+          version: PROTOCOL_VERSION,
         },
       ]
     }
 
-    return { ok, failures }
+    return { failures, ok }
   })
 
 // ---------------------------------------------------------------------------
@@ -512,8 +512,8 @@ const applyServer = (session: Session, received: Received): Effect.Effect<void> 
     }
     for (const failure of received.failures) {
       // DN-1's two verdicts, and the only place in this app that acts on the
-      // difference. A malformed frame costs the frame; an unsupported version
-      // costs the PEER.
+      // Difference. A malformed frame costs the frame; an unsupported version
+      // Costs the PEER.
       if (failure.reason === 'unsupported-protocol-version') {
         fire(session, 'server', { _tag: 'TransportFailed', reason: 'closed' })
       }
@@ -521,8 +521,8 @@ const applyServer = (session: Session, received: Received): Effect.Effect<void> 
   })
 
 // `Effect.sync` rather than `Effect.gen`: nothing the client does on receipt
-// needs to send, so there is nothing to await. The server's twin below is a
-// generator because answering a `Ping` with a `Pong` is a send.
+// Needs to send, so there is nothing to await. The server's twin below is a
+// Generator because answering a `Ping` with a `Pong` is a send.
 const applyClient = (session: Session, received: Received): Effect.Effect<void> =>
   Effect.sync(() => {
     for (const message of received.ok) {
@@ -555,43 +555,42 @@ const applyClient = (session: Session, received: Received): Effect.Effect<void> 
 export const SCRIPT: ReadonlyArray<ScriptStep> = [
   {
     label: 'client: ConnectRequested',
-    watch: 'Disconnected -> Connecting. This is the ONLY state a connect may be requested from.',
     run: (session) => Effect.sync(() => fire(session, 'client', { _tag: 'ConnectRequested' })),
+    watch: 'Disconnected -> Connecting. This is the ONLY state a connect may be requested from.',
   },
   {
     label: 'client -> server: PlayerJoin',
-    watch: 'the handshake is in flight; the client is NOT Connected yet and must not be sending',
     run: (session) =>
       send(session, 'client', { _tag: 'PlayerJoin', player: ALICE, name: ALICE_NAME, at: { x: 8.5, y: 65, z: 8.5 } }),
+    watch: 'the handshake is in flight; the client is NOT Connected yet and must not be sending',
   },
   {
     label: 'server: drain and handle',
-    watch: 'the server runs its own machine: ConnectRequested then HandshakeSucceeded',
     run: (session) => Effect.flatMap(pump(session, 'server'), (received) => applyServer(session, received)),
+    watch: 'the server runs its own machine: ConnectRequested then HandshakeSucceeded',
   },
   {
     label: 'server -> client: WorldInfo',
     watch: 'the server answers on the same pair — a loopback PAIR, not an echo',
     // Conditional, and that is the whole value of the step under fault
-    // injection: a server that never accepted a join has nothing to answer. A
-    // script that sent WorldInfo unconditionally would let the client reach
+    // Injection: a server that never accepted a join has nothing to answer. A
+    // Script that sent WorldInfo unconditionally would let the client reach
     // `Connected` off a handshake that never happened, which is a preview
-    // lying about a failure it was built to show.
+    // Lying about a failure it was built to show.
     run: (session) =>
       session.server.state._tag === 'Connected'
-        ? send(session, 'server', { _tag: 'WorldInfo', world: OVERWORLD, seed: 1_337 })
+        ? send(session, 'server', { _tag: 'WorldInfo', seed: 1_337, world: OVERWORLD })
         : Effect.sync(() => {
             session.note = `server is ${session.server.state._tag}, so there is no handshake to answer`
           }),
   },
   {
     label: 'client: drain and handle',
-    watch: 'the client reaches Connected and carries the identity out of the handshake',
     run: (session) => Effect.flatMap(pump(session, 'client'), (received) => applyClient(session, received)),
+    watch: 'the client reaches Connected and carries the identity out of the handshake',
   },
   {
     label: 'client -> server: PlayerMove',
-    watch: 'fractional coordinates survive the JSON round trip exactly (DN-5)',
     run: (session) =>
       send(session, 'client', {
         _tag: 'PlayerMove',
@@ -599,26 +598,26 @@ export const SCRIPT: ReadonlyArray<ScriptStep> = [
         at: { x: 8.5, y: 65.125, z: -12.25 },
         facing: { yawRadians: 1.5, pitchRadians: -0.25 },
       }),
+    watch: 'fractional coordinates survive the JSON round trip exactly (DN-5)',
   },
   {
     label: 'client -> server: Chat',
-    watch: 'non-ASCII text survives; `maxLength(256)` is checked at the SENDER',
     run: (session) => send(session, 'client', { _tag: 'Chat', player: ALICE, text: 'hello 世界' }),
+    watch: 'non-ASCII text survives; `maxLength(256)` is checked at the SENDER',
   },
   {
     label: 'client -> server: BlockPlace(unobtainium)',
-    watch: 'a block name this build does not know DECODES (DN-6) — content skew is not corruption',
     run: (session) =>
       send(session, 'client', { _tag: 'BlockPlace', player: ALICE, at: { x: 1, y: 64, z: 2 }, block: 'unobtainium' }),
+    watch: 'a block name this build does not know DECODES (DN-6) — content skew is not corruption',
   },
   {
     label: 'server: drain and handle',
-    watch: 'three frames arrive in send order — a reordered pair leaves an avatar behind permanently',
     run: (session) => Effect.flatMap(pump(session, 'server'), (received) => applyServer(session, received)),
+    watch: 'three frames arrive in send order — a reordered pair leaves an avatar behind permanently',
   },
   {
     label: 'client -> server: Ping(nonce)',
-    watch: 'a NONCE, not a timestamp (DN-3). No clock is read anywhere in this app.',
     run: (session) =>
       Effect.gen(function* () {
         const nonce = session.nextNonce
@@ -626,31 +625,32 @@ export const SCRIPT: ReadonlyArray<ScriptStep> = [
         session.client.outstandingPings = [...session.client.outstandingPings, nonce]
         yield* send(session, 'client', { _tag: 'Ping', nonce })
       }),
+    watch: 'a NONCE, not a timestamp (DN-3). No clock is read anywhere in this app.',
   },
   {
     label: 'server: drain and answer Pong',
-    watch: 'the server answers with the same nonce; matching is what the nonce is for',
     run: (session) => Effect.flatMap(pump(session, 'server'), (received) => applyServer(session, received)),
+    watch: 'the server answers with the same nonce; matching is what the nonce is for',
   },
   {
     label: 'client: drain and match the nonce',
-    watch: 'outstanding pings returns to 0 without anybody reading a clock',
     run: (session) => Effect.flatMap(pump(session, 'client'), (received) => applyClient(session, received)),
+    watch: 'outstanding pings returns to 0 without anybody reading a clock',
   },
   {
     label: 'client -> server: PlayerLeave',
-    watch: 'an orderly goodbye',
     run: (session) => send(session, 'client', { _tag: 'PlayerLeave', player: ALICE }),
+    watch: 'an orderly goodbye',
   },
   {
     label: 'server: drain, then PeerClosed',
-    watch: 'the server goes Connected -> Closed(closed)',
     run: (session) => Effect.flatMap(pump(session, 'server'), (received) => applyServer(session, received)),
+    watch: 'the server goes Connected -> Closed(closed)',
   },
   {
     label: 'client: CloseRequested',
-    watch: 'Connected -> Disconnected. The session is over and both machines are settled.',
     run: (session) => Effect.sync(() => fire(session, 'client', { _tag: 'CloseRequested' })),
+    watch: 'Connected -> Disconnected. The session is over and both machines are settled.',
   },
 ]
 
@@ -688,46 +688,46 @@ export const MACHINE_FAULTS: ReadonlyArray<MachineFault> = [
   {
     key: 'a',
     label: 'client: a second ConnectRequested',
-    why: 'DN-8: absorbing this is how a reconnect storm is written. Legal only from Disconnected.',
     run: (session) => Effect.sync(() => fire(session, 'client', { _tag: 'ConnectRequested' })),
+    why: 'DN-8: absorbing this is how a reconnect storm is written. Legal only from Disconnected.',
   },
   {
     key: 'b',
     label: 'client: ConnectRequested from wherever we are',
-    why: 'DN-8: re-entry into Connecting must be RetryRequested, never a reused ConnectRequested.',
     run: (session) => Effect.sync(() => fire(session, 'client', { _tag: 'ConnectRequested' })),
+    why: 'DN-8: re-entry into Connecting must be RetryRequested, never a reused ConnectRequested.',
   },
   {
     key: 'c',
     label: 'client: RetryRequested',
-    why: 'the one legal way back into Connecting. Watch `attempt`.',
     run: (session) => Effect.sync(() => fire(session, 'client', { _tag: 'RetryRequested' })),
+    why: 'the one legal way back into Connecting. Watch `attempt`.',
   },
   {
     key: 'd',
     label: 'client: HandshakeFailed',
-    why: 'the handshake times out or the peer refuses. -> Closed(closed).',
     run: (session) => Effect.sync(() => fire(session, 'client', { _tag: 'HandshakeFailed' })),
+    why: 'the handshake times out or the peer refuses. -> Closed(closed).',
   },
   {
     key: 'e',
     label: 'client: PeerClosed',
-    why: 'the socket`s close event. Fire it twice and watch the second one.',
     run: (session) => Effect.sync(() => fire(session, 'client', { _tag: 'PeerClosed' })),
+    why: 'the socket`s close event. Fire it twice and watch the second one.',
   },
   {
     key: 'w',
     label: 'client: send a Chat right now, whatever the state says',
-    why: 'Raw transport access bypasses the optional connection gate for handshake and compatibility.',
     run: (session) =>
       send(session, 'client', { _tag: 'Chat', player: ALICE, text: 'sent from the wrong state' }),
+    why: 'Raw transport access bypasses the optional connection gate for handshake and compatibility.',
   },
   {
     key: 'z',
     label: 'client: send a Chat of 300 characters',
-    why: 'DN-5: an invalid value must fail at the SENDER, where the originating code still is.',
     run: (session) =>
       send(session, 'client', { _tag: 'Chat', player: ALICE, text: 'x'.repeat(300) }),
+    why: 'DN-5: an invalid value must fail at the SENDER, where the originating code still is.',
   },
 ]
 

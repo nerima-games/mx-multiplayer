@@ -7,10 +7,10 @@
  * HUD is rendered, and a hard-coded 4 in two places is how a preview ends up
  * scrolling by one line on every keystroke.
  */
-import { padEnd, type Style } from './ansi'
+import { type Style, padEnd } from './ansi'
 import { USAGE } from './options'
 import type { ViewMode } from './render'
-import { SCRIPT, stateLabel, WIRE_FAULT_HELP, type Session } from './session'
+import { SCRIPT, type Session, WIRE_FAULT_HELP, stateLabel } from './session'
 
 export const HUD_ROWS = 4
 

@@ -8,17 +8,17 @@
  * anecdote. The `Style` is threaded rather than read from a global for the
  * reason `ansi.ts` gives.
  */
-import { padEnd, padStart, type Rgb, type Style } from './ansi'
+import { type Rgb, type Style, padEnd, padStart } from './ansi'
 import { PROTOCOL_VERSION } from '../../src/domain/protocol'
 import {
   MACHINE_FAULTS,
+  type Peer,
   SCRIPT,
+  type Session,
   WIRE_FAULTS,
   WIRE_FAULT_HELP,
   maySend,
   stateLabel,
-  type Peer,
-  type Session,
 } from './session'
 
 export const VIEW_MODES = ['wire', 'machine', 'faults'] as const
@@ -34,19 +34,19 @@ const CLIENT: Rgb = [130, 180, 240]
 const SERVER: Rgb = [200, 160, 230]
 
 // ---------------------------------------------------------------------------
-// wire
+// Wire
 // ---------------------------------------------------------------------------
 
 const WIRE_HEADER =
-  padStart('#', 4) +
-  '  ' +
-  padEnd('from', 8) +
-  padEnd('tag', 15) +
-  padStart('v', 3) +
-  padStart('bytes', 7) +
-  '  ' +
-  padEnd('fault', 16) +
-  'verdict'
+  `${padStart('#', 4) 
+  }  ${ 
+  padEnd('from', 8) 
+  }${padEnd('tag', 15) 
+  }${padStart('v', 3) 
+  }${padStart('bytes', 7) 
+  }  ${ 
+  padEnd('fault', 16) 
+  }verdict`
 
 /**
  * The frame log.
@@ -74,15 +74,15 @@ export const renderWire = (
 
   for (const row of tail) {
     const body =
-      padStart(String(row.seq), 4) +
-      '  ' +
-      style.paint(padEnd(row.from, 8), row.from === 'client' ? CLIENT : SERVER) +
-      padEnd(row.tag, 15) +
-      padStart(row.version === 0 ? '?' : String(row.version), 3) +
-      padStart(String(row.bytes), 7) +
-      '  ' +
-      padEnd(row.fault ?? '', 16) +
-      (row.failed ? style.paint(row.verdict, BAD) : style.paint(row.verdict, GOOD))
+      `${padStart(String(row.seq), 4) 
+      }  ${ 
+      style.paint(padEnd(row.from, 8), row.from === 'client' ? CLIENT : SERVER) 
+      }${padEnd(row.tag, 15) 
+      }${padStart(row.version === 0 ? '?' : String(row.version), 3) 
+      }${padStart(String(row.bytes), 7) 
+      }  ${ 
+      padEnd(row.fault ?? '', 16) 
+      }${row.failed ? style.paint(row.verdict, BAD) : style.paint(row.verdict, GOOD)}`
     lines.push(body)
     if (showText && row.text !== undefined) {
       lines.push(style.dim(`      ${row.text.slice(0, 140)}`))
@@ -106,7 +106,7 @@ export const renderWire = (
 }
 
 // ---------------------------------------------------------------------------
-// machine
+// Machine
 // ---------------------------------------------------------------------------
 
 const peerBlock = (target: Peer, style: Style): ReadonlyArray<string> => [
@@ -137,17 +137,17 @@ export const renderMachine = (session: Session, style: Style, rows: number): Rea
     style.bold(
       `  ${padStart('#', 4)}  ${padEnd('side', 8)}${padEnd('event', 32)}${padEnd('from', 26)}to`,
     ),
-    style.dim('  ' + '-'.repeat(92)),
+    style.dim(`  ${  '-'.repeat(92)}`),
   ]
 
   const visible = Math.max(4, rows - lines.length - 3)
   for (const row of session.events.slice(-visible)) {
     const body =
-      `  ${padStart(String(row.seq), 4)}  ` +
-      style.paint(padEnd(row.side, 8), row.side === 'client' ? CLIENT : SERVER) +
-      padEnd(row.event, 32) +
-      padEnd(row.from, 26) +
-      row.to
+      `  ${padStart(String(row.seq), 4)}  ${ 
+      style.paint(padEnd(row.side, 8), row.side === 'client' ? CLIENT : SERVER) 
+      }${padEnd(row.event, 32) 
+      }${padEnd(row.from, 26) 
+      }${row.to}`
     lines.push(row.rejected ? style.paint(body, BAD) : body)
   }
 
@@ -159,7 +159,7 @@ export const renderMachine = (session: Session, style: Style, rows: number): Rea
 }
 
 // ---------------------------------------------------------------------------
-// faults
+// Faults
 // ---------------------------------------------------------------------------
 
 export const renderFaults = (session: Session, style: Style): ReadonlyArray<string> => {
@@ -197,7 +197,7 @@ export const renderFaults = (session: Session, style: Style): ReadonlyArray<stri
 }
 
 // ---------------------------------------------------------------------------
-// the step banner, shown on every view
+// The step banner, shown on every view
 // ---------------------------------------------------------------------------
 
 export const stepBanner = (session: Session, style: Style): ReadonlyArray<string> => {

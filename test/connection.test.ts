@@ -1,13 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import {
+  type ConnectionEvent,
+  type ConnectionState,
   canSend,
   initialConnectionState,
   isSettled,
   runTransitions,
   transition,
-  type ConnectionEvent,
-  type ConnectionState,
 } from '../src/domain/connection'
 import { PlayerId, WorldId } from '../src/domain/protocol'
 
@@ -59,9 +59,9 @@ describe('the happy path', () => {
 
 describe('illegal transitions', () => {
   // REGRESSION: "a second connect while already connecting is rejected, not
-  // absorbed". Absorbing it is exactly how a reconnect storm is written: every
-  // caller that thinks it might not be connected fires another attempt, and
-  // nothing ever reports that the state was already in flight.
+  // Absorbed". Absorbing it is exactly how a reconnect storm is written: every
+  // Caller that thinks it might not be connected fires another attempt, and
+  // Nothing ever reports that the state was already in flight.
   it.effect('rejects a second ConnectRequested while a handshake is in flight', () =>
     Effect.sync(() => {
       const { state, rejectedAt } = runTransitions(initialConnectionState, [
@@ -83,8 +83,8 @@ describe('illegal transitions', () => {
   )
 
   // REGRESSION: "undefined means illegal, the unchanged state means nothing to
-  // do". If `transition` returned the current state for an illegal event, a
-  // caller could not tell the two apart and the machine would be advisory.
+  // Do". If `transition` returned the current state for an illegal event, a
+  // Caller could not tell the two apart and the machine would be advisory.
   it.effect('returns undefined for an illegal event instead of silently returning the current state', () =>
     Effect.sync(() => {
       expect(transition(connected, connectRequested)).toBeUndefined()
@@ -117,9 +117,22 @@ describe('failure and retry', () => {
     }),
   )
 
+  it.effect('closes with reason "closed" when the peer hangs up mid-handshake or once connected', () =>
+    Effect.sync(() => {
+      expect(transition({ _tag: 'Connecting', attempt: 1 }, { _tag: 'PeerClosed' })).toStrictEqual({
+        _tag: 'Closed',
+        reason: 'closed',
+      })
+      expect(transition(connected, { _tag: 'PeerClosed' })).toStrictEqual({
+        _tag: 'Closed',
+        reason: 'closed',
+      })
+    }),
+  )
+
   // REGRESSION: "retry is an explicit event". Reusing ConnectRequested for a
-  // retry would make the machine unable to distinguish a user pressing Join
-  // from a schedule firing, and a retry policy would have nowhere to attach.
+  // Retry would make the machine unable to distinguish a user pressing Join
+  // From a schedule firing, and a retry policy would have nowhere to attach.
   it.effect('re-enters Connecting only through RetryRequested, never through ConnectRequested', () =>
     Effect.sync(() => {
       const closed: ConnectionState = { _tag: 'Closed', reason: 'closed' }
@@ -143,7 +156,7 @@ describe('failure and retry', () => {
   it.effect('holds no timer, no schedule and no attempt budget — retry policy lives in the adapter', () =>
     Effect.sync(() => {
       // Every state reachable from a fresh machine is a plain data value; the
-      // machine cannot start a timer because it has no Effect in it at all.
+      // Machine cannot start a timer because it has no Effect in it at all.
       const { state } = runTransitions(initialConnectionState, [
         connectRequested,
         { _tag: 'HandshakeFailed' },

@@ -34,28 +34,31 @@ import { Schema } from 'effect'
  */
 export const PROTOCOL_VERSION = 8
 
+/** The floor every branded/free-text identifier and content string in this protocol shares: not blank. */
+const MIN_NON_EMPTY_LENGTH = 1
+
 // ---------------------------------------------------------------------------
 // Identifiers and payload shapes
 // ---------------------------------------------------------------------------
 
 /** A peer's stable identity for the lifetime of a session. */
-export const PlayerId = Schema.String.pipe(Schema.minLength(1), Schema.brand('PlayerId'))
+export const PlayerId = Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH), Schema.brand('PlayerId'))
 export type PlayerId = typeof PlayerId.Type
 
 /** A peer's display name. Not unique, not an identity — never key on it. */
-export const PlayerName = Schema.String.pipe(Schema.minLength(1), Schema.brand('PlayerName'))
+export const PlayerName = Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH), Schema.brand('PlayerName'))
 export type PlayerName = typeof PlayerName.Type
 
 /** Identifies which world a session is playing. */
-export const WorldId = Schema.String.pipe(Schema.minLength(1), Schema.brand('WorldId'))
+export const WorldId = Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH), Schema.brand('WorldId'))
 export type WorldId = typeof WorldId.Type
 
 /** Stable client-generated identity used to make command retries idempotent. */
-export const CommandId = Schema.String.pipe(Schema.minLength(1), Schema.brand('CommandId'))
+export const CommandId = Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH), Schema.brand('CommandId'))
 export type CommandId = typeof CommandId.Type
 
 /** Stable identity of a server-owned world entity. */
-export const EntityId = Schema.String.pipe(Schema.minLength(1), Schema.brand('EntityId'))
+export const EntityId = Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH), Schema.brand('EntityId'))
 export type EntityId = typeof EntityId.Type
 
 export const Revision = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
@@ -81,6 +84,11 @@ export const BlockPos = Schema.Struct({
 })
 export type BlockPos = typeof BlockPos.Type
 
+const HALF_TURN_DIVISOR = 2
+
+/** A quarter turn, in radians (half of `Math.PI`). Pitch's legal range (see `Orientation` below). */
+const QUARTER_TURN_RADIANS = Math.PI / HALF_TURN_DIVISOR
+
 /**
  * Look direction. Radians, matching kernel's `CameraPoseSnapshot`; pitch is
  * clamped to ±π/2 because a value outside that range is not a rotation a
@@ -88,8 +96,8 @@ export type BlockPos = typeof BlockPos.Type
  * upside down rather than an error anyone can find.
  */
 export const Orientation = Schema.Struct({
+  pitchRadians: Schema.Number.pipe(Schema.between(-QUARTER_TURN_RADIANS, QUARTER_TURN_RADIANS)),
   yawRadians: Schema.Number.pipe(Schema.finite()),
-  pitchRadians: Schema.Number.pipe(Schema.between(-Math.PI / 2, Math.PI / 2)),
 })
 export type Orientation = typeof Orientation.Type
 
@@ -98,9 +106,9 @@ export type Orientation = typeof Orientation.Type
 // ---------------------------------------------------------------------------
 
 export const PlayerJoin = Schema.TaggedStruct('PlayerJoin', {
-  player: PlayerId,
-  name: PlayerName,
   at: Vec3,
+  name: PlayerName,
+  player: PlayerId,
 })
 export type PlayerJoin = typeof PlayerJoin.Type
 
@@ -110,18 +118,15 @@ export const PlayerLeave = Schema.TaggedStruct('PlayerLeave', {
 export type PlayerLeave = typeof PlayerLeave.Type
 
 export const PlayerMove = Schema.TaggedStruct('PlayerMove', {
+  at: Vec3,
+  facing: Orientation,
   player: PlayerId,
   /** Optional for protocol-v1 peers; authoritative servers should include it. */
   world: Schema.optional(WorldId),
-  at: Vec3,
-  facing: Orientation,
 })
 export type PlayerMove = typeof PlayerMove.Type
 
 export const BlockPlace = Schema.TaggedStruct('BlockPlace', {
-  player: PlayerId,
-  /** Optional for protocol-v1 peers; authoritative servers should include it. */
-  world: Schema.optional(WorldId),
   at: BlockPos,
   /**
    * A block type name, kept as an opaque non-empty string on the wire.
@@ -132,38 +137,44 @@ export const BlockPlace = Schema.TaggedStruct('BlockPlace', {
    * a malformed *frame*. Making the wire type the literal union would turn
    * "your client is older than mine" into a parse error.
    */
-  block: Schema.String.pipe(Schema.minLength(1)),
+  block: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
+  player: PlayerId,
+  /** Optional for protocol-v1 peers; authoritative servers should include it. */
+  world: Schema.optional(WorldId),
 })
 export type BlockPlace = typeof BlockPlace.Type
 
 export const BlockBreak = Schema.TaggedStruct('BlockBreak', {
+  at: BlockPos,
   player: PlayerId,
   /** Optional for protocol-v1 peers; authoritative servers should include it. */
   world: Schema.optional(WorldId),
-  at: BlockPos,
 })
 export type BlockBreak = typeof BlockBreak.Type
 
+/** A chat message longer than this is rejected rather than truncated, so the sender knows to resend. */
+const MAX_CHAT_TEXT_LENGTH = 256
+
 export const Chat = Schema.TaggedStruct('Chat', {
   player: PlayerId,
-  text: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
+  text: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH), Schema.maxLength(MAX_CHAT_TEXT_LENGTH)),
 })
 export type Chat = typeof Chat.Type
 
 export const WorldInfo = Schema.TaggedStruct('WorldInfo', {
-  world: WorldId,
   /** Integral so that a seed survives a JSON round trip exactly. */
   seed: Schema.Number.pipe(Schema.int()),
+  world: WorldId,
 })
 export type WorldInfo = typeof WorldInfo.Type
 
 /** A player as observed in an authoritative world snapshot. */
 export const PlayerSnapshot = Schema.Struct({
-  player: PlayerId,
-  name: PlayerName,
-  world: WorldId,
   at: Vec3,
   facing: Orientation,
+  name: PlayerName,
+  player: PlayerId,
+  world: WorldId,
 })
 export type PlayerSnapshot = typeof PlayerSnapshot.Type
 
@@ -175,9 +186,9 @@ export type PlayerSnapshot = typeof PlayerSnapshot.Type
  * the generated block when a client reconnects.
  */
 export const BlockMutationSnapshot = Schema.Struct({
-  world: WorldId,
   at: BlockPos,
-  block: Schema.NullOr(Schema.String.pipe(Schema.minLength(1))),
+  block: Schema.NullOr(Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH))),
+  world: WorldId,
 })
 export type BlockMutationSnapshot = typeof BlockMutationSnapshot.Type
 
@@ -189,8 +200,8 @@ export const PoweredRailSnapshot = Schema.Struct({
 export type PoweredRailSnapshot = typeof PoweredRailSnapshot.Type
 
 export const LeverSnapshot = Schema.Struct({
-  at: BlockPos,
   active: Schema.Boolean,
+  at: BlockPos,
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export type LeverSnapshot = typeof LeverSnapshot.Type
 
@@ -202,13 +213,13 @@ export type LeverSnapshot = typeof LeverSnapshot.Type
  * clock time.
  */
 export const WorldSnapshot = Schema.TaggedStruct('WorldSnapshot', {
-  world: WorldId,
-  seed: Schema.Number.pipe(Schema.int()),
-  revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  players: Schema.Array(PlayerSnapshot),
   blocks: Schema.Array(BlockMutationSnapshot),
-  poweredRails: Schema.Array(PoweredRailSnapshot),
   levers: Schema.Array(LeverSnapshot),
+  players: Schema.Array(PlayerSnapshot),
+  poweredRails: Schema.Array(PoweredRailSnapshot),
+  revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  seed: Schema.Number.pipe(Schema.int()),
+  world: WorldId,
 })
 export type WorldSnapshot = typeof WorldSnapshot.Type
 
@@ -225,12 +236,12 @@ export type BlockMutationRejectionReason = typeof BlockMutationRejectionReason.T
 
 /** A block mutation was not applied; the client should retain server state. */
 export const BlockMutationRejected = Schema.TaggedStruct('BlockMutationRejected', {
-  player: PlayerId,
-  world: WorldId,
   at: BlockPos,
   operation: Schema.Literal('place', 'break'),
+  player: PlayerId,
   reason: BlockMutationRejectionReason,
   revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  world: WorldId,
 })
 export type BlockMutationRejected = typeof BlockMutationRejected.Type
 
@@ -240,7 +251,6 @@ const ItemDurability = Schema.Struct({
 })
 
 const ItemStack = Schema.Struct({
-  item: Schema.String.pipe(Schema.minLength(1)),
   count: Schema.Number.pipe(Schema.int(), Schema.positive()),
   durability: Schema.optional(
     Schema.Struct({
@@ -248,31 +258,32 @@ const ItemStack = Schema.Struct({
       max: Schema.Number.pipe(Schema.int(), Schema.positive()),
     }),
   ),
+  item: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
 })
 
 export const EquipmentSlot = Schema.Literal('head', 'chest', 'legs', 'feet', 'offhand')
 export type EquipmentSlot = typeof EquipmentSlot.Type
 
 const EquipmentState = Schema.Struct({
-  head: Schema.NullOr(ItemStack),
   chest: Schema.NullOr(ItemStack),
-  legs: Schema.NullOr(ItemStack),
   feet: Schema.NullOr(ItemStack),
+  head: Schema.NullOr(ItemStack),
+  legs: Schema.NullOr(ItemStack),
   offhand: Schema.NullOr(ItemStack),
 })
 
 const InventoryState = Schema.Struct({
-  slots: Schema.Array(Schema.NullOr(ItemStack)),
-  selectedSlot: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
   // Accepted for protocol-v1 peers that sent durability out-of-band.
   durability: Schema.optional(Schema.Array(Schema.NullOr(ItemDurability))),
   equipment: Schema.optional(EquipmentState),
+  selectedSlot: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  slots: Schema.Array(Schema.NullOr(ItemStack)),
 })
 
 const VitalsState = Schema.Struct({
+  experience: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
   health: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
   hunger: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  experience: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
 })
 
 const TimeWeatherState = Schema.Struct({
@@ -284,80 +295,80 @@ export const ContainerKind = Schema.Literal('chest', 'shulker_box', 'dispenser',
 export type ContainerKind = typeof ContainerKind.Type
 
 const ContainerState = Schema.Struct({
-  containerId: Schema.String.pipe(Schema.minLength(1)),
+  containerId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
   kind: ContainerKind,
   slots: Schema.Array(Schema.NullOr(ItemStack)),
 })
 
 const FurnaceState = Schema.Struct({
-  furnaceId: Schema.String.pipe(Schema.minLength(1)),
-  input: Schema.NullOr(ItemStack),
-  fuel: Schema.NullOr(ItemStack),
-  output: Schema.NullOr(ItemStack),
   burnTicksRemaining: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
   cookTicks: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  fuel: Schema.NullOr(ItemStack),
+  furnaceId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
+  input: Schema.NullOr(ItemStack),
+  output: Schema.NullOr(ItemStack),
 })
 
 const VillagerTradeState = Schema.Struct({
-  villagerId: Schema.String.pipe(Schema.minLength(1)),
   offers: Schema.Array(
     Schema.Struct({
-      offerId: Schema.String.pipe(Schema.minLength(1)),
       input: Schema.Array(ItemStack),
+      maxUses: Schema.Number.pipe(Schema.int(), Schema.positive()),
+      offerId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
       output: ItemStack,
       uses: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-      maxUses: Schema.Number.pipe(Schema.int(), Schema.positive()),
     }),
   ),
+  villagerId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
 })
 
 const MobState = Schema.Struct({
-  attackCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  motionPhase: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  provoked: Schema.Boolean,
   ageTicks: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
-  persistent: Schema.optional(Schema.Boolean),
-  named: Schema.optional(Schema.Boolean),
-  tamed: Schema.optional(Schema.Boolean),
+  attackCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
   /** Present only for creepers struck by server-authoritative lightning. */
   charged: Schema.optional(Schema.Boolean),
+  motionPhase: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  named: Schema.optional(Schema.Boolean),
+  persistent: Schema.optional(Schema.Boolean),
+  provoked: Schema.Boolean,
+  tamed: Schema.optional(Schema.Boolean),
 })
 
 export const LivingEntityState = Schema.TaggedStruct('living', {
-  entityId: EntityId,
-  entityType: Schema.String.pipe(Schema.minLength(1)),
   at: Vec3,
+  entityId: EntityId,
+  entityType: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
   health: Schema.Number.pipe(Schema.finite(), Schema.positive()),
   maxHealth: Schema.Number.pipe(Schema.finite(), Schema.positive()),
   mobState: Schema.optional(MobState),
 })
 export const ItemDropEntityState = Schema.TaggedStruct('item-drop', {
-  entityId: EntityId,
-  at: Vec3,
-  stack: ItemStack,
   ageTicks: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
+  at: Vec3,
+  entityId: EntityId,
+  stack: ItemStack,
 })
 export const ArrowEntityState = Schema.TaggedStruct('arrow', {
-  entityId: EntityId,
-  at: Vec3,
-  velocity: Vec3,
-  damage: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  owner: Schema.NullOr(PlayerId),
   ageTicks: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  at: Vec3,
+  damage: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  entityId: EntityId,
+  owner: Schema.NullOr(PlayerId),
+  velocity: Vec3,
 })
 export type ArrowEntityState = typeof ArrowEntityState.Type
 export const PrimedTntEntityState = Schema.TaggedStruct('primed-tnt', {
-  entityId: EntityId,
   at: Vec3,
   burnedSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  entityId: EntityId,
   owner: Schema.NullOr(PlayerId),
 })
 export type PrimedTntEntityState = typeof PrimedTntEntityState.Type
 export const VehicleEntityState = Schema.TaggedStruct('vehicle', {
-  entityId: EntityId,
-  vehicleType: Schema.String.pipe(Schema.minLength(1)),
   at: Vec3,
+  entityId: EntityId,
   occupant: Schema.NullOr(PlayerId),
+  vehicleType: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
 })
 export const AuthoritativeEntityState = Schema.Union(
   LivingEntityState,
@@ -370,32 +381,32 @@ export type AuthoritativeEntityState = typeof AuthoritativeEntityState.Type
 
 /** Complete server state used for initial connection and reconnect recovery. */
 export const AuthoritativeSnapshot = Schema.TaggedStruct('AuthoritativeSnapshot', {
-  world: WorldId,
-  revision: Revision,
-  inventories: Schema.Array(Schema.Struct({ player: PlayerId, state: InventoryState })),
-  vitals: Schema.Array(Schema.Struct({ player: PlayerId, state: VitalsState })),
-  timeWeather: TimeWeatherState,
   containers: Schema.Array(ContainerState),
-  furnaces: Schema.Array(FurnaceState),
-  villagerTrades: Schema.Array(VillagerTradeState),
   entities: Schema.optional(Schema.Array(AuthoritativeEntityState)),
+  furnaces: Schema.Array(FurnaceState),
+  inventories: Schema.Array(Schema.Struct({ player: PlayerId, state: InventoryState })),
+  revision: Revision,
+  timeWeather: TimeWeatherState,
+  villagerTrades: Schema.Array(VillagerTradeState),
+  vitals: Schema.Array(Schema.Struct({ player: PlayerId, state: VitalsState })),
+  world: WorldId,
 })
 export type AuthoritativeSnapshot = typeof AuthoritativeSnapshot.Type
 
 /** Server-authoritative result of using an End portal. */
 export const RealmTransferSnapshot = Schema.TaggedStruct('RealmTransferSnapshot', {
-  commandId: CommandId,
-  player: PlayerId,
-  fromWorld: WorldId,
-  destinationWorld: WorldId,
   at: Vec3,
-  facing: Orientation,
-  worldSnapshot: WorldSnapshot,
   authoritativeSnapshot: AuthoritativeSnapshot,
+  commandId: CommandId,
+  destinationWorld: WorldId,
+  facing: Orientation,
+  fromWorld: WorldId,
+  player: PlayerId,
+  worldSnapshot: WorldSnapshot,
 }).annotations({ parseOptions: { onExcessProperty: 'error' as const } })
 export type RealmTransferSnapshot = typeof RealmTransferSnapshot.Type
 
-const DeltaHeader = { world: WorldId, revision: Revision }
+const DeltaHeader = { revision: Revision, world: WorldId }
 export const PlayerInventoryDelta = Schema.TaggedStruct('PlayerInventoryDelta', {
   ...DeltaHeader,
   player: PlayerId,
@@ -457,10 +468,10 @@ export const LightningStrikeDelta = Schema.TaggedStruct('LightningStrikeDelta', 
  */
 export const EyeOfEnderThrown = Schema.TaggedStruct('EyeOfEnderThrown', {
   ...DeltaHeader,
-  player: PlayerId,
-  origin: Vec3,
-  target: Vec3,
   breaks: Schema.Boolean,
+  origin: Vec3,
+  player: PlayerId,
+  target: Vec3,
 })
 export type EyeOfEnderThrown = typeof EyeOfEnderThrown.Type
 export const AuthoritativeDelta = Schema.Union(
@@ -480,9 +491,9 @@ export type AuthoritativeDelta = typeof AuthoritativeDelta.Type
 
 const CommandHeader = {
   commandId: CommandId,
+  expectedRevision: Revision,
   player: PlayerId,
   world: WorldId,
-  expectedRevision: Revision,
 }
 
 export const CommandSlotIndex = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
@@ -493,26 +504,26 @@ const strictAction = { parseOptions: { onExcessProperty: 'error' as const } }
 export const PlayerInventoryAction = Schema.Union(
   Schema.TaggedStruct('select-slot', { slot: CommandSlotIndex }),
   Schema.TaggedStruct('move-item', {
-    source: CommandSlotIndex,
-    destination: CommandSlotIndex,
     count: CommandItemCount,
+    destination: CommandSlotIndex,
+    source: CommandSlotIndex,
   }),
   Schema.TaggedStruct('swap-items', {
-    source: CommandSlotIndex,
     destination: CommandSlotIndex,
+    source: CommandSlotIndex,
   }),
   Schema.TaggedStruct('drop-item', {
-    source: CommandSlotIndex,
-    destination: Schema.Literal('world'),
     count: CommandItemCount,
+    destination: Schema.Literal('world'),
+    source: CommandSlotIndex,
   }),
   Schema.TaggedStruct('equip-item', {
-    source: CommandSlotIndex,
     equipmentSlot: EquipmentSlot,
+    source: CommandSlotIndex,
   }),
   Schema.TaggedStruct('unequip-item', {
-    equipmentSlot: EquipmentSlot,
     destination: Schema.optional(CommandSlotIndex),
+    equipmentSlot: EquipmentSlot,
   }),
 ).annotations(strictAction)
 export type PlayerInventoryAction = typeof PlayerInventoryAction.Type
@@ -531,14 +542,14 @@ export type ContainerSlotEndpoint = typeof ContainerSlotEndpoint.Type
 export const ContainerAction = Schema.Union(
   Schema.TaggedStruct('open', {}),
   Schema.TaggedStruct('move-item', {
-    source: PlayerSlotEndpoint,
-    destination: ContainerSlotEndpoint,
     count: CommandItemCount,
+    destination: ContainerSlotEndpoint,
+    source: PlayerSlotEndpoint,
   }),
   Schema.TaggedStruct('move-item', {
-    source: ContainerSlotEndpoint,
-    destination: PlayerSlotEndpoint,
     count: CommandItemCount,
+    destination: PlayerSlotEndpoint,
+    source: ContainerSlotEndpoint,
   }),
   Schema.TaggedStruct('close', {}),
 ).annotations(strictAction)
@@ -554,19 +565,19 @@ const FurnaceOutputEndpoint = Schema.TaggedStruct('furnace-slot', {
 
 export const FurnaceAction = Schema.Union(
   Schema.TaggedStruct('move-item', {
-    source: PlayerSlotEndpoint,
-    destination: FurnaceSlotEndpoint,
     count: CommandItemCount,
+    destination: FurnaceSlotEndpoint,
+    source: PlayerSlotEndpoint,
   }),
   Schema.TaggedStruct('move-item', {
-    source: FurnaceSlotEndpoint,
-    destination: PlayerSlotEndpoint,
     count: CommandItemCount,
+    destination: PlayerSlotEndpoint,
+    source: FurnaceSlotEndpoint,
   }),
   Schema.TaggedStruct('take-output', {
-    source: FurnaceOutputEndpoint,
-    destination: PlayerSlotEndpoint,
     count: CommandItemCount,
+    destination: PlayerSlotEndpoint,
+    source: FurnaceOutputEndpoint,
   }),
 ).annotations(strictAction)
 export type FurnaceAction = typeof FurnaceAction.Type
@@ -575,15 +586,18 @@ export const PlayerInventoryCommand = Schema.TaggedStruct('PlayerInventoryComman
   ...CommandHeader,
   action: PlayerInventoryAction,
 })
+/** `PlayerVitalsCommand`'s `activity` variant reports a percentage; a caller cannot claim more than a whole one. */
+const MAX_VITALS_ACTIVITY_AMOUNT = 100
+
 export const PlayerVitalsCommand = Schema.TaggedStruct('PlayerVitalsCommand', {
   ...CommandHeader,
   action: Schema.Union(
     Schema.Literal('respawn'),
     Schema.TaggedStruct('activity', {
       activity: Schema.Literal('walk', 'swim', 'jump', 'attack', 'mine'),
-      amount: Schema.Number.pipe(Schema.finite(), Schema.positive(), Schema.lessThanOrEqualTo(100)),
+      amount: Schema.Number.pipe(Schema.finite(), Schema.positive(), Schema.lessThanOrEqualTo(MAX_VITALS_ACTIVITY_AMOUNT)),
     }),
-    Schema.TaggedStruct('eat', { item: Schema.String.pipe(Schema.minLength(1)) }),
+    Schema.TaggedStruct('eat', { item: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)) }),
   ),
 })
 export const WorldTimeWeatherCommand = Schema.TaggedStruct('WorldTimeWeatherCommand', {
@@ -592,19 +606,19 @@ export const WorldTimeWeatherCommand = Schema.TaggedStruct('WorldTimeWeatherComm
 })
 export const ContainerCommand = Schema.TaggedStruct('ContainerCommand', {
   ...CommandHeader,
-  containerId: Schema.String.pipe(Schema.minLength(1)),
   action: ContainerAction,
+  containerId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
 })
 export const FurnaceCommand = Schema.TaggedStruct('FurnaceCommand', {
   ...CommandHeader,
-  furnaceId: Schema.String.pipe(Schema.minLength(1)),
   action: FurnaceAction,
+  furnaceId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
 })
 export const VillagerTradeCommand = Schema.TaggedStruct('VillagerTradeCommand', {
   ...CommandHeader,
-  villagerId: Schema.String.pipe(Schema.minLength(1)),
-  offerId: Schema.String.pipe(Schema.minLength(1)),
   action: Schema.Literal('execute-trade'),
+  offerId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
+  villagerId: Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH)),
 })
 export const EntityAttackCommand = Schema.TaggedStruct('EntityAttackCommand', {
   ...CommandHeader,
@@ -672,11 +686,11 @@ export const FishingCommand = Schema.TaggedStruct('FishingCommand', {
 export type FishingCommand = typeof FishingCommand.Type
 export const VehicleCommand = Schema.TaggedStruct('VehicleCommand', {
   ...CommandHeader,
-  entityId: EntityId,
   action: Schema.Union(
     Schema.Literal('mount', 'dismount'),
     Schema.TaggedStruct('move', { direction: Schema.Literal('forward', 'backward') }),
   ).annotations(strictAction),
+  entityId: EntityId,
 })
 export const AuthoritativeCommand = Schema.Union(
   PlayerInventoryCommand,
@@ -718,15 +732,15 @@ export const CommandRejectionReason = Schema.Literal(
 export type CommandRejectionReason = typeof CommandRejectionReason.Type
 export const AuthoritativeCommandAccepted = Schema.TaggedStruct('AuthoritativeCommandAccepted', {
   commandId: CommandId,
-  world: WorldId,
   revision: Revision,
+  world: WorldId,
 })
 export const AuthoritativeCommandRejected = Schema.TaggedStruct('AuthoritativeCommandRejected', {
   commandId: CommandId,
-  world: WorldId,
-  revision: Revision,
   reason: CommandRejectionReason,
   resyncRequired: Schema.Boolean,
+  revision: Revision,
+  world: WorldId,
 })
 export const AuthoritativeCommandResult = Schema.Union(
   AuthoritativeCommandAccepted,
@@ -735,8 +749,8 @@ export const AuthoritativeCommandResult = Schema.Union(
 export type AuthoritativeCommandResult = typeof AuthoritativeCommandResult.Type
 
 export const AuthoritativeResyncRequest = Schema.TaggedStruct('AuthoritativeResyncRequest', {
-  world: WorldId,
   lastKnownRevision: Schema.optional(Revision),
+  world: WorldId,
 })
 export type AuthoritativeResyncRequest = typeof AuthoritativeResyncRequest.Type
 
@@ -847,7 +861,7 @@ export const MESSAGE_TAGS = [
  * parse a message shape that may no longer exist.
  */
 export const Frame = Schema.Struct({
-  protocolVersion: Schema.Number.pipe(Schema.int()),
   message: NetworkMessage,
+  protocolVersion: Schema.Number.pipe(Schema.int()),
 })
 export type Frame = typeof Frame.Type

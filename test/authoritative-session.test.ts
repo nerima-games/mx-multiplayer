@@ -6,8 +6,8 @@ import {
   AuthoritativeSession,
   AuthoritativeSnapshot,
   CommandId,
-  PlayerInventoryAction,
   PlayerId,
+  PlayerInventoryAction,
   WorldId,
 } from '../src/index'
 
@@ -15,23 +15,23 @@ const world = WorldId.make('overworld')
 const player = PlayerId.make('alice')
 const snapshot: AuthoritativeSnapshot = {
   _tag: 'AuthoritativeSnapshot',
-  world,
-  revision: 4,
-  inventories: [{ player, state: { slots: [{ item: 'stone', count: 2 }], selectedSlot: 0 } }],
-  vitals: [{ player, state: { health: 20, hunger: 20, experience: 0 } }],
-  timeWeather: { timeOfDay: 6000, weather: 'clear' },
   containers: [],
   furnaces: [],
+  inventories: [{ player, state: { slots: [{ item: 'stone', count: 2 }], selectedSlot: 0 } }],
+  revision: 4,
+  timeWeather: { timeOfDay: 6000, weather: 'clear' },
   villagerTrades: [],
+  vitals: [{ player, state: { health: 20, hunger: 20, experience: 0 } }],
+  world,
 }
 
 const command = (id: string, expectedRevision = 4): Extract<AuthoritativeCommand, { readonly _tag: 'PlayerInventoryCommand' }> => ({
   _tag: 'PlayerInventoryCommand',
+  action: { _tag: 'select-slot', slot: 0 },
   commandId: CommandId.make(id),
+  expectedRevision,
   player,
   world,
-  expectedRevision,
-  action: { _tag: 'select-slot', slot: 0 },
 })
 
 describe('authoritative protocol schemas', () => {
@@ -54,21 +54,21 @@ describe('authoritative protocol schemas', () => {
 
     const commands: ReadonlyArray<AuthoritativeCommand> = [
       command('inventory'),
-      { ...command('swap-inventory'), action: { _tag: 'swap-items', source: 0, destination: 1 } },
+      { ...command('swap-inventory'), action: { _tag: 'swap-items', destination: 1, source: 0 } },
       { ...command('vitals'), _tag: 'PlayerVitalsCommand', action: 'respawn' },
       { ...command('ender-pearl'), _tag: 'EnderPearlCommand' },
       { ...command('bucket'), _tag: 'BucketUseCommand' },
       { ...command('vehicle-use'), _tag: 'VehicleUseCommand' },
       { ...command('fishing'), _tag: 'FishingCommand', action: 'cast' },
       { ...command('time'), _tag: 'WorldTimeWeatherCommand', action: { _tag: 'set-time', timeOfDay: 6000 } },
-      { ...command('container'), _tag: 'ContainerCommand', containerId: 'chest:1', action: { _tag: 'open' } },
-      { ...command('furnace'), _tag: 'FurnaceCommand', furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
+      { ...command('container'), _tag: 'ContainerCommand', action: { _tag: 'open' }, containerId: 'chest:1' },
+      { ...command('furnace'), _tag: 'FurnaceCommand', action: { _tag: 'take-output', count: 1, destination: { _tag: 'player-slot', slot: 0 }, source: { _tag: 'furnace-slot', slot: 'output' } }, furnaceId: 'furnace:1' },
       {
         ...command('trade'),
         _tag: 'VillagerTradeCommand',
-        villagerId: 'villager:1',
-        offerId: 'offer:1',
         action: 'execute-trade',
+        offerId: 'offer:1',
+        villagerId: 'villager:1',
       },
     ]
     for (const value of commands) {
@@ -79,18 +79,18 @@ describe('authoritative protocol schemas', () => {
   it('decodes optional hostile lifecycle state without requiring it from older peers', () => {
     const entity: AuthoritativeEntityState = {
       _tag: 'living',
+      at: { x: 0, y: 64, z: 0 },
       entityId: 'zombie-1' as AuthoritativeEntityState['entityId'],
       entityType: 'zombie',
-      at: { x: 0, y: 64, z: 0 },
       health: 20,
       maxHealth: 20,
       mobState: {
+        ageTicks: 600,
         attackCooldownSecs: 0,
         motionPhase: 0,
-        provoked: false,
-        ageTicks: 600,
-        persistent: true,
         named: true,
+        persistent: true,
+        provoked: false,
         tamed: true,
       },
     }
@@ -112,7 +112,7 @@ describe('authoritative protocol schemas', () => {
     const invalidCommands: ReadonlyArray<unknown> = [
       { ...command('old-action'), action: 'select-slot' },
       { ...command('missing-slot'), action: { _tag: 'select-slot' } },
-      { ...command('zero-count'), action: { _tag: 'move-item', source: 0, destination: 1, count: 0 } },
+      { ...command('zero-count'), action: { _tag: 'move-item', count: 0, destination: 1, source: 0 } },
       { ...command('swap-missing-destination'), action: { _tag: 'swap-items', source: 0 } },
       {
         ...command('wrong-weather-payload'),
@@ -122,8 +122,8 @@ describe('authoritative protocol schemas', () => {
       {
         ...command('same-side-container'),
         _tag: 'ContainerCommand',
+        action: { _tag: 'move-item', count: 1, destination: { _tag: 'container-slot', slot: 1 }, source: { _tag: 'container-slot', slot: 0 } },
         containerId: 'chest:1',
-        action: { _tag: 'move-item', source: { _tag: 'container-slot', slot: 0 }, destination: { _tag: 'container-slot', slot: 1 }, count: 1 },
       },
     ]
     for (const value of invalidCommands) {
@@ -149,6 +149,21 @@ describe('authoritative command session', () => {
     expect(subject.execute(command('reconnect', 5), () => ({ accepted: true }))).toMatchObject({
       reason: 'snapshot-required',
     })
+  })
+
+  it('clears every world when disconnect is called with no world, unlike a targeted disconnect', () => {
+    const subject = new AuthoritativeSession()
+    const nether = WorldId.make('nether')
+    subject.restore(snapshot)
+    subject.restore({ ...snapshot, revision: 7, world: nether })
+
+    subject.disconnect()
+
+    expect(subject.revision(world)).toBeUndefined()
+    expect(subject.revision(nether)).toBeUndefined()
+    expect(
+      subject.execute(command('after-clear-all', 4), () => ({ accepted: true })),
+    ).toMatchObject({ reason: 'snapshot-required', resyncRequired: true })
   })
 
   it('returns the cached result for duplicate command ids without reapplying', () => {
@@ -191,7 +206,7 @@ describe('authoritative command session', () => {
     const subject = new AuthoritativeSession()
     const nether = WorldId.make('nether')
     subject.restore(snapshot)
-    subject.restore({ ...snapshot, world: nether, revision: 7 })
+    subject.restore({ ...snapshot, revision: 7, world: nether })
     let applications = 0
     const apply = () => {
       applications += 1
@@ -219,7 +234,7 @@ describe('authoritative command session', () => {
         invoked = true
         return { accepted: true }
       }),
-    ).toMatchObject({ reason: 'stale-revision', revision: 4, resyncRequired: true })
+    ).toMatchObject({ reason: 'stale-revision', resyncRequired: true, revision: 4 })
     expect(invoked).toBe(false)
     expect(subject.revision(world)).toBe(4)
   })
@@ -242,13 +257,13 @@ describe('authoritative command session', () => {
     const transfer: AuthoritativeCommand = {
       ...command('transfer'),
       _tag: 'ContainerCommand',
-      containerId: 'chest:1',
       action: {
         _tag: 'move-item',
-        source: { _tag: 'player-slot', slot: 0 },
-        destination: { _tag: 'container-slot', slot: 3 },
         count: 2,
+        destination: { _tag: 'container-slot', slot: 3 },
+        source: { _tag: 'player-slot', slot: 0 },
       },
+      containerId: 'chest:1',
     }
 
     const result = subject.execute(transfer, (received) => {
