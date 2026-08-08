@@ -14,7 +14,7 @@
  * flag is an ERROR rather than a silent no-op. A dropped `--fault` is a
  * transcript that shows a clean session with full confidence.
  */
-import { isViewMode, VIEW_MODES, type ViewMode } from './render'
+import { VIEW_MODES, type ViewMode, isViewMode } from './render'
 import { WIRE_FAULTS, type WireFault } from './session'
 
 export type PreviewOptions = {
@@ -40,20 +40,20 @@ export type PreviewOptions = {
 }
 
 const DEFAULTS = {
-  view: 'wire',
-  steps: 0,
-  script: false,
+  ascii: false,
+  errors: [],
   fault: 'none',
   faultAt: 0,
-  frames: false,
-  once: false,
-  ascii: false,
-  stats: false,
-  list: false,
-  help: false,
-  frameWidth: undefined,
   frameHeight: undefined,
-  errors: [],
+  frameWidth: undefined,
+  frames: false,
+  help: false,
+  list: false,
+  once: false,
+  script: false,
+  stats: false,
+  steps: 0,
+  view: 'wire',
 } satisfies PreviewOptions
 
 type Accumulator = {
@@ -164,8 +164,8 @@ export const parseArguments = (argv: ReadonlyArray<string>): PreviewOptions => {
 
   return {
     ...accumulator,
-    steps: Math.trunc(accumulator.steps),
     faultAt: Math.trunc(accumulator.faultAt),
+    steps: Math.trunc(accumulator.steps),
   }
 }
 

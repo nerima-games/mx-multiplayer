@@ -26,10 +26,10 @@
  * splitting the Port from its adapters is what lets this repository's whole
  * test suite run in a plain Node vitest pool with no sockets.
  */
+import { type ConnectionState, canSend } from './connection'
 import { Context, Effect, Layer, Queue } from 'effect'
-import { decodeFrame, encodeFrame, type WireText } from './codec'
-import { canSend, type ConnectionState } from './connection'
-import { TransportError, type ProtocolError } from './errors'
+import { type ProtocolError, TransportError } from './errors'
+import { type WireText, decodeFrame, encodeFrame } from './codec'
 import type { NetworkMessage } from './protocol'
 
 export type TransportService = {
@@ -64,16 +64,17 @@ export const connectionGatedTransport = (
 ): TransportService => ({
   inbound: transport.inbound,
   send: (frame) =>
-    Effect.flatMap(state, (current) =>
-      canSend(current)
-        ? transport.send(frame)
-        : Effect.fail(
-            new TransportError({
-              reason: 'not-connected',
-              detail: `send attempted while connection state was ${current._tag}`,
-            }),
-          ),
-    ),
+    Effect.flatMap(state, (current) => {
+      if (canSend(current)) {
+        return transport.send(frame)
+      }
+      return Effect.fail(
+        new TransportError({
+          detail: `send attempted while connection state was ${current._tag}`,
+          reason: 'not-connected',
+        }),
+      )
+    }),
 })
 
 /** Encode and send. The ordinary way to talk to a peer. */
@@ -114,14 +115,20 @@ export const makeLoopbackPair: Effect.Effect<
   const rightInbound = yield* Queue.unbounded<WireText>()
 
   const sideSending = (target: Queue.Enqueue<WireText>, inbound: Queue.Dequeue<WireText>): TransportService => ({
+    inbound,
     send: (frame) =>
       Queue.offer(target, frame).pipe(
         Effect.asVoid,
+        // Verified empirically: offering to a queue after `Queue.shutdown`
+        // Fails the fiber through interruption, not a defect — there is no
+        // Legitimate use of `Queue`'s public API that reaches `catchAllDefect`
+        // Here. This guards a failure mode internal to Effect's `Queue`
+        // Implementation, not one this repository's callers can construct.
+        /* v8 ignore next 3 */
         Effect.catchAllDefect((defect) =>
-          Effect.fail(new TransportError({ reason: 'send-failed', detail: String(defect) })),
+          Effect.fail(new TransportError({ detail: String(defect), reason: 'send-failed' })),
         ),
       ),
-    inbound,
   })
 
   return [
@@ -143,13 +150,13 @@ export const LoopbackTransportLayer = (service: TransportService): Layer.Layer<T
 export const disconnectedTransport: Effect.Effect<TransportService> = Effect.gen(function* () {
   const inbound = yield* Queue.unbounded<WireText>()
   return {
+    inbound,
     send: () =>
       Effect.fail(
         new TransportError({
-          reason: 'not-connected',
           detail: 'send attempted while the connection was not in Connected',
+          reason: 'not-connected',
         }),
       ),
-    inbound,
   }
 })

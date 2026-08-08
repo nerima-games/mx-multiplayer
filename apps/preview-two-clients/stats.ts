@@ -21,29 +21,29 @@
 import { Effect, Either, Queue } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
+  type ConnectionEvent,
+  type ConnectionState,
   canSend,
   initialConnectionState,
   runTransitions,
   transition,
-  type ConnectionEvent,
-  type ConnectionState,
 } from '../../src/domain/connection'
 import {
+  LoopbackTransportLayer,
   connectionGatedTransport,
   disconnectedTransport,
-  LoopbackTransportLayer,
   makeLoopbackPair,
   sendMessage,
 } from '../../src/domain/transport'
 import {
-  MESSAGE_TAGS,
-  PROTOCOL_VERSION,
   CommandId,
   EntityId,
+  MESSAGE_TAGS,
+  type NetworkMessage,
+  PROTOCOL_VERSION,
   PlayerId,
   PlayerName,
   WorldId,
-  type NetworkMessage,
 } from '../../src/domain/protocol'
 
 const pad = (text: string, width: number): string =>
@@ -60,30 +60,83 @@ const ALICE = PlayerId.make('alice')
 const OVERWORLD = WorldId.make('overworld')
 const END = WorldId.make('end')
 const COMMAND_ID = CommandId.make('command-1')
-const COMMAND_HEADER = { commandId: COMMAND_ID, player: ALICE, world: OVERWORLD, expectedRevision: 1 }
-const ITEM = { item: 'stone', count: 2 }
+const COMMAND_HEADER = { commandId: COMMAND_ID, expectedRevision: 1, player: ALICE, world: OVERWORLD }
+const ITEM = { count: 2, item: 'stone' }
 const ENTITY_ID = EntityId.make('entity-1')
-const ENTITY = { _tag: 'living' as const, entityId: ENTITY_ID, entityType: 'zombie', at: { x: 1, y: 64, z: 1 }, health: 20, maxHealth: 20 }
+const ENTITY = { _tag: 'living' as const, at: { x: 1, y: 64, z: 1 }, entityId: ENTITY_ID, entityType: 'zombie', health: 20, maxHealth: 20 }
 
 /** One sample per tag, so a check can sweep the whole message set. */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
-  PlayerJoin: { _tag: 'PlayerJoin', player: ALICE, name: PlayerName.make('Alice'), at: { x: 8.5, y: 65, z: -12.25 } },
+  AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId: COMMAND_ID, revision: 2, world: OVERWORLD },
+  AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId: COMMAND_ID, reason: 'stale-revision', resyncRequired: true, revision: 1, world: OVERWORLD },
+  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', lastKnownRevision: 1, world: OVERWORLD },
+  AuthoritativeSnapshot: {
+    _tag: 'AuthoritativeSnapshot', containers: [], entities: [ENTITY], furnaces: [], inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }], revision: 1, timeWeather: { timeOfDay: 6000, weather: 'clear' }, villagerTrades: [], vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }], world: OVERWORLD,
+  },
+  BlockBreak: { _tag: 'BlockBreak', at: { x: -1, y: 0, z: -3 }, player: ALICE },
+  BlockMutationRejected: {
+    _tag: 'BlockMutationRejected',
+    at: { x: 1, y: 2, z: 3 },
+    operation: 'place',
+    player: ALICE,
+    reason: 'occupied',
+    revision: 1,
+    world: OVERWORLD,
+  },
+  BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: ALICE },
+  BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
+  BucketUseCommand: { _tag: 'BucketUseCommand', ...COMMAND_HEADER },
+  Chat: { _tag: 'Chat', player: ALICE, text: 'hello 世界' },
+  ContainerCommand: { _tag: 'ContainerCommand', ...COMMAND_HEADER, containerId: 'chest:1', action: { _tag: 'open' } },
+  ContainerDelta: { _tag: 'ContainerDelta', revision: 2, state: { containerId: 'chest:1', kind: 'chest', slots: [ITEM] }, world: OVERWORLD },
+  EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
+  EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
+  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  EntityDespawnDelta: { _tag: 'EntityDespawnDelta', entityId: ENTITY_ID, revision: 2, world: OVERWORLD },
+  EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  EntitySpawnDelta: { _tag: 'EntitySpawnDelta', entity: ENTITY, revision: 2, world: OVERWORLD },
+  EntityUpdateDelta: { _tag: 'EntityUpdateDelta', entity: { ...ENTITY, health: 19 }, revision: 2, world: OVERWORLD },
+  EyeOfEnderThrown: {
+    _tag: 'EyeOfEnderThrown', breaks: false, origin: { x: 1, y: 65, z: 1 }, player: ALICE, revision: 2, target: { x: 100, y: 72, z: 100 }, world: OVERWORLD,
+  },
+  FishingCommand: { _tag: 'FishingCommand', ...COMMAND_HEADER, action: 'cast' },
+  FurnaceCommand: { _tag: 'FurnaceCommand', ...COMMAND_HEADER, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
+  FurnaceDelta: { _tag: 'FurnaceDelta', revision: 2, state: { burnTicksRemaining: 10, cookTicks: 5, fuel: null, furnaceId: 'furnace:1', input: ITEM, output: null }, world: OVERWORLD },
+  IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
+  InsertEyeIntoEndPortalFrameCommand: { _tag: 'InsertEyeIntoEndPortalFrameCommand', ...COMMAND_HEADER, frame: { x: 1, y: 64, z: 0 } },
+  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', at: { x: 3.5, y: 72, z: -4.5 }, revision: 2, world: OVERWORLD },
+  NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
+  Ping: { _tag: 'Ping', nonce: 7 },
+  PlayerFishingDelta: { _tag: 'PlayerFishingDelta', player: ALICE, revision: 2, state: { phase: 'waiting', result: 'cast' }, world: OVERWORLD },
+  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...COMMAND_HEADER, action: { _tag: 'select-slot', slot: 0 } },
+  PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', player: ALICE, revision: 2, state: { selectedSlot: 0, slots: [ITEM] }, world: OVERWORLD },
+  PlayerJoin: { _tag: 'PlayerJoin', at: { x: 8.5, y: 65, z: -12.25 }, name: PlayerName.make('Alice'), player: ALICE },
   PlayerLeave: { _tag: 'PlayerLeave', player: ALICE },
   PlayerMove: {
     _tag: 'PlayerMove',
-    player: ALICE,
     at: { x: -0.5, y: 64.125, z: 1024 },
-    facing: { yawRadians: 3.14159, pitchRadians: -1.5 },
+    facing: { pitchRadians: -1.5, yawRadians: 3.14159 },
+    player: ALICE,
   },
-  BlockPlace: { _tag: 'BlockPlace', player: ALICE, at: { x: 1, y: 2, z: 3 }, block: 'stone' },
-  BlockBreak: { _tag: 'BlockBreak', player: ALICE, at: { x: -1, y: 0, z: -3 } },
-  Chat: { _tag: 'Chat', player: ALICE, text: 'hello 世界' },
-  WorldInfo: { _tag: 'WorldInfo', world: OVERWORLD, seed: -1_234_567 },
+  PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...COMMAND_HEADER, action: 'respawn' },
+  PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', player: ALICE, revision: 2, state: { experience: 0, health: 19, hunger: 18 }, world: OVERWORLD },
+  Pong: { _tag: 'Pong', nonce: 7 },
+  RealmTransferSnapshot: {
+    _tag: 'RealmTransferSnapshot', at: { x: 0.5, y: 64, z: -4.25 }, authoritativeSnapshot: {
+      _tag: 'AuthoritativeSnapshot', containers: [], entities: [], furnaces: [], inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }], revision: 1, timeWeather: { timeOfDay: 6000, weather: 'clear' }, villagerTrades: [], vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }], world: END,
+    }, commandId: COMMAND_ID, destinationWorld: END, facing: { pitchRadians: -0.25, yawRadians: 1.5 }, fromWorld: OVERWORLD, player: ALICE, worldSnapshot: { _tag: 'WorldSnapshot', blocks: [], levers: [], players: [], poweredRails: [], revision: 1, seed: 42, world: END },
+  },
+  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...COMMAND_HEADER },
+  ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...COMMAND_HEADER, lever: { x: 1, y: 64, z: 0 } },
+  VehicleCommand: { _tag: 'VehicleCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, action: 'mount' },
+  VehicleUseCommand: { _tag: 'VehicleUseCommand', ...COMMAND_HEADER },
+  VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...COMMAND_HEADER, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
+  VillagerTradeDelta: { _tag: 'VillagerTradeDelta', revision: 2, state: { offers: [{ offerId: 'offer:1', input: [ITEM], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }], villagerId: 'villager:1' }, world: OVERWORLD },
+  WorldInfo: { _tag: 'WorldInfo', seed: -1_234_567, world: OVERWORLD },
   WorldSnapshot: {
     _tag: 'WorldSnapshot',
-    world: OVERWORLD,
-    seed: -1_234_567,
-    revision: 1,
+    blocks: [{ world: OVERWORLD, at: { x: 1, y: 2, z: 3 }, block: 'stone' }],
+    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
     players: [
       {
         player: ALICE,
@@ -93,76 +146,13 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
         facing: { yawRadians: 3.14159, pitchRadians: -1.5 },
       },
     ],
-    blocks: [{ world: OVERWORLD, at: { x: 1, y: 2, z: 3 }, block: 'stone' }],
     poweredRails: [{ at: { x: 2, y: 64, z: 3 }, powered: true }],
-    levers: [{ at: { x: 3, y: 64, z: 3 }, active: true }],
-  },
-  BlockMutationRejected: {
-    _tag: 'BlockMutationRejected',
-    player: ALICE,
-    world: OVERWORLD,
-    at: { x: 1, y: 2, z: 3 },
-    operation: 'place',
-    reason: 'occupied',
     revision: 1,
+    seed: -1_234_567,
+    world: OVERWORLD,
   },
-  AuthoritativeSnapshot: {
-    _tag: 'AuthoritativeSnapshot', world: OVERWORLD, revision: 1,
-    inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
-    vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }],
-    timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [ENTITY],
-  },
-  RealmTransferSnapshot: {
-    _tag: 'RealmTransferSnapshot', commandId: COMMAND_ID, player: ALICE, fromWorld: OVERWORLD, destinationWorld: END,
-    at: { x: 0.5, y: 64, z: -4.25 }, facing: { yawRadians: 1.5, pitchRadians: -0.25 },
-    worldSnapshot: { _tag: 'WorldSnapshot', world: END, seed: 42, revision: 1, players: [], blocks: [], poweredRails: [], levers: [] },
-    authoritativeSnapshot: {
-      _tag: 'AuthoritativeSnapshot', world: END, revision: 1,
-      inventories: [{ player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } }],
-      vitals: [{ player: ALICE, state: { health: 20, hunger: 20, experience: 0 } }],
-      timeWeather: { timeOfDay: 6000, weather: 'clear' }, containers: [], furnaces: [], villagerTrades: [], entities: [],
-    },
-  },
-  PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { slots: [ITEM], selectedSlot: 0 } },
-  PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { health: 19, hunger: 18, experience: 0 } },
-  PlayerFishingDelta: { _tag: 'PlayerFishingDelta', world: OVERWORLD, revision: 2, player: ALICE, state: { phase: 'waiting', result: 'cast' } },
-  WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', world: OVERWORLD, revision: 2, state: { timeOfDay: 7000, weather: 'rain' } },
-  ContainerDelta: { _tag: 'ContainerDelta', world: OVERWORLD, revision: 2, state: { containerId: 'chest:1', kind: 'chest', slots: [ITEM] } },
-  FurnaceDelta: { _tag: 'FurnaceDelta', world: OVERWORLD, revision: 2, state: { furnaceId: 'furnace:1', input: ITEM, fuel: null, output: null, burnTicksRemaining: 10, cookTicks: 5 } },
-  VillagerTradeDelta: { _tag: 'VillagerTradeDelta', world: OVERWORLD, revision: 2, state: { villagerId: 'villager:1', offers: [{ offerId: 'offer:1', input: [ITEM], output: { item: 'emerald', count: 1 }, uses: 0, maxUses: 4 }] } },
-  EntitySpawnDelta: { _tag: 'EntitySpawnDelta', world: OVERWORLD, revision: 2, entity: ENTITY },
-  EntityUpdateDelta: { _tag: 'EntityUpdateDelta', world: OVERWORLD, revision: 2, entity: { ...ENTITY, health: 19 } },
-  EntityDespawnDelta: { _tag: 'EntityDespawnDelta', world: OVERWORLD, revision: 2, entityId: ENTITY_ID },
-  LightningStrikeDelta: { _tag: 'LightningStrikeDelta', world: OVERWORLD, revision: 2, at: { x: 3.5, y: 72, z: -4.5 } },
-  EyeOfEnderThrown: {
-    _tag: 'EyeOfEnderThrown', world: OVERWORLD, revision: 2, player: ALICE,
-    origin: { x: 1, y: 65, z: 1 }, target: { x: 100, y: 72, z: 100 }, breaks: false,
-  },
-  PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...COMMAND_HEADER, action: { _tag: 'select-slot', slot: 0 } },
-  PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...COMMAND_HEADER, action: 'respawn' },
   WorldTimeWeatherCommand: { _tag: 'WorldTimeWeatherCommand', ...COMMAND_HEADER, action: { _tag: 'set-time', timeOfDay: 6000 } },
-  ContainerCommand: { _tag: 'ContainerCommand', ...COMMAND_HEADER, containerId: 'chest:1', action: { _tag: 'open' } },
-  FurnaceCommand: { _tag: 'FurnaceCommand', ...COMMAND_HEADER, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 0 }, count: 1 } },
-  VillagerTradeCommand: { _tag: 'VillagerTradeCommand', ...COMMAND_HEADER, villagerId: 'villager:1', offerId: 'offer:1', action: 'execute-trade' },
-  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
-  BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
-  IgniteTntCommand: { _tag: 'IgniteTntCommand', ...COMMAND_HEADER, at: { x: 1, y: 64, z: 0 } },
-  ThrowEyeOfEnderCommand: { _tag: 'ThrowEyeOfEnderCommand', ...COMMAND_HEADER },
-  InsertEyeIntoEndPortalFrameCommand: { _tag: 'InsertEyeIntoEndPortalFrameCommand', ...COMMAND_HEADER, frame: { x: 1, y: 64, z: 0 } },
-  EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
-  NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
-  ToggleLeverCommand: { _tag: 'ToggleLeverCommand', ...COMMAND_HEADER, lever: { x: 1, y: 64, z: 0 } },
-  EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
-  BucketUseCommand: { _tag: 'BucketUseCommand', ...COMMAND_HEADER },
-  VehicleUseCommand: { _tag: 'VehicleUseCommand', ...COMMAND_HEADER },
-  FishingCommand: { _tag: 'FishingCommand', ...COMMAND_HEADER, action: 'cast' },
-  EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
-  VehicleCommand: { _tag: 'VehicleCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, action: 'mount' },
-  AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId: COMMAND_ID, world: OVERWORLD, revision: 2 },
-  AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId: COMMAND_ID, world: OVERWORLD, revision: 1, reason: 'stale-revision', resyncRequired: true },
-  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', world: OVERWORLD, lastKnownRevision: 1 },
-  Ping: { _tag: 'Ping', nonce: 7 },
-  Pong: { _tag: 'Pong', nonce: 7 },
+  WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', revision: 2, state: { timeOfDay: 7000, weather: 'rain' }, world: OVERWORLD },
 }
 
 // ---------------------------------------------------------------------------
@@ -195,30 +185,30 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
  */
 const versionBeforeShape = Effect.sync((): Check => {
   const forged = (message: unknown): string =>
-    JSON.stringify({ protocolVersion: PROTOCOL_VERSION + 1, message })
+    JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION + 1 })
 
   // `counts` is false for the last row: a `protocolVersion` of 1.5 is not a
-  // version anybody speaks, so reporting it as a malformed envelope is
-  // defensible. It is in the table because it comes out of the same ordering,
-  // and leaving it out of the count keeps the finding about the cases that
-  // matter — a peer one build ahead of this one.
+  // Version anybody speaks, so reporting it as a malformed envelope is
+  // Defensible. It is in the table because it comes out of the same ordering,
+  // And leaving it out of the count keeps the finding about the cases that
+  // Matter — a peer one build ahead of this one.
   const cases: ReadonlyArray<{ readonly label: string; readonly text: string; readonly counts: boolean }> = [
     {
+      counts: true,
       label: 'v2, a tag this build knows',
       text: Either.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, SAMPLES.Ping)),
-      counts: true,
     },
-    { label: 'v2, a tag added in the newer build', text: forged({ _tag: 'EntitySnapshot', entities: [] }), counts: true },
-    { label: 'v2, a known tag whose field was renamed', text: forged({ _tag: 'Ping', requestId: 7 }), counts: true },
+    { counts: true, label: 'v2, a tag added in the newer build', text: forged({ _tag: 'EntitySnapshot', entities: [] }) },
+    { counts: true, label: 'v2, a known tag whose field was renamed', text: forged({ _tag: 'Ping', requestId: 7 }) },
     {
+      counts: true,
       label: 'v2, a known tag whose field was widened',
       text: forged({ _tag: 'WorldInfo', world: 'overworld', seed: 1.5 }),
-      counts: true,
     },
     {
+      counts: false,
       label: 'a non-integral protocolVersion (not counted)',
       text: JSON.stringify({ protocolVersion: 1.5, message: SAMPLES.Ping }),
-      counts: false,
     },
   ]
 
@@ -239,9 +229,8 @@ const versionBeforeShape = Effect.sync((): Check => {
   }
 
   return {
-    id: misreported === 0 ? 'ok' : 'M1',
-    title: 'a frame from an unsupported version is reported as malformed as soon as its shape is new',
     finding: misreported > 0,
+    id: misreported === 0 ? 'ok' : 'M1',
     lines: [
       ...rows,
       '',
@@ -261,6 +250,7 @@ const versionBeforeShape = Effect.sync((): Check => {
       '    `reports a version mismatch as a version problem`         uses SAMPLES.PlayerLeave',
       '  A version bump that adds no new message is the one case that works.',
     ],
+    title: 'a frame from an unsupported version is reported as malformed as soon as its shape is new',
   } satisfies Check
 })
 
@@ -308,9 +298,8 @@ const attemptIsConstant = Effect.sync((): Check => {
   const distinct = [...new Set(observed)]
 
   return {
-    id: distinct.length === 1 ? 'M2' : 'ok',
-    title: '`Connecting.attempt` is a constant: seven attempts, one value',
     finding: distinct.length === 1,
+    id: distinct.length === 1 ? 'M2' : 'ok',
     lines: [
       `  attempts observed   ${JSON.stringify(observed)}`,
       `  distinct values     ${JSON.stringify(distinct)}`,
@@ -327,6 +316,7 @@ const attemptIsConstant = Effect.sync((): Check => {
       '  `test/connection.test.ts` asserts `{ Connecting, attempt: 1 }` in four places, which',
       '  pins the constant rather than the counting.',
     ],
+    title: '`Connecting.attempt` is a constant: seven attempts, one value',
   } satisfies Check
 })
 
@@ -383,15 +373,13 @@ const terminalIdempotence = Effect.sync((): Check => {
       rejected += 1
     }
     rows.push(
-      `  ${pad(label, 52)}${pad(result.rejectedAt === undefined ? '-' : String(result.rejectedAt), 13)}` +
-        result.state._tag,
+      `  ${pad(label, 52)}${pad(result.rejectedAt === undefined ? '-' : String(result.rejectedAt), 13)}${result.state._tag}`,
     )
   }
 
   return {
-    id: rejected > 0 ? 'M3' : 'ok',
-    title: 'a settled connection rejects the follow-up events every real socket delivers',
     finding: rejected > 0,
+    id: rejected > 0 ? 'M3' : 'ok',
     lines: [
       ...rows,
       '',
@@ -407,6 +395,7 @@ const terminalIdempotence = Effect.sync((): Check => {
       '  documenting the second, and an adapter written to the documentation will log a bug',
       '  report on every ordinary disconnect.',
     ],
+    title: 'a settled connection rejects the follow-up events every real socket delivers',
   } satisfies Check
 })
 
@@ -429,9 +418,8 @@ const sendGuard = Effect.gen(function* () {
   )
 
   return {
-    id: delivered > 0 ? 'M4' : 'ok',
-    title: 'Connected-only transport gate',
     finding: delivered > 0,
+    id: delivered > 0 ? 'M4' : 'ok',
     lines: [
       `  canSend(Connecting)                 ${String(canSend(beforeHandshake))}`,
       `  canSend(Closed)                     ${String(canSend(closed))}`,
@@ -443,6 +431,7 @@ const sendGuard = Effect.gen(function* () {
       '  TransportError before delegating unless that state is Connected.',
       '  Raw transports remain available for handshake traffic and backward compatibility.',
     ],
+    title: 'Connected-only transport gate',
   } satisfies Check
 })
 
@@ -457,8 +446,8 @@ const loopbackRoundTrip = Effect.gen(function* () {
 
   for (const tag of MESSAGE_TAGS) {
     // `orDie` rather than a handler: every sample here is valid by construction,
-    // so a failure would be a bug in this file and should stop the report rather
-    // than be reported as a finding about the repository.
+    // So a failure would be a bug in this file and should stop the report rather
+    // Than be reported as a finding about the repository.
     yield* sendMessage(SAMPLES[tag]).pipe(Effect.provide(asClient), Effect.orDie)
   }
 
@@ -472,9 +461,8 @@ const loopbackRoundTrip = Effect.gen(function* () {
   const inOrder = order === MESSAGE_TAGS.join(' ')
 
   return {
-    id: failures === 0 && inOrder ? 'ok' : 'M-roundtrip',
-    title: 'every message crosses a real loopback pair and arrives in send order',
     finding: failures > 0 || !inOrder,
+    id: failures === 0 && inOrder ? 'ok' : 'M-roundtrip',
     lines: [
       `  tags sent            ${String(MESSAGE_TAGS.length)}`,
       `  frames received      ${String(frames.length)}`,
@@ -484,6 +472,7 @@ const loopbackRoundTrip = Effect.gen(function* () {
       '  Position updates are absolute, so a reordered pair leaves a peer avatar at the older',
       '  position permanently rather than transiently.',
     ],
+    title: 'every message crosses a real loopback pair and arrives in send order',
   } satisfies Check
 })
 
@@ -504,7 +493,7 @@ const encodeSideValidation = Effect.sync((): Check => {
     ['an infinite coordinate', () =>
       encodeFrame({ ...SAMPLES.PlayerMove, at: { x: Number.POSITIVE_INFINITY, y: 0, z: 0 } })],
     ['a pitch outside ±π/2 (DN-7)', () =>
-      encodeFrame({ ...SAMPLES.PlayerMove, facing: { yawRadians: 0, pitchRadians: 3.2 } })],
+      encodeFrame({ ...SAMPLES.PlayerMove, facing: { pitchRadians: 3.2, yawRadians: 0 } })],
     ['a non-integral block coordinate', () =>
       encodeFrame({ ...SAMPLES.BlockBreak, at: { x: 0.5, y: 1, z: 2 } })],
     ['a 300-character chat (maxLength 256)', () =>
@@ -527,9 +516,8 @@ const encodeSideValidation = Effect.sync((): Check => {
   }
 
   return {
-    id: escaped === 0 ? 'ok' : 'M-encode',
-    title: 'an invalid value fails at the sender, not at the far end (DN-5, DN-7)',
     finding: escaped > 0,
+    id: escaped === 0 ? 'ok' : 'M-encode',
     lines: [
       ...rows,
       '',
@@ -539,6 +527,7 @@ const encodeSideValidation = Effect.sync((): Check => {
       '  ENCODE direction too, so a divide-by-zero on the sender fails where the sender still is',
       '  on the stack, instead of arriving as an undebuggable decode failure with no origin.',
     ],
+    title: 'an invalid value fails at the sender, not at the far end (DN-5, DN-7)',
   } satisfies Check
 })
 
@@ -546,17 +535,17 @@ const encodeSideValidation = Effect.sync((): Check => {
 const contentSkew = Effect.sync((): Check => {
   const unknownBlock = decodeFrame(
     JSON.stringify({
+      message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium', player: 'alice' },
       protocolVersion: PROTOCOL_VERSION,
-      message: { _tag: 'BlockPlace', player: 'alice', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium' },
     }),
   )
   const unknownTag = decodeFrame(
-    JSON.stringify({ protocolVersion: PROTOCOL_VERSION, message: { _tag: 'DetonateEverything' } }),
+    JSON.stringify({ message: { _tag: 'DetonateEverything' }, protocolVersion: PROTOCOL_VERSION }),
   )
   const extraField = decodeFrame(
     JSON.stringify({
-      protocolVersion: PROTOCOL_VERSION,
       message: { _tag: 'Ping', nonce: 4, sentFromChannel: 'team' },
+      protocolVersion: PROTOCOL_VERSION,
     }),
   )
 
@@ -565,9 +554,8 @@ const contentSkew = Effect.sync((): Check => {
   const extraOk = Either.isRight(extraField)
 
   return {
-    id: blockOk && tagRejected && extraOk ? 'ok' : 'M-skew',
-    title: 'an unknown block name decodes; an unknown tag does not (DN-6)',
     finding: !(blockOk && tagRejected && extraOk),
+    id: blockOk && tagRejected && extraOk ? 'ok' : 'M-skew',
     lines: [
       `  unknown block name "unobtainium"     ${blockOk ? 'decoded' : 'REJECTED'}`,
       `  unknown message tag                  ${tagRejected ? 'malformed-frame' : 'accepted'}`,
@@ -579,6 +567,7 @@ const contentSkew = Effect.sync((): Check => {
       '  and it is a default rather than a decision — a future `onExcessProperty: "error"` would',
       '  turn every forward-compatible frame into a parse failure and no test would notice.',
     ],
+    title: 'an unknown block name decodes; an unknown tag does not (DN-6)',
   } satisfies Check
 })
 
@@ -600,9 +589,8 @@ const errorChannels = Effect.gen(function* () {
   const distinct = protocolTag === 'ProtocolError' && transportTag === 'TransportError'
 
   return {
-    id: distinct ? 'ok' : 'M-channels',
-    title: 'a delivered-but-meaningless frame and an undelivered one are different types (DN-2)',
     finding: !distinct,
+    id: distinct ? 'ok' : 'M-channels',
     lines: [
       `  garbage that arrived intact   ${protocolTag}` +
         (Either.isLeft(protocolFailure) ? `(${protocolFailure.left.reason})` : ''),
@@ -613,6 +601,7 @@ const errorChannels = Effect.gen(function* () {
       '  implementation`s single `NetworkError` forced every call site to re-derive the',
       '  distinction from a string, and one of them always gets it wrong.',
     ],
+    title: 'a delivered-but-meaningless frame and an undelivered one are different types (DN-2)',
   } satisfies Check
 })
 
@@ -644,9 +633,8 @@ const noWallClockOnTheWire = Effect.sync((): Check => {
   }
 
   return {
-    id: offenders.length === 0 ? 'ok' : 'M-clock',
-    title: 'no message schema declares a wall-clock field (DN-3)',
     finding: offenders.length > 0,
+    id: offenders.length === 0 ? 'ok' : 'M-clock',
     lines: [
       `  tags swept        ${String(MESSAGE_TAGS.length)}`,
       `  suspicious keys   ${offenders.length === 0 ? 'none' : offenders.join(', ')}`,
@@ -660,6 +648,7 @@ const noWallClockOnTheWire = Effect.sync((): Check => {
       '  be: sweeping whatever MESSAGE_TAGS holds today answers the question today, and keeps',
       '  answering it as the set grows.',
     ],
+    title: 'no message schema declares a wall-clock field (DN-3)',
   } satisfies Check
 })
 
@@ -669,15 +658,14 @@ const droppedFrameIsSilent = Effect.gen(function* () {
   const asClient = LoopbackTransportLayer(client)
 
   // Two sends, of which the app drops the first: the send that "happened" is
-  // the one the sender never learns about.
+  // The one the sender never learns about.
   const encoded = encodeFrame(SAMPLES.PlayerMove)
   const sendResult = yield* Effect.either(sendMessage(SAMPLES.Chat).pipe(Effect.provide(asClient)))
   const waiting = yield* Queue.size(server.inbound)
 
   return {
-    id: 'note',
-    title: 'a dropped frame is indistinguishable from a delivered one, at the sender',
     finding: false,
+    id: 'note',
     lines: [
       `  encodeFrame succeeded            ${String(Either.isRight(encoded))}`,
       `  sendMessage succeeded            ${String(Either.isRight(sendResult))}`,
@@ -689,6 +677,7 @@ const droppedFrameIsSilent = Effect.gen(function* () {
       '  There is no acknowledgement message in MESSAGE_TAGS today, so nothing in this',
       '  repository can currently notice a lost frame.',
     ],
+    title: 'a dropped frame is indistinguishable from a delivered one, at the sender',
   } satisfies Check
 })
 

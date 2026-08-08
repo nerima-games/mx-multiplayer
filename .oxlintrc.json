@@ -99,6 +99,55 @@
     // (adopt a real formatter, or accept oxlint no longer covers this).
     "no-array-method-this-argument": "warn",
     "no-bitwise": "warn",
+    // FOLLOW-UP FIX (2026-08-08): five style/pedantic rules that `categories`
+    // silently turned on repo-wide (correctness/suspicious/perf/style/restriction
+    // all "warn") flood on patterns that are this repository's own idiom, not
+    // defects — verified empirically against `pnpm lint` on this branch:
+    //  - `new-cap`: 159 hits in src/, 100% on Effect's own PascalCase factory
+    //    functions (`Schema.Struct`, `Schema.TaggedStruct`, `Schema.Literal`,
+    //    `Schema.NullOr`, `Schema.Array`, `Schema.Union`, `Data.TaggedError`,
+    //    `Context.Tag`). These are plain functions from the `effect` package,
+    //    called without `new` by design; there is no local identifier to rename
+    //    and no `new` to add without breaking the call. No configurable
+    //    exception list is durable here — every new Effect factory this
+    //    codebase adopts (Schema.Class, Schema.Record, ...) would re-trigger
+    //    the same flood, so the rule is off rather than allow-listed.
+    //  - `func-names`: 58 hits, 100% on `Effect.gen(function* () { ... })`,
+    //    which is Effect's own canonical anonymous-generator idiom (see
+    //    effect's own docs/examples). Naming these was tried and reverted: the
+    //    obvious name is the enclosing `const`, which self-shadows it
+    //    (`no-shadow` then fires on the same line) for zero readability gain,
+    //    since none of these generators recurse by name. oxlint's
+    //    `["warn", "as-needed"]` option (which should exempt non-recursive
+    //    generators) was also tried and verified NOT to suppress this case.
+    //  - `no-underscore-dangle`: 48 hits, 100% on `_tag`, the discriminant
+    //    property Effect's `Schema.TaggedStruct` / `Data.TaggedError` emit for
+    //    every tagged union in this codebase (see domain/connection.ts,
+    //    domain/errors.ts). Scoped with `allow: ["_tag"]` rather than turned
+    //    off, so a genuine stray `_foo` elsewhere still gets caught.
+    //  - `no-undefined`: 48 hits, all on `=== undefined` / `!== undefined`
+    //    checks against `Map#get`-shaped return types (`T | undefined`) and
+    //    `Schema.optional` fields — the idiomatic way TypeScript (and this
+    //    codebase's Effect usage) represents absence. Unlike `no-bitwise`'s
+    //    off-by-exception, this rule has no scoping option; disabled outright.
+    //  - `id-length`: 235 hits mixing genuine short-name smells (relaxed only
+    //    for test/scripts/apps below, per the org policy) with two structural
+    //    cases that also occur in strict src/: 3D coordinate fields (`x`, `y`,
+    //    `z` in `Vec3`/`BlockPos`, matching the wire protocol's own field
+    //    names) and single-letter TypeScript generic parameters. Scoped with
+    //    `exceptions: ["x", "y", "z"]` (verified to suppress exactly the
+    //    coordinate fields); the one generic-parameter hit (frame-contract.ts)
+    //    was a real fix instead — renamed `E` to `Err`.
+    "func-names": "off",
+    "new-cap": "off",
+    "no-undefined": "off",
+    "no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
+    "id-length": ["warn", { "exceptions": ["x", "y", "z"] }],
+    // `/* v8 ignore next */` and friends are @vitest/coverage-v8's directive
+    // Comments (istanbul-compatible); the tool matches the literal lowercase
+    // Text, so capitalizing "v8 ignore" would silently stop the directive from
+    // Being recognized rather than merely look inconsistent.
+    "capitalized-comments": ["warn", "always", { "ignorePattern": "v8 ignore" }],
 
     // Restriction
     "default-case": "warn",
@@ -145,5 +194,45 @@
     "no-param-reassign": "off",
     "no-plusplus": "off"
   },
-  "ignorePatterns": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"]
+  "ignorePatterns": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"],
+  // Org-wide scoped-strictness policy (decided 2026-08-08, first applied to
+  // mc-audio/mc-noise): src/** stays fully strict; test/**, scripts/** and
+  // apps/** (preview/dev tooling) relax the pedantic style rules that fire on
+  // patterns those directories use by design — test assertions using literal
+  // expected values (no-magic-numbers), short loop/tuple identifiers
+  // (id-length), ternaries and prose comments that don't warrant the same
+  // bar as shipped domain code, and generated import/key ordering that a
+  // human wrote by hand once and has no reason to keep re-sorting.
+  //
+  // GOTCHA (verified empirically against oxlint 1.75.0, this repo's pinned
+  // version): a bare directory-relative glob here — `"apps/**"`,
+  // `"test/**"`, or even an exact relative path like
+  // `"apps/preview-two-clients/hud.ts"` — silently matches NOTHING; oxlint
+  // still applies the top-level `rules` unmodified to every file, no error,
+  // no warning, `--print-config` still echoes it back so it looks like it
+  // took. Every pattern below needed an explicit `**/` prefix
+  // (`"**/apps/**"`) before it actually suppressed anything.
+  "overrides": [
+    {
+      "files": ["**/test/**", "**/scripts/**", "**/apps/**"],
+      "rules": {
+        "no-magic-numbers": "off",
+        "id-length": "off",
+        "no-ternary": "off",
+        "no-nested-ternary": "off",
+        "sort-keys": "off",
+        "sort-imports": "off",
+        "capitalized-comments": "off",
+        "no-console": "off",
+        "max-statements": "off",
+        "max-params": "off",
+        "complexity": "off",
+        "no-continue": "off",
+        "default-case": "off",
+        "prefer-template": "off",
+        "no-duplicate-imports": "off",
+        "prefer-destructuring": "off"
+      }
+    }
+  ]
 }

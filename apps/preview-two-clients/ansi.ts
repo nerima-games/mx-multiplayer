@@ -65,18 +65,18 @@ export type Style = {
 }
 
 export const ANSI_STYLE: Style = {
-  paint: (text, color) => `${foreground(color)}${text}${RESET}`,
+  bold: (text) => `${ESC}[1m${text}${ESC}[22m`,
   cell: (text, color, backdrop) =>
     `${backdrop === undefined ? '' : background(backdrop)}${foreground(color)}${text}${RESET}`,
-  bold: (text) => `${ESC}[1m${text}${ESC}[22m`,
   dim: (text) => `${ESC}[2m${text}${ESC}[22m`,
+  paint: (text, color) => `${foreground(color)}${text}${RESET}`,
 }
 
 export const PLAIN_STYLE: Style = {
-  paint: (text) => text,
-  cell: (text) => text,
   bold: (text) => text,
+  cell: (text) => text,
   dim: (text) => text,
+  paint: (text) => text,
 }
 
 /** Interpolate between two colours. Kept for the same reason the copy it came from has it. */

@@ -9,34 +9,34 @@ import {
   sendMessage,
 } from '../src/domain/transport'
 import type { ConnectionState } from '../src/domain/connection'
-import { PROTOCOL_VERSION, PlayerId, PlayerName, WorldId, type NetworkMessage } from '../src/domain/protocol'
+import { type NetworkMessage, PROTOCOL_VERSION, PlayerId, PlayerName, WorldId } from '../src/domain/protocol'
 
 const alice = PlayerId.make('alice')
 
 const join: NetworkMessage = {
   _tag: 'PlayerJoin',
-  player: alice,
-  name: PlayerName.make('Alice'),
   at: { x: 0.5, y: 65, z: 0.5 },
+  name: PlayerName.make('Alice'),
+  player: alice,
 }
 
 const move: NetworkMessage = {
   _tag: 'PlayerMove',
-  player: alice,
   at: { x: 1.25, y: 65, z: -2.5 },
-  facing: { yawRadians: 0.5, pitchRadians: -0.25 },
+  facing: { pitchRadians: -0.25, yawRadians: 0.5 },
+  player: alice,
 }
 
 const worldInfo: NetworkMessage = {
   _tag: 'WorldInfo',
-  world: WorldId.make('overworld'),
   seed: 42,
+  world: WorldId.make('overworld'),
 }
 
 describe('loopback synchronisation', () => {
-  // plan.md §3.14: "プロトコルのユニットテスト + ループバック同期テスト".
+  // Plan.md §3.14: "プロトコルのユニットテスト + ループバック同期テスト".
   // The pair is genuinely two transports, so this exercises encode on one side
-  // and decode on the other — an echo would exercise neither.
+  // And decode on the other — an echo would exercise neither.
   it.effect('delivers a message from one side to the other, decoded and equal', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair
@@ -63,8 +63,8 @@ describe('loopback synchronisation', () => {
   )
 
   // REGRESSION: "frames arrive in send order". Position updates are absolute,
-  // so a reordered pair leaves a peer avatar at the older position permanently
-  // rather than transiently.
+  // So a reordered pair leaves a peer avatar at the older position permanently
+  // Rather than transiently.
   it.effect('preserves send order', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair
@@ -81,7 +81,7 @@ describe('loopback synchronisation', () => {
 
   // REGRESSION: "the Port carries text, not values". If `send` took a
   // NetworkMessage the loopback would pass the object through by reference and
-  // every codec bug would survive every loopback test.
+  // Every codec bug would survive every loopback test.
   it.effect('really serialises: what crosses the queue is protocol text, not the original object', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair
@@ -90,7 +90,7 @@ describe('loopback synchronisation', () => {
       const raw = yield* Queue.take(server.inbound)
 
       expect(typeof raw).toBe('string')
-      expect(JSON.parse(raw)).toStrictEqual({ protocolVersion: PROTOCOL_VERSION, message: move })
+      expect(JSON.parse(raw)).toStrictEqual({ message: move, protocolVersion: PROTOCOL_VERSION })
     }),
   )
 
@@ -150,7 +150,7 @@ describe('transport failure', () => {
 
   // REGRESSION: "a protocol failure and a transport failure stay distinct".
   // The reference implementation had one NetworkError for both, which is how a
-  // malformed packet ends up triggering a reconnect.
+  // Malformed packet ends up triggering a reconnect.
   it.effect('keeps the two failure channels distinguishable at the call site', () =>
     Effect.gen(function* () {
       const [client, server] = yield* makeLoopbackPair

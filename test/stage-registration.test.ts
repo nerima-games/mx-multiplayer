@@ -15,36 +15,37 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Either, Queue, Ref } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
-import { canSend, type ConnectionState } from '../src/domain/connection'
+import { type ConnectionState, canSend } from '../src/domain/connection'
 import {
   DeltaTimeSecs,
-  StageId,
   type GameModule,
+  StageId,
   type StageRegistration,
 } from '../src/domain/frame-contract'
 import {
   BlockPlace,
   Chat,
+  type NetworkMessage,
+  PROTOCOL_VERSION,
   PlayerId,
   PlayerMove,
-  PROTOCOL_VERSION,
   WorldId,
-  type NetworkMessage,
 } from '../src/domain/protocol'
 import {
-  makeLoopbackPair,
   TransportPort,
   type TransportService,
+  disconnectedTransport,
+  makeLoopbackPair,
 } from '../src/domain/transport'
 import {
+  type MultiplayerFrameState,
+  NO_NETWORK_FRAMES,
   makeMultiplayerFrameState,
   makeMultiplayerHost,
   makeMultiplayerStages,
   makeMultiplayerStagesForPreview,
   multiplayerModule,
   multiplayerStages,
-  NO_NETWORK_FRAMES,
-  type MultiplayerFrameState,
 } from '../src/stages/registration'
 import {
   EXPERIENCE_MODULE_STAGE_PREFIXES,
@@ -60,9 +61,9 @@ const alice = PlayerId.make('alice')
 
 const chat: NetworkMessage = Chat.make({ player: alice, text: 'hello' })
 const move: NetworkMessage = PlayerMove.make({
-  player: alice,
   at: { x: 1, y: 2, z: 3 },
-  facing: { yawRadians: 0.5, pitchRadians: -0.25 },
+  facing: { pitchRadians: -0.25, yawRadians: 0.5 },
+  player: alice,
 })
 
 const connected: ConnectionState = {
@@ -84,11 +85,11 @@ const registered = Effect.gen(function* () {
   )
   const byId = new Map(stages.map((stage) => [stage.id, stage]))
   return {
-    state,
-    stages,
-    peer,
     inbound: byId.get(MULTIPLAYER_STAGE_IDS.inbound),
     outbound: byId.get(MULTIPLAYER_STAGE_IDS.outbound),
+    peer,
+    stages,
+    state,
   }
 })
 
@@ -116,11 +117,11 @@ describe('§2.3-1 zero edges between experience modules', () => {
         )
 
         // A peer's `BlockBreak` ends up changing what mx-gameplay simulates and
-        // what mx-ui draws, so an edge to `gameplay:interactions` or
+        // What mx-ui draws, so an edge to `gameplay:interactions` or
         // `ui:hud-sync` would read as obviously correct. It would also pass
         // `pnpm check:deps` — it is a string — while coupling this repository's
-        // frame position to a sibling's existence. §2.3-1 forbids it and the
-        // total order is mc-compose's (§2.3-3).
+        // Frame position to a sibling's existence. §2.3-1 forbids it and the
+        // Total order is mc-compose's (§2.3-3).
         expect(foreign).toStrictEqual([])
       }),
   )
@@ -133,8 +134,8 @@ describe('§2.3-1 zero edges between experience modules', () => {
         )
         expect(isSibling).toBe(false)
       }
-      // mc-sim is this repository's one declared parent (plan.md §2.1), so it is
-      // the only repository whose stages may legally appear here at all.
+      // Mc-sim is this repository's one declared parent (plan.md §2.1), so it is
+      // The only repository whose stages may legally appear here at all.
       expect(Object.values(UPSTREAM_STAGE_IDS)).toStrictEqual([StageId('sim:physics')])
     }),
   )
@@ -153,9 +154,9 @@ describe('§2.3-3 the total order belongs to mc-compose', () => {
 
       // `inbound` must run BEFORE `sim:physics`, and `StageRegistration` has no
       // `before`. So it declares nothing and its position is the skeleton's to
-      // give — `render:input`'s situation exactly. The property is ABSENT rather
-      // than `undefined`: `exactOptionalPropertyTypes` is on and mc-compose's
-      // roster manifest transcribes the distinction.
+      // Give — `render:input`'s situation exactly. The property is ABSENT rather
+      // Than `undefined`: `exactOptionalPropertyTypes` is on and mc-compose's
+      // Roster manifest transcribes the distinction.
       const inbound = byId.get(MULTIPLAYER_STAGE_IDS.inbound)
       expect(Object.keys(inbound ?? {}).sort()).toStrictEqual(['id', 'run'])
       expect('after' in (inbound ?? {})).toBe(false)
@@ -173,10 +174,10 @@ describe('§2.3-3 the total order belongs to mc-compose', () => {
       const ownEdges = allAfterEdges(stages).filter((edge) => edge.startsWith(OWN_STAGE_PREFIX))
 
       // They belong to different phases, so once mc-compose has phases for them
-      // the skeleton chain orders them and an edge here would be redundant — and
-      // a redundant edge is a claim about the global order (mx-gameplay's
-      // stages/stage-ids.ts:50-58). Neither stage's correctness depends on the
-      // other: they touch disjoint state.
+      // The skeleton chain orders them and an edge here would be redundant — and
+      // A redundant edge is a claim about the global order (mx-gameplay's
+      // Stages/stage-ids.ts:50-58). Neither stage's correctness depends on the
+      // Other: they touch disjoint state.
       expect(ownEdges).toStrictEqual([])
     }),
   )
@@ -215,8 +216,8 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       yield* runStage(inbound)
 
       // Value equality, not identity: the messages genuinely went to text and
-      // back through the codec, which is what makes a loopback a real test
-      // double rather than a pass-through (domain/transport.ts's header).
+      // Back through the codec, which is what makes a loopback a real test
+      // Double rather than a pass-through (domain/transport.ts's header).
       expect(yield* Ref.get(state.inbound)).toStrictEqual([chat, move])
       expect((yield* countersOf(state)).received).toBe(2)
     }),
@@ -227,8 +228,8 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       const { state, inbound } = yield* registered
 
       // If this stage used `Queue.take` the test would hang rather than fail,
-      // which is the worst way for a frame stage to be wrong: a blocked stage
-      // stops the whole frame and every later stage looks broken.
+      // Which is the worst way for a frame stage to be wrong: a blocked stage
+      // Stops the whole frame and every later stage looks broken.
       yield* runStage(inbound, ZERO_DT)
 
       expect(yield* Ref.get(state.inbound)).toStrictEqual([])
@@ -267,9 +268,9 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       yield* runStage(inbound)
 
       // The two need different handling — drop the frame vs drop the PEER and
-      // tell the user — so a single counter would make a rolling upgrade
-      // indistinguishable from corruption, which is the defect the versioned
-      // envelope exists to fix.
+      // Tell the user — so a single counter would make a rolling upgrade
+      // Indistinguishable from corruption, which is the defect the versioned
+      // Envelope exists to fix.
       const counters = yield* countersOf(state)
       expect(counters.versionMismatched).toBe(1)
       expect(counters.malformed).toBe(0)
@@ -281,9 +282,9 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
     Effect.gen(function* () {
       const { state, peer, inbound } = yield* registered
       const fromNewerPeer: NetworkMessage = BlockPlace.make({
-        player: alice,
         at: { x: 0, y: 0, z: 0 },
         block: 'SCULK_SHRIEKER_FROM_A_NEWER_BUILD',
+        player: alice,
       })
 
       yield* Either.match(encodeFrame(fromNewerPeer), {
@@ -293,9 +294,9 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       yield* runStage(inbound)
 
       // "Your client is older than mine" must not become a parse error, and the
-      // stage must not be the thing that decides an unknown block is a problem —
-      // that judgement belongs to whoever owns the block vocabulary. Carried
-      // verbatim is the whole behaviour.
+      // Stage must not be the thing that decides an unknown block is a problem —
+      // That judgement belongs to whoever owns the block vocabulary. Carried
+      // Verbatim is the whole behaviour.
       expect(yield* Ref.get(state.inbound)).toStrictEqual([fromNewerPeer])
     }),
   )
@@ -335,7 +336,7 @@ describe('multiplayer:outbound — queue-level connection gate', () => {
         yield* runStage(outbound)
 
         // The stage drops before encoding; adapters independently enforce the
-        // same invariant by providing `connectionGatedTransport` as the Port.
+        // Same invariant by providing `connectionGatedTransport` as the Port.
         expect(yield* drainPeer(peer)).toStrictEqual([])
         expect((yield* countersOf(state)).droppedWhileNotConnected).toBe(1)
       }),
@@ -371,12 +372,12 @@ describe('multiplayer:outbound — queue-level connection gate', () => {
         yield* runStage(outbound) // Connected, and the outbox is empty.
 
         // Holding it would replay a stale world: every position the player
-        // passed through, in order, as fast as the socket allows. This
-        // repository cannot tell a stale message from a durable one without
-        // reading it (plan.md §3.14), so the policy has to be
-        // content-independent — and of the two content-independent policies,
-        // only "drop" cannot produce a replay. Same argument as mc-sim's
-        // dropping frame queue.
+        // Passed through, in order, as fast as the socket allows. This
+        // Repository cannot tell a stale message from a durable one without
+        // Reading it (plan.md §3.14), so the policy has to be
+        // Content-independent — and of the two content-independent policies,
+        // Only "drop" cannot produce a replay. Same argument as mc-sim's
+        // Dropping frame queue.
         expect(yield* drainPeer(peer)).toStrictEqual([])
         expect((yield* countersOf(state)).sent).toBe(0)
       }),
@@ -393,6 +394,46 @@ describe('multiplayer:outbound — queue-level connection gate', () => {
       expect(yield* countersOf(state)).toStrictEqual(NO_NETWORK_FRAMES)
     }),
   )
+
+  it.effect('counts a message that fails to encode as unencodable, and does not send it', () =>
+    Effect.gen(function* () {
+      const { state, peer, outbound } = yield* registered
+      // A branded invariant violated locally (see codec.test.ts and
+      // Preview-findings.test.ts's "an invalid value fails at the sender"):
+      // `at.x` fails `Vec3`'s `finite()` refinement, so `encodeFrame` returns
+      // `Left`. `as` bypasses the type system the same way a bug that produced
+      // This value in production would.
+      const unencodable = {
+        _tag: 'PlayerMove',
+        at: { x: Number.NaN, y: 0, z: 0 },
+        facing: { pitchRadians: 0, yawRadians: 0 },
+        player: alice,
+      } as NetworkMessage
+
+      yield* Ref.set(state.connection, connected)
+      yield* Ref.set(state.outbox, [unencodable])
+      yield* runStage(outbound)
+
+      expect(yield* drainPeer(peer)).toStrictEqual([])
+      expect((yield* countersOf(state)).unencodable).toBe(1)
+    }),
+  )
+
+  it.effect('counts a transport-rejected send as sendFailed, distinct from unencodable', () =>
+    Effect.gen(function* () {
+      const state = yield* makeMultiplayerFrameState
+      const transport = yield* disconnectedTransport
+      const stages = multiplayerStages(state, transport)
+      const outbound = stages.find((stage) => stage.id === MULTIPLAYER_STAGE_IDS.outbound)
+
+      yield* Ref.set(state.connection, connected)
+      yield* Ref.set(state.outbox, [chat])
+      yield* runStage(outbound)
+
+      expect((yield* countersOf(state)).sendFailed).toBe(1)
+      expect((yield* countersOf(state)).sent).toBe(0)
+    }),
+  )
 })
 
 describe('the stages are re-entrant and hold nothing globally', () => {
@@ -400,7 +441,7 @@ describe('the stages are re-entrant and hold nothing globally', () => {
     Effect.gen(function* () {
       // `apps/preview-two-clients` runs two sessions in one process on purpose.
       // A shared outbox would not be a subtle bug — it would be one client
-      // sending the other's frames.
+      // Sending the other's frames.
       const first = yield* makeMultiplayerFrameState
       const second = yield* makeMultiplayerFrameState
 
@@ -428,8 +469,8 @@ describe('the stages are re-entrant and hold nothing globally', () => {
       yield* runStage(first.stages[0])
 
       // The first registration drained the queue, so the second sees nothing —
-      // which is the honest consequence of one transport and two consumers, and
-      // is why a host builds one module rather than two.
+      // Which is the honest consequence of one transport and two consumers, and
+      // Is why a host builds one module rather than two.
       yield* runStage(second.stages[0])
 
       expect(yield* Ref.get(first.state.inbound)).toStrictEqual([chat])
@@ -537,9 +578,9 @@ describe('mx-multiplayer is a real GameModule', () => {
   it.effect('REGRESSION: exports a GameModule whose RRegister is TransportPort and whose ROut is never', () =>
     Effect.gen(function* () {
       // The clearest case in the roster for `RRegister` being its own parameter:
-      // mc-render acquires a service it PROVIDES, this repository acquires one
-      // it merely DEFINES. `ROut` stays `never` — a Layer here would be this
-      // repository shipping a socket.
+      // Mc-render acquires a service it PROVIDES, this repository acquires one
+      // It merely DEFINES. `ROut` stays `never` — a Layer here would be this
+      // Repository shipping a socket.
       const module: GameModule<never, never, never, TransportPort> = multiplayerModule
       const [left] = yield* makeLoopbackPair
 

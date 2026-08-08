@@ -1,5 +1,5 @@
 /**
- * mx-multiplayer's contribution to the frame (plan.md §4.1).
+ * Mx-multiplayer's contribution to the frame (plan.md §4.1).
  *
  * ---------------------------------------------------------------------------
  * Read `stage-ids.ts` first
@@ -37,19 +37,19 @@
  * the transport boundary explicit for the preview and its contract tests.
  */
 import { Chunk, Effect, Either, Layer, Queue, Ref } from 'effect'
-import { decodeFrame, encodeFrame } from '../domain/codec'
 import {
+  type ConnectionEvent,
+  type ConnectionState,
   canSend,
   initialConnectionState,
   transition,
-  type ConnectionEvent,
-  type ConnectionState,
 } from '../domain/connection'
-import type { ProtocolError } from '../domain/errors'
 import type { GameModule, StageRegistration } from '../domain/frame-contract'
-import type { NetworkMessage } from '../domain/protocol'
-import { TransportPort, type TransportService } from '../domain/transport'
 import { MULTIPLAYER_STAGE_IDS, UPSTREAM_STAGE_IDS } from './stage-ids'
+import { TransportPort, type TransportService } from '../domain/transport'
+import { decodeFrame, encodeFrame } from '../domain/codec'
+import type { NetworkMessage } from '../domain/protocol'
+import type { ProtocolError } from '../domain/errors'
 
 /**
  * What one frame's worth of network work did.
@@ -97,14 +97,17 @@ export type NetworkFrameCounters = {
 }
 
 export const NO_NETWORK_FRAMES: NetworkFrameCounters = {
-  received: 0,
+  droppedWhileNotConnected: 0,
   malformed: 0,
-  versionMismatched: 0,
+  received: 0,
+  sendFailed: 0,
   sent: 0,
   unencodable: 0,
-  sendFailed: 0,
-  droppedWhileNotConnected: 0,
+  versionMismatched: 0,
 }
+
+/** Every counter field on `NetworkFrameCounters` advances by exactly one per event. */
+const COUNTER_INCREMENT = 1
 
 export type MultiplayerFrameState = {
   /**
@@ -148,7 +151,7 @@ export const makeMultiplayerFrameState: Effect.Effect<MultiplayerFrameState> = E
     const inbound = yield* Ref.make<ReadonlyArray<NetworkMessage>>([])
     const counters = yield* Ref.make(NO_NETWORK_FRAMES)
 
-    return { connection, outbox, inbound, counters }
+    return { connection, counters, inbound, outbox }
   },
 )
 
@@ -156,11 +159,12 @@ const countProtocolFailure = (
   state: MultiplayerFrameState,
   error: ProtocolError,
 ): Effect.Effect<void> =>
-  Ref.update(state.counters, (current) =>
-    error.reason === 'unsupported-protocol-version'
-      ? { ...current, versionMismatched: current.versionMismatched + 1 }
-      : { ...current, malformed: current.malformed + 1 },
-  )
+  Ref.update(state.counters, (current) => {
+    if (error.reason === 'unsupported-protocol-version') {
+      return { ...current, versionMismatched: current.versionMismatched + COUNTER_INCREMENT }
+    }
+    return { ...current, malformed: current.malformed + COUNTER_INCREMENT }
+  })
 
 /**
  * The two stages mx-multiplayer registers.
@@ -178,18 +182,18 @@ export const multiplayerStages = (
   {
     id: MULTIPLAYER_STAGE_IDS.inbound,
     // No `after`. Its requirement is to run BEFORE `sim:physics`, and the
-    // contract has no `before` — see `stage-ids.ts`. This is `render:input`'s
-    // situation exactly, and `render:input` declares no `after` either.
+    // Contract has no `before` — see `stage-ids.ts`. This is `render:input`'s
+    // Situation exactly, and `render:input` declares no `after` either.
     run: () =>
       Effect.gen(function* () {
         // `takeAll`, not `take`: `take` blocks until a frame arrives, and a
-        // stage that blocks stops the frame. Draining whatever is there is also
-        // what makes the queue's back-pressure meaningful — the consumer keeps
-        // up by definition, once per frame.
+        // Stage that blocks stops the frame. Draining whatever is there is also
+        // What makes the queue's back-pressure meaningful — the consumer keeps
+        // Up by definition, once per frame.
         //
         // Everything that had arrived by the time this frame started is applied
-        // in this frame. A frame that lands mid-drain is taken next frame, which
-        // is the same "belongs to the frame that saw it" rule mc-render's
+        // In this frame. A frame that lands mid-drain is taken next frame, which
+        // Is the same "belongs to the frame that saw it" rule mc-render's
         // `render:input` applies to input edges.
         const frames = yield* Queue.takeAll(transport.inbound)
 
@@ -199,18 +203,18 @@ export const multiplayerStages = (
             Either.match(decodeFrame(frame), {
               // A frame this build cannot read is DROPPED, not retried:
               // `ProtocolError` means the bytes arrived intact and do not mean
-              // what this build thinks they mean, so a resend produces the same
-              // bytes (DN-2). What the counter separates is whether the right
-              // response is to drop the frame or the peer (DN-1).
+              // What this build thinks they mean, so a resend produces the same
+              // Bytes (DN-2). What the counter separates is whether the right
+              // Response is to drop the frame or the peer (DN-1).
               onLeft: (error) => countProtocolFailure(state, error),
               // The transport seam. The host/session adapter drains this queue
-              // and applies the message through mc-sim and mx-gameplay.
+              // And applies the message through mc-sim and mx-gameplay.
               onRight: (message) =>
                 Ref.update(state.inbound, (pending) => [...pending, message]).pipe(
                   Effect.zipRight(
                     Ref.update(state.counters, (current) => ({
                       ...current,
-                      received: current.received + 1,
+                      received: current.received + COUNTER_INCREMENT,
                     })),
                   ),
                 ),
@@ -220,36 +224,36 @@ export const multiplayerStages = (
       }),
   },
   {
-    id: MULTIPLAYER_STAGE_IDS.outbound,
     after: [UPSTREAM_STAGE_IDS.simPhysics],
+    id: MULTIPLAYER_STAGE_IDS.outbound,
     // Publish the position the simulation RESOLVED this frame. Publishing the
-    // pre-integration one puts every peer's view of this player a frame behind,
-    // which reads as network lag rather than as a bug — mc-render's argument for
+    // Pre-integration one puts every peer's view of this player a frame behind,
+    // Which reads as network lag rather than as a bug — mc-render's argument for
     // `render:camera-mirror`, pointed outwards.
     run: () =>
       Effect.gen(function* () {
         const connection = yield* Ref.get(state.connection)
 
         // Drained unconditionally, and that is the drop policy rather than an
-        // oversight.
+        // Oversight.
         //
         // A message in this outbox describes THIS frame. Holding it across a
-        // disconnect means replaying a stale world on reconnect — every position
-        // the player passed through, in order, as fast as the socket allows —
-        // and mx-multiplayer cannot tell a stale message from a durable one
-        // without reading it, which plan.md §3.14 forbids. So the policy has to
-        // be content-independent, and of the two content-independent policies
+        // Disconnect means replaying a stale world on reconnect — every position
+        // The player passed through, in order, as fast as the socket allows —
+        // And mx-multiplayer cannot tell a stale message from a durable one
+        // Without reading it, which plan.md §3.14 forbids. So the policy has to
+        // Be content-independent, and of the two content-independent policies
         // "drop" is the one that cannot produce a replay. Anything that must
-        // survive a disconnect is re-offered by its owner after the handshake,
-        // which is the only party that knows it must.
+        // Survive a disconnect is re-offered by its owner after the handshake,
+        // Which is the only party that knows it must.
         //
         // Same argument as `application/game-loop.ts`'s dropping frame queue in
-        // mc-sim: under adverse conditions, lose work rather than accumulate a
-        // backlog the world then replays in fast-forward.
+        // Mc-sim: under adverse conditions, lose work rather than accumulate a
+        // Backlog the world then replays in fast-forward.
         const pending = yield* Ref.getAndSet(state.outbox, [])
 
         // Avoid queueing work while disconnected even when the supplied
-        // transport also applies the Connected-only boundary gate.
+        // Transport also applies the Connected-only boundary gate.
         if (!canSend(connection)) {
           yield* Ref.update(state.counters, (current) => ({
             ...current,
@@ -263,32 +267,32 @@ export const multiplayerStages = (
           (message) =>
             Either.match(encodeFrame(message), {
               // A message that will not encode is a LOCAL bug — a branded
-              // invariant was violated on this side — so there is nothing to
-              // resend and nobody to blame for it at the far end. Counted apart
-              // from `sendFailed` for that reason.
+              // Invariant was violated on this side — so there is nothing to
+              // Resend and nobody to blame for it at the far end. Counted apart
+              // From `sendFailed` for that reason.
               onLeft: () =>
                 Ref.update(state.counters, (current) => ({
                   ...current,
-                  unencodable: current.unencodable + 1,
+                  unencodable: current.unencodable + COUNTER_INCREMENT,
                 })),
               onRight: (frame) =>
                 transport.send(frame).pipe(
                   Effect.matchEffect({
                     // `TransportError`: the bytes did not get through and the
-                    // message is still valid. Retrying is the right response and
-                    // it belongs to whoever owns the socket's `Schedule` (DN-8
-                    // keeps retry policy out of this repository's domain), so
-                    // the stage records it and moves on rather than blocking the
-                    // frame on a socket.
+                    // Message is still valid. Retrying is the right response and
+                    // It belongs to whoever owns the socket's `Schedule` (DN-8
+                    // Keeps retry policy out of this repository's domain), so
+                    // The stage records it and moves on rather than blocking the
+                    // Frame on a socket.
                     onFailure: () =>
                       Ref.update(state.counters, (current) => ({
                         ...current,
-                        sendFailed: current.sendFailed + 1,
+                        sendFailed: current.sendFailed + COUNTER_INCREMENT,
                       })),
                     onSuccess: () =>
                       Ref.update(state.counters, (current) => ({
                         ...current,
-                        sent: current.sent + 1,
+                        sent: current.sent + COUNTER_INCREMENT,
                       })),
                   }),
                 ),
@@ -322,7 +326,7 @@ export const makeMultiplayerStages: Effect.Effect<
 })
 
 /**
- * mx-multiplayer as a `GameModule` (plan.md §4.1).
+ * Mx-multiplayer as a `GameModule` (plan.md §4.1).
  *
  *   ROut      = never          — this module provides no service
  *   E         = never
@@ -334,8 +338,8 @@ export const makeMultiplayerStages: Effect.Effect<
  * provides it, and a Layer here would be this repository shipping a socket.
  */
 export const multiplayerModule: GameModule<never, never, never, TransportPort> = {
-  layers: Layer.empty,
   frameStages: makeMultiplayerStages,
+  layers: Layer.empty,
 }
 
 /**
@@ -362,7 +366,7 @@ export const makeMultiplayerStagesForPreview: Effect.Effect<
 > = Effect.gen(function* () {
   const transport = yield* TransportPort
   const state = yield* makeMultiplayerFrameState
-  return { state, stages: multiplayerStages(state, transport) }
+  return { stages: multiplayerStages(state, transport), state }
 })
 
 /**
@@ -420,15 +424,15 @@ export const makeMultiplayerHost: Effect.Effect<MultiplayerHost, never, Transpor
       })
 
     return {
-      stages,
-      module: {
-        layers: Layer.empty,
-        frameStages: Effect.succeed(stages),
-      },
+      connectionSnapshot: Ref.get(state.connection),
+      countersSnapshot: Ref.get(state.counters),
       drainInbound,
       enqueueOutbound,
-      connectionSnapshot: Ref.get(state.connection),
+      module: {
+        frameStages: Effect.succeed(stages),
+        layers: Layer.empty,
+      },
+      stages,
       transitionConnection,
-      countersSnapshot: Ref.get(state.counters),
     }
   })

@@ -2,8 +2,8 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import {
   PlayerId,
-  SnapshotInterpolator,
   type PlayerTransformSnapshot,
+  SnapshotInterpolator,
 } from '../src/index'
 
 const alice = PlayerId.make('alice')
@@ -14,10 +14,10 @@ const snapshot = (
   x: number,
   yawRadians = 0,
 ): PlayerTransformSnapshot => ({
+  at: { x, y: 64, z: 0 },
+  facing: { pitchRadians: 0, yawRadians },
   sequence,
   tick,
-  at: { x, y: 64, z: 0 },
-  facing: { yawRadians, pitchRadians: 0 },
 })
 
 const makeSubject = (historyLimit = 4, teleportDistance = 16) =>
@@ -57,7 +57,7 @@ describe('deterministic interpolation', () => {
       subject.ingest(alice, snapshot(1, 10, 0, Math.PI * 0.9))
       subject.ingest(alice, {
         ...snapshot(2, 20, 10, -Math.PI * 0.9),
-        facing: { yawRadians: -Math.PI * 0.9, pitchRadians: 1 },
+        facing: { pitchRadians: 1, yawRadians: -Math.PI * 0.9 },
       })
 
       const first = subject.sample(alice, 15)
@@ -85,6 +85,24 @@ describe('deterministic interpolation', () => {
       expect(subject.sample(alice, 999)).toBe(after)
     }),
   )
+
+  it.effect('snaps a mid-history teleport to the later side when renderTick lands exactly on its tick', () =>
+    Effect.sync(() => {
+      const subject = makeSubject(4, 8)
+      const before = snapshot(1, 10, 0)
+      const teleported = snapshot(2, 20, 100)
+      const after = snapshot(3, 30, 101)
+      subject.ingest(alice, before)
+      subject.ingest(alice, teleported)
+      subject.ingest(alice, after)
+
+      // renderTick sits strictly between the buffer's endpoints (10 and 30), so
+      // the boundary check does not intercept it; it lands exactly on the
+      // teleporting pair's later tick, which is the case boundary checks alone
+      // cannot cover.
+      expect(subject.sample(alice, 20)).toBe(teleported)
+    }),
+  )
 })
 
 describe('disconnect cleanup', () => {
@@ -100,6 +118,15 @@ describe('disconnect cleanup', () => {
 
       subject.disconnect()
       expect(subject.historySize(bob)).toBe(0)
+    }),
+  )
+
+  it.effect('refuses to sample a non-finite renderTick rather than propagating NaN into the result', () =>
+    Effect.sync(() => {
+      const subject = makeSubject()
+      subject.ingest(alice, snapshot(1, 10, 0))
+      expect(subject.sample(alice, Number.NaN)).toBeUndefined()
+      expect(subject.sample(alice, Number.POSITIVE_INFINITY)).toBeUndefined()
     }),
   )
 
