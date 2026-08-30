@@ -32,11 +32,9 @@ export * from './domain/transport.js'
 export * from './stages/registration.js'
 export * from './stages/stage-ids.js'
 
-// `domain/frame-contract.ts` is a temporary local stand-in for
-// @nerima-games/mc-kernel and is NOT re-exported: it carries a deletion date
-// (see its "WHY THIS FILE EXISTS AND WHEN IT DIES" header), and re-exporting it
-// Would make `StageId`, `DeltaTimeSecs` and `StageRegistration` part of THIS
-// Package's published surface — so a consumer would still be importing them
-// From here on the day the file is deleted. They appear in `api-lock.md`'s
-// "supporting declarations" section instead: not exported, but named by an
-// Export. mx-gameplay and mx-redstone make the same call for the same reason.
+// `StageId`, `DeltaTimeSecs`, `StageRegistration` and `GameModule` come from
+// @nerima-games/mc-kernel and are deliberately NOT re-exported here: doing so
+// Would make them part of THIS package's published surface, and a consumer
+// That took them from here rather than from kernel would be depending on this
+// Package for kernel's own types. mx-gameplay and mx-redstone make the same
+// Call for the same reason.

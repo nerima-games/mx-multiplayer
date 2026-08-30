@@ -44,7 +44,7 @@ import {
   initialConnectionState,
   transition,
 } from '../domain/connection.js'
-import type { GameModule, StageRegistration } from '../domain/frame-contract.js'
+import type { GameModule, StageRegistration } from '@nerima-games/mc-kernel'
 import { MULTIPLAYER_STAGE_IDS, UPSTREAM_STAGE_IDS } from './stage-ids.js'
 import { TransportPort, type TransportService } from '../domain/transport.js'
 import { decodeFrame, encodeFrame } from '../domain/codec.js'
