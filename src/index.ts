@@ -13,24 +13,24 @@
  * writing through an mc-sim service, never by calling into a rules module.
  */
 
-export * from './domain/codec'
-export * from './domain/authoritative-sync'
-export * from './domain/authoritative-session'
-export * from './domain/connection'
-export * from './domain/errors'
-export * from './domain/hunger-authority'
-export * from './domain/protocol'
-export * from './domain/snapshot-interpolation'
-export * from './domain/survival-authority'
-export * from './domain/transport'
+export * from './domain/codec.js'
+export * from './domain/authoritative-sync.js'
+export * from './domain/authoritative-session.js'
+export * from './domain/connection.js'
+export * from './domain/errors.js'
+export * from './domain/hunger-authority.js'
+export * from './domain/protocol.js'
+export * from './domain/snapshot-interpolation.js'
+export * from './domain/survival-authority.js'
+export * from './domain/transport.js'
 
 // --- Stages: this repository's contribution to the frame ---------------------
 //
 // `multiplayerModule` is what a host merges; `MULTIPLAYER_STAGE_IDS` is what a
 // Consumer names. mc-compose's standard stage skeleton owns their placement:
 // Inbound precedes simulation and outbound follows authoritative simulation.
-export * from './stages/registration'
-export * from './stages/stage-ids'
+export * from './stages/registration.js'
+export * from './stages/stage-ids.js'
 
 // `domain/frame-contract.ts` is a temporary local stand-in for
 // @nerima-games/mc-kernel and is NOT re-exported: it carries a deletion date

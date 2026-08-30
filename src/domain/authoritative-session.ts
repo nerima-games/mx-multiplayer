@@ -6,7 +6,7 @@ import type {
   CommandRejectionReason,
   PlayerId,
   WorldId,
-} from './protocol'
+} from './protocol.js'
 
 export type CommandDecision =
   | { readonly accepted: true }

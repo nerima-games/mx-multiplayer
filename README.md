@@ -74,15 +74,18 @@ Clock Port の実装アダプタ自身だけは実クロックを読む必要が
 ### セットアップ
 
 ```console
-$ direnv allow          # flake.nix の devShell で nodejs_24 + corepack が入る
-$ pnpm install
+$ direnv allow                             # flake.nix の devShell で nodejs_24 + corepack_24 + oxlint + ast-grep が入る
+$ NODE_AUTH_TOKEN=$(gh auth token) pnpm install   # @nerima-games/mc-sim を GitHub Packages から解決する
 ```
 
-Nix を使わない場合は Node.js 24 以上と pnpm 11(`corepack` 推奨)を用意する。
+Nix を使わない場合は Node.js 24 以上と pnpm 11.24.0 以上(`corepack` 推奨)を用意する。
+ただし `oxlint` と `ast-grep` は Nix の devShell からのみ供給される(npm devDependency ではない、
+org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint` は `nix develop --command` 経由で走らせる。
 
-> **注意**: ツールチェーンは `devenv.nix` から `flake.nix` + `flake.lock` に移行済みである。
-> `flake.lock` はコミットされているので、`nix develop`（`.envrc` は `use flake`）は
-> 誰の手元でも同じ nixpkgs に解決される。`devenv.nix` / `devenv.lock` はもう存在しない。
+> **注意**: ツールチェーンは `flake.nix` + `flake.lock` で管理する。`flake.lock` はコミットされているので、
+> `nix develop`（`.envrc` は `use flake`）は誰の手元でも同じ nixpkgs に解決される。
+> `flake.lock` は `nixpkgs` を特定リビジョンにロックしている(oxlint ≥1.79.0 の
+> `no-redeclare` が本リポジトリの `Brand.refined` イディオムを誤検知するため。flake.nix のコメント参照)。
 
 ### コマンド
 

@@ -1,9 +1,17 @@
 {
-  description = "mx-multiplayer: Network synchronisation for the nerima-games Minecraft-clone rebuild: wire protocol, frame codec, connection state machine and the transport Port. Transport and protocol only — multiplayer screens belong to mx-ui.";
+  description = "mx-multiplayer: Network synchronisation for the nerima-games Minecraft-clone rebuild: wire protocol, frame codec, connection state machine, snapshot interpolation and the transport Port. Multiplayer screens belong to mx-ui.";
 
   inputs = {
     # nixos-unstable, not nixpkgs-unstable: it advances only after the NixOS
     # release tests pass, so it is less likely to land a broken build.
+    #
+    # flake.lock is pinned (via `nix flake lock --override-input nixpkgs
+    # github:NixOS/nixpkgs/624af665418d3c65d544145b4d34ad696439570e`, not
+    # `nix flake update`) to the last revision before nixos-unstable's oxlint
+    # moved to >=1.79.0: that version's `no-redeclare` false-positives on the
+    # `type X = ... & Brand` + `const X = Brand.refined(...)` idiom used
+    # throughout this repository's `effect` Brand types (A/B-proven against
+    # 1.75.0, which is clean). Re-check this pin on the next toolchain bump.
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
@@ -32,23 +40,24 @@
           # the `packageManager` field in package.json — one source of truth
           # instead of two that can drift.
           #
-          # oxlint is the opposite case: it is NOT a package.json devDependency.
-          # It used to be, and every repo in the org independently drifted onto
-          # a different version without anyone noticing. A single pinned
-          # Nix-provided oxlint is the one source of truth instead of 16
-          # independently-drifting npm pins.
+          # oxlint and ast-grep are NOT package.json devDependencies. They used
+          # to be, and every repo in the org independently drifted onto a
+          # different version without anyone noticing. A single pinned
+          # Nix-provided oxlint/ast-grep is the one source of truth instead of
+          # 16 independently-drifting npm pins.
           default = pkgs.mkShell {
             packages = [
               pkgs.nodejs_24
               pkgs.corepack_24
               pkgs.typescript-language-server
               pkgs.oxlint
+              pkgs.ast-grep
             ];
 
             shellHook = ''
-              mkdir -p "$PWD/.corepack"
-              corepack enable --install-directory "$PWD/.corepack"
-              export PATH="$PWD/.corepack:$PATH"
+              corepackDir="$(mktemp -d "''${TMPDIR:-/tmp}/mx-multiplayer-corepack.XXXXXX")"
+              corepack enable --install-directory "$corepackDir"
+              export PATH="$corepackDir:$PATH"
             '';
           };
         }

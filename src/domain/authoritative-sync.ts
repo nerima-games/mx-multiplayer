@@ -1,4 +1,4 @@
-import type { WorldId, WorldSnapshot } from './protocol'
+import type { WorldId, WorldSnapshot } from './protocol.js'
 
 export type RevisionAdmission =
   | { readonly accepted: true; readonly revision: number }

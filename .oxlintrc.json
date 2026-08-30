@@ -173,12 +173,14 @@
         ],
         "patterns": [
           {
-            "regex": "^@nerima-games/(mx-gameplay|mx-redstone|mx-ui)(/.*)?$",
-            "message": "Tier3 experience modules do not depend on each other laterally (DEPENDENCY_POLICY.md §2). Talk through mc-sim instead."
-          },
-          {
-            "regex": "^@nerima-games/(mc-worldgen|mc-render|mc-meshing|mc-noise|mc-physics|mc-save|mc-audio|mc-playground-kit|mc-compose|mc-dev-meta)(/.*)?$",
-            "message": "mx-multiplayer (Tier3, DEPENDENCY_POLICY.md) may depend only on mc-sim and mc-kernel."
+            "group": [
+              "@nerima-games/**",
+              "!@nerima-games/mc-kernel",
+              "!@nerima-games/mc-kernel/**",
+              "!@nerima-games/mc-sim",
+              "!@nerima-games/mc-sim/**"
+            ],
+            "message": "mx-multiplayer is Tier3 (DEPENDENCY_POLICY.md §1); only the listed packages may be imported."
           }
         ]
       }

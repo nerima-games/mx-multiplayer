@@ -199,6 +199,13 @@ describe('§2.3-3 the total order belongs to mc-compose', () => {
       expect(StageId('multiplayer:inbound')).toBe('multiplayer:inbound')
     }),
   )
+
+  it.effect('DeltaTimeSecs accepts zero and rejects a negative delta', () =>
+    Effect.sync(() => {
+      expect(() => DeltaTimeSecs(-1)).toThrow()
+      expect(DeltaTimeSecs(0)).toBe(0)
+    }),
+  )
 })
 
 describe('multiplayer:inbound — decode, do not interpret', () => {

@@ -20,7 +20,7 @@
  * and before rendering. Keeping that placement outside this package prevents a
  * transport package from claiming gameplay or presentation authority.
  */
-import { StageId } from '../domain/frame-contract'
+import { StageId } from '../domain/frame-contract.js'
 
 /**
  * Stages owned by mx-multiplayer.
@@ -47,7 +47,7 @@ import { StageId } from '../domain/frame-contract'
  * other: `inbound` drains the transport's receive queue and `outbound` drains an
  * outbox, and no read of either depends on the other having run.
  */
-export const MULTIPLAYER_STAGE_IDS = {
+export const MULTIPLAYER_STAGE_IDS: { readonly inbound: StageId; readonly outbound: StageId } = {
   /**
    * Drain the transport's inbound queue, decode each frame, and hand the
    * decoded messages to the seam.
@@ -111,7 +111,7 @@ export const MULTIPLAYER_STAGE_IDS = {
  *   position to a sibling's existence. `test/stage-registration.test.ts` closes
  *   that gap.
  */
-export const UPSTREAM_STAGE_IDS = {
+export const UPSTREAM_STAGE_IDS: { readonly simPhysics: StageId } = {
   simPhysics: StageId('sim:physics'),
 } as const
 

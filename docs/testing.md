@@ -93,11 +93,9 @@ it.effect('rejects a coordinate that arrived as null, which is what a NaN turns 
 
 ## 6. カバレッジ
 
-計測は常に動いている(`pnpm test:coverage`)が、**閾値は未設定**。
-
-参照実装は 99% を強制しているが、スケルトンに閾値を課しても意味がない
-— 型定義だけのモジュール数本で簡単に満たせてしまい、実装について何も言わない。
-99% ゲートは完成条件到達時に `vitest.config.ts` と CI の両方で有効化する。
+計測は `pnpm test:coverage` で常に動く。**閾値は 4 指標(branches/functions/lines/statements)とも
+100% で有効**(`vitest.config.ts` の `coverage.thresholds`、org 標準 plan.md §2.2/§2.8、Wave 0)。
+CI では `Coverage` step が同じコマンドを実行し、非ゼロ終了でゲートになる。
 
 ## 7. まだ書いていないテスト
 

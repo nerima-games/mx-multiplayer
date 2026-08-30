@@ -1,5 +1,5 @@
 /* eslint-disable class-methods-use-this, curly, id-length, max-statements, no-continue, no-magic-numbers, no-ternary, no-undefined, no-underscore-dangle, sort-keys -- Authority validation is intentionally linear and command tags follow the public protocol. */
-import type { PlayerId, WorldId } from './protocol'
+import type { PlayerId, WorldId } from './protocol.js'
 
 export type SurvivalGameMode = 'survival' | 'creative' | 'spectator'
 export type SurvivalPosition = { readonly x: number; readonly y: number; readonly z: number }
