@@ -74,14 +74,12 @@ describe('public API surface', () => {
     }),
   )
 
-  // REGRESSION: `domain/frame-contract.ts` is a stand-in for mc-kernel and
-  // Carries a deletion date. Re-exporting it would put `StageId`,
-  // `DeltaTimeSecs` and `StageRegistration` into THIS package's published
-  // Surface, so a consumer would still be importing them from here on the day
-  // The file is deleted — and two `StageId` brands with one name are one type to
-  // TypeScript however differently they validate. mx-gameplay and mx-redstone
-  // Make the same call; this pins it.
-  it.effect('does not re-export the local mc-kernel stand-in', () =>
+  // REGRESSION: `StageId`, `DeltaTimeSecs`, `StageRegistration` and `GameModule`
+  // come from @nerima-games/mc-kernel. Re-exporting them would put kernel's own
+  // types into THIS package's published surface, so a consumer would be
+  // depending on this package for kernel's types rather than on kernel itself.
+  // mx-gameplay and mx-redstone make the same call; this pins it.
+  it.effect('does not re-export the mc-kernel frame contract types', () =>
     Effect.sync(() => {
       for (const name of ['StageId', 'DeltaTimeSecs', 'StageRegistration', 'GameModule']) {
         expect(Object.keys(multiplayer)).not.toContain(name)

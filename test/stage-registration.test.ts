@@ -18,10 +18,13 @@ import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/co
 import { type ConnectionState, canSend } from '../src/domain/connection'
 import {
   DeltaTimeSecs,
+  EpochMillis,
+  FixedClockLayer,
   type GameModule,
+  MonotonicTimeSecs,
   StageId,
   type StageRegistration,
-} from '../src/domain/frame-contract'
+} from '@nerima-games/mc-kernel'
 import {
   BlockPlace,
   Chat,
@@ -93,8 +96,17 @@ const registered = Effect.gen(function* () {
   }
 })
 
+// `StageRegistration.run` is declared against kernel's `FrameServices` (=
+// `ClockPort`), even though neither stage in this repository reads a clock
+// (DN-3 bans one outright). Discharged here, once, so every call site below
+// stays untyped for it.
+const TEST_CLOCK = FixedClockLayer({
+  monotonicSecs: MonotonicTimeSecs(0),
+  wallClockEpochMillis: EpochMillis(0),
+})
+
 const runStage = (stage: StageRegistration | undefined, dt = ONE_FRAME): Effect.Effect<void> =>
-  stage?.run(dt) ?? Effect.void
+  (stage?.run(dt) ?? Effect.void).pipe(Effect.provide(TEST_CLOCK))
 
 const drainPeer = (peer: TransportService): Effect.Effect<ReadonlyArray<string>> =>
   Effect.map(Queue.takeAll(peer.inbound), (frames) => Array.from(frames))

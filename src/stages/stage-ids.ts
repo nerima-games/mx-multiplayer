@@ -20,7 +20,7 @@
  * and before rendering. Keeping that placement outside this package prevents a
  * transport package from claiming gameplay or presentation authority.
  */
-import { StageId } from '../domain/frame-contract.js'
+import { StageId } from '@nerima-games/mc-kernel'
 
 /**
  * Stages owned by mx-multiplayer.
