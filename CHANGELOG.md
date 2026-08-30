@@ -1,5 +1,15 @@
 # @nerima-games/mx-multiplayer
 
+## 0.6.0
+
+### Minor Changes
+
+- [#14](https://github.com/nerima-games/mx-multiplayer/pull/14) [`dedecac`](https://github.com/nerima-games/mx-multiplayer/commit/dedecac7366eb833c3db86b4ba3928e398b56fa7) Thanks [@takeokunn](https://github.com/takeokunn)! - Repoint the frame-contract mirror (`StageId`, `DeltaTimeSecs`, `FrameServices`, `StageRegistration`, `GameModule`) to `@nerima-games/mc-kernel`, now that it is published. `FrameServices` widens from the mirror's `never` to kernel's `ClockPort`; neither stage this repository registers reads a clock (DN-3), so this is a type-level change only for stage authors, and a new runtime dependency on mc-kernel for stage builders.
+
+### Patch Changes
+
+- [#13](https://github.com/nerima-games/mx-multiplayer/pull/13) [`ff064de`](https://github.com/nerima-games/mx-multiplayer/commit/ff064de95f92c341407100f528f55e56ffb0506c) Thanks [@takeokunn](https://github.com/takeokunn)! - Complete the org toolchain devDependency pin set: knip 6.33.0 (its verify gate arrives in Wave 3; the pin belongs to the Wave 0 table) plus @effect/vitest 0.30.0 where it was missing.
+
 ## 0.5.1
 
 ### Patch Changes
