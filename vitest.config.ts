@@ -1,18 +1,11 @@
 import { defineConfig } from 'vitest/config'
 
-export default defineConfig({
+const config: ReturnType<typeof defineConfig> = defineConfig({
   test: {
     environment: 'node',
     globals: false,
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        maxForks: '50%',
-        minForks: 1,
-        isolate: true,
-        singleFork: false,
-      },
-    },
+    maxWorkers: '50%',
     include: ['test/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/coverage/**', '**/.git/**'],
     testTimeout: 10000,
@@ -28,12 +21,11 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       enabled: false,
-      include: ['src/index.ts', 'src/domain/**/*.ts', 'src/stages/**/*.ts'],
+      include: ['src/**/*.ts'],
       exclude: ['**/*.d.ts', '**/*.config.ts', '**/*.test.ts', '**/*.spec.ts'],
-      all: true,
       reporter: ['text', 'json', 'html', 'lcov'],
       reportsDirectory: './coverage',
-      thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
+      thresholds: { branches: 100, functions: 100, lines: 100, statements: 100 },
     },
   },
   esbuild: {
@@ -42,3 +34,5 @@ export default defineConfig({
     platform: 'node',
   },
 })
+
+export default config

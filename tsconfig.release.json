@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "noEmit": false, "rootDir": "src", "outDir": "dist" },
+  "include": ["src/index.ts", "src/domain/**/*.ts", "src/stages/**/*.ts"],
+  "exclude": ["node_modules", "coverage", "dist", "test/**", "scripts/**", "**/*.test.ts", "**/*.spec.ts"]
+}

@@ -2,9 +2,9 @@
 
 ## 1. 現在地
 
-- **package version**: `0.4.0`
+- **package version**: `0.5.0`
 - **公開状態**: GitHub Packages に公開済み
-- **`package.json#exports`**: TypeScript ソースを直接指している(`./index.ts`)
+- **`package.json#exports`**: `tsc -p tsconfig.release.json` が出す `./dist/index.js` / `./dist/index.d.ts` を指す(Wave 0 でビルド pipeline が追加された。§6)
 
 ## 2. なぜ公開しないのか(plan.md §6 Step 0 / Step 3)
 
@@ -60,16 +60,18 @@ mc-sim が既に宣言してある** ので、契約は最初から機械可読�
 4. **ビルド / publish パイプラインが存在する**(§6)
 5. **カバレッジ 99% ゲートが有効**([testing.md](./testing.md) §6)
 
-## 6. ビルドと publish(完成時に追加する)
+## 6. ビルドと publish
 
-現在 `tsconfig.base.json` は `noEmit: true` であり、**すべての tsconfig は検査専用**である。
-完成条件を満たした時点で以下を追加する:
+`tsconfig.base.json` は今も `noEmit: true` で検査専用だが、`tsconfig.release.json`
+(`extends: tsconfig.base.json`, `noEmit: false`, `rootDir: src`, `outDir: dist`)だけが emit する
+(Wave 0、plan.md §2.2/§2.4)。`pnpm build` = `node scripts/clean-dist.mjs && tsc -p tsconfig.release.json`。
 
-- `.d.ts` + ESM を出す emit 用 tsconfig
-- `package.json#exports` を `./dist/index.js` / `./dist/index.d.ts` に切り替え
-- GitHub Packages(`https://npm.pkg.github.com`)への publish ワークフロー
-  — `publishConfig` は既に設定済み
-- changesets 運用(plan.md §6 Step 3)
+- `package.json#exports` は `./dist/index.js` / `./dist/index.d.ts` を指す
+- `scripts/verify-package.mjs`(`pnpm package:verify`)が pack した tarball を別ディレクトリに
+  install し、公開 API の実行時 import と型検査の両方を検証する
+- GitHub Packages(`https://npm.pkg.github.com`)への publish は `.github/workflows/release.yaml`
+  (detect → publish → tag)。`publishConfig` は既に設定済み
+- changesets 運用(plan.md §6 Step 3)。`.changeset/config.json` は `access: public`
 
 ## 7. プロトコルバージョンと package バージョンは別物
 

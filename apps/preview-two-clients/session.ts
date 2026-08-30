@@ -212,7 +212,7 @@ const describeState = (state: ConnectionState): string => {
   }
 }
 
-export const stateLabel = describeState
+export const stateLabel: (state: ConnectionState) => string = describeState
 
 const describeEvent = (event: ConnectionEvent): string => {
   switch (event._tag) {

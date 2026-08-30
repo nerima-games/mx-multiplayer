@@ -86,6 +86,22 @@ describe('deterministic interpolation', () => {
     }),
   )
 
+  it.effect('walks past a non-matching pair to interpolate within a later one in a 3-snapshot history', () =>
+    Effect.sync(() => {
+      const subject = makeSubject(4, 16)
+      subject.ingest(alice, snapshot(1, 10, 0))
+      subject.ingest(alice, snapshot(2, 20, 10))
+      subject.ingest(alice, snapshot(3, 30, 20))
+
+      // renderTick (25) is past the first neighbouring pair's right edge (tick
+      // 20), so `#interpolate`'s loop must skip it and match the second pair
+      // (tick 20, tick 30) instead — the only way to exercise the loop's
+      // "not this pair" branch rather than always matching on the first.
+      const sample = subject.sample(alice, 25)
+      expect(sample?.at).toStrictEqual({ x: 15, y: 64, z: 0 })
+    }),
+  )
+
   it.effect('snaps a mid-history teleport to the later side when renderTick lands exactly on its tick', () =>
     Effect.sync(() => {
       const subject = makeSubject(4, 8)

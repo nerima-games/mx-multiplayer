@@ -28,7 +28,17 @@ export type ProtocolErrorReason =
   /** A message value could not be turned into a frame (a branded invariant was violated). */
   | 'unencodable-message'
 
-export class ProtocolError extends Data.TaggedError('ProtocolError')<{
+// `isolatedDeclarations` (TS 7) rejects a class expression directly in an
+// `extends` clause (TS9021), and it needs an explicit annotation on this base
+// Too — `isolatedDeclarations` reaches every module-scope declaration, not
+// Only exported ones, once the initializer is more than a bare reference.
+// `ReturnType<typeof Data.TaggedError<'ProtocolError'>>` asks TypeScript for
+// The same type it already infers, rather than hand-copying `Data.TaggedError`'s
+// Internal generic signature (which is liable to drift and, tried once, ran
+// Into a duplicate-module-instance mismatch through `import('effect/Types')`).
+const ProtocolError_base: ReturnType<typeof Data.TaggedError<'ProtocolError'>> = Data.TaggedError('ProtocolError')
+
+export class ProtocolError extends ProtocolError_base<{
   readonly reason: ProtocolErrorReason
   readonly detail: string
 }> {}
@@ -41,7 +51,9 @@ export type TransportErrorReason =
   /** The peer or the local side closed the connection. */
   | 'closed'
 
-export class TransportError extends Data.TaggedError('TransportError')<{
+const TransportError_base: ReturnType<typeof Data.TaggedError<'TransportError'>> = Data.TaggedError('TransportError')
+
+export class TransportError extends TransportError_base<{
   readonly reason: TransportErrorReason
   readonly detail: string
 }> {}

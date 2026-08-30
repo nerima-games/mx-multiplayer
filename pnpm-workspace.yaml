@@ -1,5 +1,11 @@
 allowBuilds:
   esbuild: true
+overrides:
+  # GHSA-2v37-7h3g-55p8: nanoid <3.3.18 custom generators can loop
+  # indefinitely when size is zero. Pulled in transitively by
+  # vitest/@vitest/coverage-v8 -> vite -> postcss -> nanoid (Wave 0
+  # toolchain freeze); no direct dependency on nanoid exists in this repo.
+  nanoid: '>=3.3.18'
 minimumReleaseAgeExclude:
   - '@nerima-games/mc-kernel@0.2.8 || 0.2.9 || 0.2.17 || 0.2.18'
   - '@nerima-games/mc-sim@0.1.24 || 0.1.25 || 0.1.39 || 0.1.40 || 0.1.41'

@@ -32,8 +32,8 @@
  * round trip at the far end, where the frame is no longer available to debug.
  */
 import { Either, Schema } from 'effect'
-import { Frame, NetworkMessage, type NetworkMessage as NetworkMessageType, PROTOCOL_VERSION } from './protocol'
-import { ProtocolError } from './errors'
+import { Frame, NetworkMessage, type NetworkMessage as NetworkMessageType, PROTOCOL_VERSION } from './protocol.js'
+import { ProtocolError } from './errors.js'
 
 /**
  * One frame, as text. Exactly one message; framing multiple messages into a

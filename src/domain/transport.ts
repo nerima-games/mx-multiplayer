@@ -26,11 +26,11 @@
  * splitting the Port from its adapters is what lets this repository's whole
  * test suite run in a plain Node vitest pool with no sockets.
  */
-import { type ConnectionState, canSend } from './connection'
+import { type ConnectionState, canSend } from './connection.js'
 import { Context, Effect, Layer, Queue } from 'effect'
-import { type ProtocolError, TransportError } from './errors'
-import { type WireText, decodeFrame, encodeFrame } from './codec'
-import type { NetworkMessage } from './protocol'
+import { type ProtocolError, TransportError } from './errors.js'
+import { type WireText, decodeFrame, encodeFrame } from './codec.js'
+import type { NetworkMessage } from './protocol.js'
 
 export type TransportService = {
   /** Write one frame. Fails, rather than buffering, when not connected. */
@@ -45,10 +45,13 @@ export type TransportService = {
   readonly inbound: Queue.Dequeue<WireText>
 }
 
-export class TransportPort extends Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<
-  TransportPort,
-  TransportService
->() {}
+// `isolatedDeclarations` (TS 7) rejects a class expression directly in an
+// `extends` clause (TS9021); naming the base with its own explicit
+// `Context.TagClass` type is the same pattern mc-kernel uses for `ClockPort`.
+const TransportPortBase: Context.TagClass<TransportPort, '@nerima-games/mx-multiplayer/TransportPort', TransportService> =
+  Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<TransportPort, TransportService>()
+
+export class TransportPort extends TransportPortBase {}
 
 /**
  * Decorate a transport so every send observes the current connection state.
@@ -124,7 +127,7 @@ export const makeLoopbackPair: Effect.Effect<
         // Legitimate use of `Queue`'s public API that reaches `catchAllDefect`
         // Here. This guards a failure mode internal to Effect's `Queue`
         // Implementation, not one this repository's callers can construct.
-        /* v8 ignore next 3 */
+        /* v8 ignore next 3 -- @preserve */
         Effect.catchAllDefect((defect) =>
           Effect.fail(new TransportError({ detail: String(defect), reason: 'send-failed' })),
         ),

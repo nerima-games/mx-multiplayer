@@ -1,4 +1,4 @@
-import type { Orientation, PlayerId, Vec3 } from './protocol'
+import type { Orientation, PlayerId, Vec3 } from './protocol.js'
 
 export type PlayerTransformSnapshot = {
   /** Monotonic server-assigned packet sequence for this player. */
@@ -147,20 +147,25 @@ export class SnapshotInterpolator {
   /** Precondition, enforced by the only caller (`sample`): `first.tick < renderTick < last.tick`. */
   #interpolate(history: ReadonlyArray<PlayerTransformSnapshot>, renderTick: number): PlayerTransformSnapshot {
     for (let index = NEIGHBOR_OFFSET; index < history.length; index += NEIGHBOR_OFFSET) {
-      const right = history[index]
-      const left = history[index - NEIGHBOR_OFFSET]
-      if (left !== undefined && right !== undefined && renderTick <= right.tick) {
+      // Non-null: `index` ranges over `[NEIGHBOR_OFFSET, history.length)`, so both
+      // `history[index]` and `history[index - NEIGHBOR_OFFSET]` are always in
+      // Bounds — the same array-length invariant `#sampleAtBoundary` relies on.
+      // Without this, `left !== undefined && right !== undefined` would add two
+      // Branches no test can take the false side of, since the loop bounds
+      // Already guarantee both are defined.
+      const right = history[index] as PlayerTransformSnapshot
+      const left = history[index - NEIGHBOR_OFFSET] as PlayerTransformSnapshot
+      if (renderTick <= right.tick) {
         return this.#interpolatePair(left, right, renderTick)
       }
       // Unreachable: the precondition above guarantees some `right` in this
       // Loop satisfies `renderTick <= right.tick` no later than the final
       // Element, so the loop always returns from inside the `if` above. The
-      // `v8 ignore` line below suppresses the loop's own "completed without
-      // Matching" branch, which no input reaches without violating a
-      // Precondition `sample` already enforces before calling here.
-      /* v8 ignore next */
+      // `-- @preserve` suffix is required under vitest 4 (Vitest 4.1 restored
+      // Ignore-hint support but esbuild strips ignore comments lacking it).
+      /* v8 ignore next -- @preserve */
     }
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     throw new Error('unreachable: renderTick was not strictly within the sampled history')
   }
 

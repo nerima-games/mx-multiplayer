@@ -1,5 +1,5 @@
 /* eslint-disable curly, id-length, max-statements, no-magic-numbers, no-nested-ternary, no-ternary, no-undefined, no-underscore-dangle, prefer-destructuring, sort-keys -- Hunger transitions intentionally mirror Minecraft's compact state machine. */
-import type { PlayerId, WorldId } from './protocol'
+import type { PlayerId, WorldId } from './protocol.js'
 
 export type HungerDifficulty = 'peaceful' | 'easy' | 'normal' | 'hard'
 export type HungerActivity = 'walk' | 'swim' | 'jump' | 'attack' | 'mine'

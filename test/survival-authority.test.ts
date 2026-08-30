@@ -27,6 +27,13 @@ describe('survival authority', () => {
     expect(snapshot.actors[0]?.inventory[0]).toStrictEqual({ item: 'stone', count: 1 })
   })
 
+  it('breaking a block with no configured drop clears the block and emits no ItemDropped event', () => {
+    const authority = new SurvivalAuthority(initial(), { blockDrop: () => null })
+    const result = authority.execute({ ...header('break-no-drop'), _tag: 'BreakBlock', at: { x: 2, y: 64, z: 0 } })
+    expect(result).toMatchObject({ accepted: true, revision: 8, events: [{ _tag: 'BlockChanged', block: null }] })
+    expect(authority.snapshot().blocks['2,64,0']).toBeUndefined()
+  })
+
   it('rejects spoofed, stale, duplicate, unreachable, cooldown and inventory-invalid commands without mutation', () => {
     const cases: ReadonlyArray<[SurvivalCommand, string]> = [
       [{ ...header('spoof'), actor: PlayerId.make('mallory'), _tag: 'BreakBlock', at: { x: 2, y: 64, z: 0 } }, 'unauthorized-actor'],

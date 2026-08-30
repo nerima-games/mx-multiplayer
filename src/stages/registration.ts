@@ -43,13 +43,13 @@ import {
   canSend,
   initialConnectionState,
   transition,
-} from '../domain/connection'
-import type { GameModule, StageRegistration } from '../domain/frame-contract'
-import { MULTIPLAYER_STAGE_IDS, UPSTREAM_STAGE_IDS } from './stage-ids'
-import { TransportPort, type TransportService } from '../domain/transport'
-import { decodeFrame, encodeFrame } from '../domain/codec'
-import type { NetworkMessage } from '../domain/protocol'
-import type { ProtocolError } from '../domain/errors'
+} from '../domain/connection.js'
+import type { GameModule, StageRegistration } from '../domain/frame-contract.js'
+import { MULTIPLAYER_STAGE_IDS, UPSTREAM_STAGE_IDS } from './stage-ids.js'
+import { TransportPort, type TransportService } from '../domain/transport.js'
+import { decodeFrame, encodeFrame } from '../domain/codec.js'
+import type { NetworkMessage } from '../domain/protocol.js'
+import type { ProtocolError } from '../domain/errors.js'
 
 /**
  * What one frame's worth of network work did.

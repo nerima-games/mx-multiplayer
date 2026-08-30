@@ -20,8 +20,8 @@
  * the unchanged state cannot tell "nothing to do" from "you asked for something
  * incoherent".
  */
-import type { PlayerId, WorldId } from './protocol'
-import type { TransportErrorReason } from './errors'
+import type { PlayerId, WorldId } from './protocol.js'
+import type { TransportErrorReason } from './errors.js'
 
 export type ConnectionState =
   /** Nothing open. The only state from which a connect may be requested. */
@@ -126,7 +126,7 @@ export const transition = (
           return undefined
       }
 
-    /* v8 ignore start */
+    /* v8 ignore start -- @preserve */
     default:
       // The outer switch is exhaustive over ConnectionState['_tag']; this arm
       // Is unreachable and exists only because oxlint's `default-case` wants
@@ -136,7 +136,7 @@ export const transition = (
       // To reach this branch, so no test can exercise it without an `as`
       // Cast that lies to the compiler about the value's type.
       return undefined
-    /* v8 ignore stop */
+    /* v8 ignore stop -- @preserve */
   }
 }
 
