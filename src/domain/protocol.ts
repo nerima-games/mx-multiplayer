@@ -22,7 +22,59 @@
  * changing the protocol, while wire changes require a version transition.
  * Keeping their schemas separate makes those two events explicit.
  */
+import { AnvilCommand, AnvilCommandAccepted, AnvilCommandRejected, PlayerAnvilNamesDelta } from './protocol/anvil.js'
+import {
+  BlockPos,
+  CommandId,
+  EntityId,
+  PlayerId,
+  PlayerName,
+  Revision,
+  WorldId,
+} from './protocol/identifiers.js'
+import {
+  BrewingCommand,
+  BrewingCommandAccepted,
+  BrewingCommandRejected,
+  BrewingStandDelta,
+  PlayerStatusEffectsDelta,
+} from './protocol/brewing.js'
+import { CraftingCommand, CraftingCommandAccepted, CraftingCommandRejected } from './protocol/crafting.js'
+import {
+  DamageEnderDragonCommand,
+  DamageEnderDragonCommandAccepted,
+  DamageEnderDragonCommandRejected,
+  EnderDragonSnapshotDelta,
+} from './protocol/ender-dragon.js'
+import {
+  DamageWitherCommand,
+  SummonWitherCommand,
+  WitherCommandAccepted,
+  WitherCommandRejected,
+  WitherSnapshotDelta,
+} from './protocol/wither.js'
+import {
+  EnchantingCommand,
+  EnchantingCommandAccepted,
+  EnchantingCommandRejected,
+  PlayerEnchantmentsDelta,
+} from './protocol/enchanting.js'
+import {
+  PlayerDamageCommand,
+  PlayerDamageCommandAccepted,
+  PlayerDamageCommandRejected,
+} from './protocol/player-damage.js'
 import { Schema } from 'effect'
+
+/**
+ * The identifier, revision and position primitives, re-exported here so
+ * existing importers of `protocol.ts` see no change. Their definitions live
+ * in `protocol/identifiers.ts` — see that file's header for why: the
+ * per-domain modules under `protocol/` need them too, and importing them
+ * from here would be circular, since this file imports those modules back to
+ * fold their messages into `NetworkMessage`.
+ */
+export { BlockPos, CommandId, EntityId, PlayerId, PlayerName, Revision, WorldId } from './protocol/identifiers.js'
 
 /**
  * The protocol version this build speaks.
@@ -34,53 +86,12 @@ import { Schema } from 'effect'
  */
 export const PROTOCOL_VERSION = 8
 
-/** The floor every branded/free-text identifier and content string in this protocol shares: not blank. */
+/** The floor every free-text identifier and content string in this protocol shares: not blank. */
 const MIN_NON_EMPTY_LENGTH = 1
 
 // ---------------------------------------------------------------------------
-// Identifiers and payload shapes
+// Payload shapes
 // ---------------------------------------------------------------------------
-
-/** A peer's stable identity for the lifetime of a session. */
-export const PlayerId: Schema.brand<Schema.filter<typeof Schema.String>, 'PlayerId'> = Schema.String.pipe(
-  Schema.minLength(MIN_NON_EMPTY_LENGTH),
-  Schema.brand('PlayerId'),
-)
-export type PlayerId = typeof PlayerId.Type
-
-/** A peer's display name. Not unique, not an identity — never key on it. */
-export const PlayerName: Schema.brand<Schema.filter<typeof Schema.String>, 'PlayerName'> = Schema.String.pipe(
-  Schema.minLength(MIN_NON_EMPTY_LENGTH),
-  Schema.brand('PlayerName'),
-)
-export type PlayerName = typeof PlayerName.Type
-
-/** Identifies which world a session is playing. */
-export const WorldId: Schema.brand<Schema.filter<typeof Schema.String>, 'WorldId'> = Schema.String.pipe(
-  Schema.minLength(MIN_NON_EMPTY_LENGTH),
-  Schema.brand('WorldId'),
-)
-export type WorldId = typeof WorldId.Type
-
-/** Stable client-generated identity used to make command retries idempotent. */
-export const CommandId: Schema.brand<Schema.filter<typeof Schema.String>, 'CommandId'> = Schema.String.pipe(
-  Schema.minLength(MIN_NON_EMPTY_LENGTH),
-  Schema.brand('CommandId'),
-)
-export type CommandId = typeof CommandId.Type
-
-/** Stable identity of a server-owned world entity. */
-export const EntityId: Schema.brand<Schema.filter<typeof Schema.String>, 'EntityId'> = Schema.String.pipe(
-  Schema.minLength(MIN_NON_EMPTY_LENGTH),
-  Schema.brand('EntityId'),
-)
-export type EntityId = typeof EntityId.Type
-
-export const Revision: Schema.filter<Schema.filter<typeof Schema.Number>> = Schema.Number.pipe(
-  Schema.int(),
-  Schema.nonNegative(),
-)
-export type Revision = typeof Revision.Type
 
 /**
  * A continuous position. `finite()` is load-bearing: `JSON.stringify(NaN)` is
@@ -97,18 +108,6 @@ export const Vec3: Schema.Struct<{
   z: Schema.Number.pipe(Schema.finite()),
 })
 export type Vec3 = typeof Vec3.Type
-
-/** A block-grid position. Integral by construction. */
-export const BlockPos: Schema.Struct<{
-  x: Schema.filter<typeof Schema.Number>
-  y: Schema.filter<typeof Schema.Number>
-  z: Schema.filter<typeof Schema.Number>
-}> = Schema.Struct({
-  x: Schema.Number.pipe(Schema.int()),
-  y: Schema.Number.pipe(Schema.int()),
-  z: Schema.Number.pipe(Schema.int()),
-})
-export type BlockPos = typeof BlockPos.Type
 
 const HALF_TURN_DIVISOR = 2
 
@@ -1257,6 +1256,34 @@ export const NetworkMessage: Schema.Union<
     typeof AuthoritativeResyncRequest,
     typeof Ping,
     typeof Pong,
+    typeof AnvilCommand,
+    typeof AnvilCommandAccepted,
+    typeof AnvilCommandRejected,
+    typeof PlayerAnvilNamesDelta,
+    typeof CraftingCommand,
+    typeof CraftingCommandAccepted,
+    typeof CraftingCommandRejected,
+    typeof PlayerDamageCommand,
+    typeof PlayerDamageCommandAccepted,
+    typeof PlayerDamageCommandRejected,
+    typeof BrewingCommand,
+    typeof BrewingCommandAccepted,
+    typeof BrewingCommandRejected,
+    typeof BrewingStandDelta,
+    typeof PlayerStatusEffectsDelta,
+    typeof EnchantingCommand,
+    typeof EnchantingCommandAccepted,
+    typeof EnchantingCommandRejected,
+    typeof PlayerEnchantmentsDelta,
+    typeof DamageEnderDragonCommand,
+    typeof DamageEnderDragonCommandAccepted,
+    typeof DamageEnderDragonCommandRejected,
+    typeof EnderDragonSnapshotDelta,
+    typeof SummonWitherCommand,
+    typeof DamageWitherCommand,
+    typeof WitherCommandAccepted,
+    typeof WitherCommandRejected,
+    typeof WitherSnapshotDelta,
   ]
 > = Schema.Union(
   PlayerJoin,
@@ -1277,6 +1304,34 @@ export const NetworkMessage: Schema.Union<
   AuthoritativeResyncRequest,
   Ping,
   Pong,
+  AnvilCommand,
+  AnvilCommandAccepted,
+  AnvilCommandRejected,
+  PlayerAnvilNamesDelta,
+  CraftingCommand,
+  CraftingCommandAccepted,
+  CraftingCommandRejected,
+  PlayerDamageCommand,
+  PlayerDamageCommandAccepted,
+  PlayerDamageCommandRejected,
+  BrewingCommand,
+  BrewingCommandAccepted,
+  BrewingCommandRejected,
+  BrewingStandDelta,
+  PlayerStatusEffectsDelta,
+  EnchantingCommand,
+  EnchantingCommandAccepted,
+  EnchantingCommandRejected,
+  PlayerEnchantmentsDelta,
+  DamageEnderDragonCommand,
+  DamageEnderDragonCommandAccepted,
+  DamageEnderDragonCommandRejected,
+  EnderDragonSnapshotDelta,
+  SummonWitherCommand,
+  DamageWitherCommand,
+  WitherCommandAccepted,
+  WitherCommandRejected,
+  WitherSnapshotDelta,
 )
 export type NetworkMessage = typeof NetworkMessage.Type
 
@@ -1292,6 +1347,14 @@ export const MESSAGE_TAGS: readonly [
   'InsertEyeIntoEndPortalFrameCommand', 'NetherPortalUseCommand', 'ToggleLeverCommand', 'EnderPearlCommand',
   'BucketUseCommand', 'VehicleUseCommand', 'FishingCommand', 'VehicleCommand', 'AuthoritativeCommandAccepted',
   'AuthoritativeCommandRejected', 'AuthoritativeResyncRequest', 'Ping', 'Pong',
+  'AnvilCommand', 'AnvilCommandAccepted', 'AnvilCommandRejected', 'PlayerAnvilNamesDelta',
+  'CraftingCommand', 'CraftingCommandAccepted', 'CraftingCommandRejected',
+  'PlayerDamageCommand', 'PlayerDamageCommandAccepted', 'PlayerDamageCommandRejected',
+  'BrewingCommand', 'BrewingCommandAccepted', 'BrewingCommandRejected',
+  'BrewingStandDelta', 'PlayerStatusEffectsDelta',
+  'EnchantingCommand', 'EnchantingCommandAccepted', 'EnchantingCommandRejected', 'PlayerEnchantmentsDelta',
+  'DamageEnderDragonCommand', 'DamageEnderDragonCommandAccepted', 'DamageEnderDragonCommandRejected', 'EnderDragonSnapshotDelta',
+  'SummonWitherCommand', 'DamageWitherCommand', 'WitherCommandAccepted', 'WitherCommandRejected', 'WitherSnapshotDelta',
 ] = [
   'PlayerJoin',
   'PlayerLeave',
@@ -1341,6 +1404,34 @@ export const MESSAGE_TAGS: readonly [
   'AuthoritativeResyncRequest',
   'Ping',
   'Pong',
+  'AnvilCommand',
+  'AnvilCommandAccepted',
+  'AnvilCommandRejected',
+  'PlayerAnvilNamesDelta',
+  'CraftingCommand',
+  'CraftingCommandAccepted',
+  'CraftingCommandRejected',
+  'PlayerDamageCommand',
+  'PlayerDamageCommandAccepted',
+  'PlayerDamageCommandRejected',
+  'BrewingCommand',
+  'BrewingCommandAccepted',
+  'BrewingCommandRejected',
+  'BrewingStandDelta',
+  'PlayerStatusEffectsDelta',
+  'EnchantingCommand',
+  'EnchantingCommandAccepted',
+  'EnchantingCommandRejected',
+  'PlayerEnchantmentsDelta',
+  'DamageEnderDragonCommand',
+  'DamageEnderDragonCommandAccepted',
+  'DamageEnderDragonCommandRejected',
+  'EnderDragonSnapshotDelta',
+  'SummonWitherCommand',
+  'DamageWitherCommand',
+  'WitherCommandAccepted',
+  'WitherCommandRejected',
+  'WitherSnapshotDelta',
 ] as const satisfies ReadonlyArray<NetworkMessage['_tag']>
 
 /**

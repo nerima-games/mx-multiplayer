@@ -42,6 +42,9 @@ const primedTnt = { _tag: 'primed-tnt' as const, at: { x: 3, y: 64, z: 1 }, burn
  * exhaustiveness test below can prove no message escapes the round-trip check.
  */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
+  AnvilCommand: { _tag: 'AnvilCommand', ...commandHeader, name: 'Excalibur', slot: 0 },
+  AnvilCommandAccepted: { _tag: 'AnvilCommandAccepted', commandId, revision: 13 },
+  AnvilCommandRejected: { _tag: 'AnvilCommandRejected', commandId, reason: 'missing-iron', revision: 12 },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, revision: 13, world: overworld },
   AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, reason: 'stale-revision', resyncRequired: true, revision: 12, world: overworld },
   AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', lastKnownRevision: 12, world: overworld },
@@ -60,11 +63,64 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   },
   BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: alice },
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
+  BrewingCommand: { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: 0 }, at: { x: 1, y: 64, z: 1 } },
+  BrewingCommandAccepted: { _tag: 'BrewingCommandAccepted', commandId, revision: 13 },
+  BrewingCommandRejected: { _tag: 'BrewingCommandRejected', commandId, reason: 'missing-ingredients', revision: 12 },
+  BrewingStandDelta: {
+    _tag: 'BrewingStandDelta',
+    at: { x: 1, y: 64, z: 1 },
+    revision: 13,
+    state: { bottle: 'water_bottle', brewing: { output: 'awkward', remainingSecs: 12 }, fuelUnits: 4, ingredient: 'nether_wart' },
+    world: overworld,
+  },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },
   Chat: { _tag: 'Chat', player: alice, text: 'hello 世界' },
   ContainerCommand: { _tag: 'ContainerCommand', ...commandHeader, containerId: 'chest:1', action: { _tag: 'open' } },
   ContainerDelta: { _tag: 'ContainerDelta', revision: 13, state: { containerId: 'dropper:1', kind: 'dropper', slots: [item] }, world: overworld },
+  CraftingCommand: { _tag: 'CraftingCommand', ...commandHeader, grid: { cells: ['stone', null, null, null], height: 2, width: 2 } },
+  CraftingCommandAccepted: { _tag: 'CraftingCommandAccepted', commandId, revision: 13 },
+  CraftingCommandRejected: { _tag: 'CraftingCommandRejected', commandId, reason: 'no-match', revision: 12 },
+  DamageEnderDragonCommand: { _tag: 'DamageEnderDragonCommand', commandId, expectedRevision: 12, player: alice },
+  DamageEnderDragonCommandAccepted: { _tag: 'DamageEnderDragonCommandAccepted', commandId, revision: 13 },
+  DamageEnderDragonCommandRejected: { _tag: 'DamageEnderDragonCommandRejected', commandId, reason: 'stale-revision', revision: 12 },
+  DamageWitherCommand: { _tag: 'DamageWitherCommand', amount: 4, commandId, expectedRevision: 12, kind: 'melee', player: alice, witherId: 'wither-1' },
+  SummonWitherCommand: { _tag: 'SummonWitherCommand', commandId, dimension: 'end', expectedRevision: 12, player: alice, position: { x: 0, y: 70, z: 0 } },
+  WitherCommandAccepted: { _tag: 'WitherCommandAccepted', commandId, revision: 13 },
+  WitherCommandRejected: { _tag: 'WitherCommandRejected', commandId, reason: 'invalid-command', revision: 12 },
+  WitherSnapshotDelta: {
+    _tag: 'WitherSnapshotDelta',
+    revision: 13,
+    snapshot: {
+      nextSkullId: 0,
+      nextWitherId: 1,
+      skulls: [],
+      withers: [
+        {
+          dimension: 'end',
+          id: 'wither-1',
+          meleeCooldownSecs: 0,
+          rangedCooldownSecs: 0,
+          shotsFired: 0,
+          state: {
+            chargeRemainingSecs: 0,
+            feetPosition: { x: 0, y: 70, z: 0 },
+            healthPoints: 300,
+            phase: 'airborne',
+            velocity: { x: 0, y: 0, z: 0 },
+          },
+        },
+      ],
+    },
+  },
+  EnchantingCommand: { _tag: 'EnchantingCommand', ...commandHeader, offer: 1, slot: 0 },
+  EnchantingCommandAccepted: { _tag: 'EnchantingCommandAccepted', commandId, revision: 13 },
+  EnchantingCommandRejected: { _tag: 'EnchantingCommandRejected', commandId, reason: 'insufficient-lapis', revision: 12 },
   EndPortalUseCommand: { _tag: 'EndPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
+  EnderDragonSnapshotDelta: {
+    _tag: 'EnderDragonSnapshotDelta',
+    revision: 13,
+    snapshot: { health: 200, phase: 'circling', phaseTimerSecs: 0, rewardEmitted: false },
+  },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
   EntityAttackCommand: { _tag: 'EntityAttackCommand', ...commandHeader, entityId },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', entityId, revision: 13, world: overworld },
@@ -86,6 +142,18 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   LightningStrikeDelta: { _tag: 'LightningStrikeDelta', at: { x: 3.5, y: 72, z: -4.5 }, revision: 13, world: overworld },
   NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
   Ping: { _tag: 'Ping', nonce: 7 },
+  PlayerAnvilNamesDelta: { _tag: 'PlayerAnvilNamesDelta', names: [{ name: 'Excalibur', slot: 0 }], player: alice, revision: 13, world: overworld },
+  PlayerDamageCommand: { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 4 },
+  PlayerDamageCommandAccepted: { _tag: 'PlayerDamageCommandAccepted', commandId, revision: 13 },
+  PlayerDamageCommandRejected: { _tag: 'PlayerDamageCommandRejected', commandId, reason: 'invalid-command', revision: 12 },
+  PlayerEnchantmentsDelta: {
+    _tag: 'PlayerEnchantmentsDelta',
+    items: [{ item: { durability: { current: 40, max: 250 }, enchantments: [{ id: 'sharpness', level: 3 }], item: 'iron_sword' }, slot: 0 }],
+    player: alice,
+    revision: 13,
+    seed: 42,
+    world: overworld,
+  },
   PlayerFishingDelta: { _tag: 'PlayerFishingDelta', player: alice, revision: 13, state: { phase: 'bite', result: 'bite' }, world: overworld },
   PlayerInventoryCommand: { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 2 } },
   PlayerInventoryDelta: { _tag: 'PlayerInventoryDelta', player: alice, revision: 13, state: { selectedSlot: 0, slots: [item] }, world: overworld },
@@ -101,6 +169,13 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     at: { x: -0.5, y: 64.125, z: 1024 },
     facing: { pitchRadians: -1.5, yawRadians: 3.14159 },
     player: alice,
+  },
+  PlayerStatusEffectsDelta: {
+    _tag: 'PlayerStatusEffectsDelta',
+    player: alice,
+    revision: 13,
+    state: { effects: [{ amplifier: 1, pulseClockSecs: 0.5, remainingSecs: 30, type: 'regeneration' }] },
+    world: overworld,
   },
   PlayerVitalsCommand: { _tag: 'PlayerVitalsCommand', ...commandHeader, action: { _tag: 'activity', activity: 'swim', amount: 3 } },
   PlayerVitalsDelta: { _tag: 'PlayerVitalsDelta', player: alice, revision: 13, state: { experience: 1, health: 19, hunger: 18 }, world: overworld },
@@ -553,6 +628,227 @@ describe('malformed input', () => {
           { _tag: 'VehicleCommand', ...commandHeader, entityId, action: { _tag: 'move', at: { x: 2, y: 64, z: 2 }, direction: 'forward' } },
           { _tag: 'PlayerFishingDelta', player: alice, revision: 13, state: { phase: 'bite', result: 'cast' }, world: overworld },
         { _tag: 'PlayerInventoryDelta', player: alice, revision: 13, state: { selectedSlot: 0, slots: [{ item: 'bow', count: 1, durability: { current: 1.5, max: 64 } }] }, world: overworld },
+      ]
+
+      for (const message of invalidMessages) {
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  // REGRESSION (Wave 1 lowering): anvil, crafting and player-damage each carry
+  // a domain-specific invariant `SAMPLES` never violates — an out-of-range
+  // slot, a name over the wire limit, a grid whose `cells.length` disagrees
+  // with `width * height`, and a damage amount outside the vanilla range. A
+  // codec that best-effort-coerced any of these would desync the two peers
+  // silently instead of rejecting the frame.
+  it.effect('rejects malformed anvil, crafting and player-damage payloads', () =>
+    Effect.sync(() => {
+      const invalidMessages = [
+        { _tag: 'AnvilCommand', ...commandHeader, name: 'Excalibur', slot: -1 },
+        { _tag: 'AnvilCommand', ...commandHeader, name: 'Excalibur', slot: 36 },
+        { _tag: 'AnvilCommand', ...commandHeader, name: 'x'.repeat(51), slot: 0 },
+        { _tag: 'PlayerAnvilNamesDelta', names: [{ name: 'x'.repeat(51), slot: 0 }], player: alice, revision: 13, world: overworld },
+        { _tag: 'CraftingCommand', ...commandHeader, grid: { cells: ['stone', null, null], height: 2, width: 2 } },
+        { _tag: 'CraftingCommand', ...commandHeader, grid: { cells: ['stone', null, null, null, null], height: 2, width: 2 } },
+        { _tag: 'CraftingCommand', ...commandHeader, grid: { cells: [], height: 4, width: 4 } },
+        { _tag: 'CraftingCommand', ...commandHeader, grid: { cells: ['', null, null, null], height: 2, width: 2 } },
+        { _tag: 'CraftingCommand', ...commandHeader, grid: { cells: ['stone', null, null, null], extra: true, height: 2, width: 2 } },
+        { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 0 },
+        { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 21 },
+        { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 4, minimumHealthPoints: -1 },
+        { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 4, minimumHealthPoints: 1.5 },
+      ]
+
+      for (const message of invalidMessages) {
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  // REGRESSION (Wave 1 lowering): `BrewingStandState` and `StatusEffectState`
+  // are mirrored locally (see `protocol/brewing.ts`'s file header), and a
+  // mirror that drifted from what it mirrors would show up exactly here — as
+  // a shape this build's own schema silently accepted or wrongly rejected.
+  it.effect('rejects malformed brewing and status-effect payloads', () =>
+    Effect.sync(() => {
+      const invalidMessages = [
+        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: 36 }, at: { x: 1, y: 64, z: 1 } },
+        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: -1 }, at: { x: 1, y: 64, z: 1 } },
+        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: 0, extra: true }, at: { x: 1, y: 64, z: 1 } },
+        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'brew' }, at: { x: 1, y: 64, z: 1 } },
+        {
+          _tag: 'BrewingStandDelta',
+          at: { x: 1, y: 64, z: 1 },
+          revision: 13,
+          state: { bottle: { potion: 'not-a-real-potion' }, fuelUnits: 4 },
+          world: overworld,
+        },
+        {
+          _tag: 'BrewingStandDelta',
+          at: { x: 1, y: 64, z: 1 },
+          revision: 13,
+          state: { fuelUnits: -1 },
+          world: overworld,
+        },
+        {
+          _tag: 'BrewingStandDelta',
+          at: { x: 1, y: 64, z: 1 },
+          revision: 13,
+          state: { brewing: { output: 'awkward', remainingSecs: -1 }, fuelUnits: 4 },
+          world: overworld,
+        },
+        {
+          _tag: 'BrewingStandDelta',
+          at: { x: 1, y: 64, z: 1 },
+          revision: 13,
+          state: { bottle: { potion: 'awkward', extra: true }, fuelUnits: 4 },
+          world: overworld,
+        },
+        {
+          _tag: 'PlayerStatusEffectsDelta',
+          player: alice,
+          revision: 13,
+          state: { effects: [{ pulseClockSecs: 0, remainingSecs: 0, type: 'poison' }] },
+          world: overworld,
+        },
+        {
+          _tag: 'PlayerStatusEffectsDelta',
+          player: alice,
+          revision: 13,
+          state: { effects: [{ amplifier: -1, pulseClockSecs: 0, remainingSecs: 30, type: 'poison' }] },
+          world: overworld,
+        },
+        {
+          _tag: 'PlayerStatusEffectsDelta',
+          player: alice,
+          revision: 13,
+          state: { effects: [{ pulseClockSecs: 0, remainingSecs: 30, type: 'invisibility' }] },
+          world: overworld,
+        },
+      ]
+
+      for (const message of invalidMessages) {
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  // REGRESSION (Wave 1 lowering): `EnchantedItem` is mirrored locally too
+  // (`protocol/enchanting.ts`'s file header) — an enchantment level of zero,
+  // an unknown enchantment id, or an offer index outside 0..2 must all be
+  // rejected, not coerced into whichever offer the decoder found easiest.
+  it.effect('rejects malformed enchanting payloads', () =>
+    Effect.sync(() => {
+      const enchantedItem = { durability: null, enchantments: [{ id: 'sharpness', level: 1 }], item: 'iron_sword' }
+      const invalidMessages = [
+        { _tag: 'EnchantingCommand', ...commandHeader, offer: 3, slot: 0 },
+        { _tag: 'EnchantingCommand', ...commandHeader, offer: 1, slot: -1 },
+        { _tag: 'EnchantingCommand', ...commandHeader, offer: 1, slot: 36 },
+        {
+          _tag: 'PlayerEnchantmentsDelta',
+          items: [{ item: { ...enchantedItem, enchantments: [{ id: 'not-a-real-enchantment', level: 1 }] }, slot: 0 }],
+          player: alice,
+          revision: 13,
+          seed: 42,
+          world: overworld,
+        },
+        {
+          _tag: 'PlayerEnchantmentsDelta',
+          items: [{ item: { ...enchantedItem, enchantments: [{ id: 'sharpness', level: 0 }] }, slot: 0 }],
+          player: alice,
+          revision: 13,
+          seed: 42,
+          world: overworld,
+        },
+        {
+          _tag: 'PlayerEnchantmentsDelta',
+          items: [{ item: { ...enchantedItem, item: '' }, slot: 0 }],
+          player: alice,
+          revision: 13,
+          seed: 42,
+          world: overworld,
+        },
+        {
+          _tag: 'PlayerEnchantmentsDelta',
+          items: [{ item: enchantedItem, slot: 0 }],
+          player: alice,
+          revision: -1,
+          seed: 42,
+          world: overworld,
+        },
+      ]
+
+      for (const message of invalidMessages) {
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  // REGRESSION (Wave 1 lowering): the Ender Dragon encounter snapshot mirrors
+  // `mx-gameplay`'s structural shape only (see `protocol/ender-dragon.ts`'s
+  // file header) — health outside 0..200, an unknown phase, and a negative
+  // timer must still all be rejected at the frame boundary.
+  it.effect('rejects malformed ender-dragon payloads', () =>
+    Effect.sync(() => {
+      const snapshot = { health: 200, phase: 'circling', phaseTimerSecs: 0, rewardEmitted: false }
+      const invalidMessages = [
+        { _tag: 'EnderDragonSnapshotDelta', revision: 13, snapshot: { ...snapshot, health: 201 } },
+        { _tag: 'EnderDragonSnapshotDelta', revision: 13, snapshot: { ...snapshot, health: -1 } },
+        { _tag: 'EnderDragonSnapshotDelta', revision: 13, snapshot: { ...snapshot, phase: 'flying' } },
+        { _tag: 'EnderDragonSnapshotDelta', revision: 13, snapshot: { ...snapshot, phaseTimerSecs: -1 } },
+        { _tag: 'EnderDragonSnapshotDelta', revision: 13, snapshot: { ...snapshot, extra: true } },
+        { _tag: 'DamageEnderDragonCommandRejected', commandId, reason: 'dragon-defeated', revision: 12 },
+      ]
+
+      for (const message of invalidMessages) {
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+        expect(rejected(text)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  // REGRESSION (Wave 1 lowering): the wither runtime snapshot is a mirror of
+  // the composing app's `WitherRuntimeSnapshot` (see `protocol/wither.ts`'s
+  // file header) — an out-of-range health, an unknown phase, and a negative
+  // cooldown must all still be rejected.
+  it.effect('rejects malformed wither payloads', () =>
+    Effect.sync(() => {
+      const witherState = {
+        chargeRemainingSecs: 0,
+        feetPosition: { x: 0, y: 70, z: 0 },
+        healthPoints: 300,
+        phase: 'airborne',
+        velocity: { x: 0, y: 0, z: 0 },
+      }
+      const witherEntry = { dimension: 'end', id: 'wither-1', meleeCooldownSecs: 0, rangedCooldownSecs: 0, shotsFired: 0, state: witherState }
+      const invalidMessages = [
+        { _tag: 'DamageWitherCommand', amount: -1, commandId, expectedRevision: 12, kind: 'melee', player: alice, witherId: 'wither-1' },
+        { _tag: 'DamageWitherCommand', amount: 4, commandId, expectedRevision: 12, kind: 'poison', player: alice, witherId: 'wither-1' },
+        {
+          _tag: 'WitherSnapshotDelta',
+          revision: 13,
+          snapshot: { nextSkullId: 0, nextWitherId: 1, skulls: [], withers: [{ ...witherEntry, state: { ...witherState, healthPoints: 301 } }] },
+        },
+        {
+          _tag: 'WitherSnapshotDelta',
+          revision: 13,
+          snapshot: { nextSkullId: 0, nextWitherId: 1, skulls: [], withers: [{ ...witherEntry, state: { ...witherState, phase: 'enraged' } }] },
+        },
+        {
+          _tag: 'WitherSnapshotDelta',
+          revision: 13,
+          snapshot: { nextSkullId: 0, nextWitherId: 1, skulls: [], withers: [{ ...witherEntry, meleeCooldownSecs: -1 }] },
+        },
+        {
+          _tag: 'WitherSnapshotDelta',
+          revision: 13,
+          snapshot: { nextSkullId: -1, nextWitherId: 1, skulls: [], withers: [] },
+        },
       ]
 
       for (const message of invalidMessages) {
