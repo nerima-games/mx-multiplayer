@@ -13,6 +13,7 @@
  * writing through an mc-sim service, never by calling into a rules module.
  */
 
+export * from './application/browser-transport.js'
 export * from './domain/codec.js'
 export * from './domain/authoritative-sync.js'
 export * from './domain/authoritative-session.js'
