@@ -1,5 +1,11 @@
 # @nerima-games/mx-multiplayer
 
+## 0.8.1
+
+### Patch Changes
+
+- [#21](https://github.com/nerima-games/mx-multiplayer/pull/21) [`ebaf317`](https://github.com/nerima-games/mx-multiplayer/commit/ebaf317415d9514d20a6422710f6ea6beb086be0) Thanks [@takeokunn](https://github.com/takeokunn)! - Pin `@nerima-games/mc-kernel` 0.7.0 and `@nerima-games/mc-sim` 0.4.1. This repository imports only `StageId`, `GameModule`, and `StageRegistration` from kernel — none of which changed between 0.5.1 and 0.7.0 (`frame.ts`, `identifiers.ts`, `clock.ts` diff empty) — and never imports mc-sim at all: `protocol/wither.ts`'s and `protocol/enchanting.ts`'s mc-sim-shaped mirrors (`WitherPhase`, `WitherDamageKind`, `WitherSkullVariant`, `WITHER_MAX_HEALTH`, `WitherState`, `WitherSkullProjectileDescriptor`, `Durability`) are declared independently on purpose, so the wire format does not track the domain type. Checked mc-sim's actual `src/domain/wither.ts` and `src/domain/equipment.ts` at 0.4.1 against every mirrored shape here; nothing diverged, so no mirror changed and `PROTOCOL_VERSION` stays at 8. No source changes were required beyond the two pins.
+
 ## 0.8.0
 
 ### Minor Changes
