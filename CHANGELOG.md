@@ -1,5 +1,15 @@
 # @nerima-games/mx-multiplayer
 
+## 0.8.2
+
+### Patch Changes
+
+- [#23](https://github.com/nerima-games/mx-multiplayer/pull/23) [`10a367a`](https://github.com/nerima-games/mx-multiplayer/commit/10a367ae4665dbf0f0dbf88938c8e3a8a7687421) Thanks [@takeokunn](https://github.com/takeokunn)! - Align internal pins to the current published versions
+  
+  - `@nerima-games/mc-sim` to 0.4.2
+  Each of these upstream releases contained a pin change and no source change,
+  so no behaviour moves with this bump.
+
 ## 0.8.1
 
 ### Patch Changes
