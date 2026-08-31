@@ -202,6 +202,13 @@ try {
       "makeMultiplayerStages",
       "makeBrowserWebSocketTransport",
       "validateMultiplayerUrl",
+      "isLoopbackHost",
+      "resolveTransportSecurity",
+      "isAllowedWebSocketOrigin",
+      "TransportSecurityError",
+      "createReconnectAuth",
+      "frameTag",
+      "unknownRecord",
     ])};
     const missing = expectedExports.filter((name) => !(name in mod));
     if (missing.length > 0) {
