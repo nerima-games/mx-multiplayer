@@ -1,5 +1,17 @@
 # @nerima-games/mx-multiplayer
 
+## 0.7.0
+
+### Minor Changes
+
+- [#17](https://github.com/nerima-games/mx-multiplayer/pull/17) [`c66cf54`](https://github.com/nerima-games/mx-multiplayer/commit/c66cf54b06b8cc2e554ad30a972dcc921d3c34ee) Thanks [@takeokunn](https://github.com/takeokunn)! - Add wire-protocol messages for anvil renaming (`AnvilCommand` / `AnvilCommandAccepted` / `AnvilCommandRejected` / `PlayerAnvilNamesDelta`), crafting-grid submission (`CraftingCommand` / `CraftingCommandAccepted` / `CraftingCommandRejected`), and player-damage confirmation (`PlayerDamageCommand` / `PlayerDamageCommandAccepted` / `PlayerDamageCommandRejected`), lowered from the composing app's hand-rolled per-domain codecs. All three now flow through the shared `NetworkMessage` union and `codec.ts`, replacing bespoke JSON parsers with `Schema`-validated decoding. `PROTOCOL_VERSION` is unchanged — adding new message tags does not require a bump (`docs/versioning.md` §7).
+
+- [#17](https://github.com/nerima-games/mx-multiplayer/pull/17) [`c66cf54`](https://github.com/nerima-games/mx-multiplayer/commit/c66cf54b06b8cc2e554ad30a972dcc921d3c34ee) Thanks [@takeokunn](https://github.com/takeokunn)! - Add wire-protocol messages for brewing-stand interaction and status effects (`BrewingCommand` / `...Accepted` / `...Rejected` / `BrewingStandDelta` / `PlayerStatusEffectsDelta`), enchanting-table selection (`EnchantingCommand` / `...Accepted` / `...Rejected` / `PlayerEnchantmentsDelta`), the Ender Dragon encounter (`DamageEnderDragonCommand` / `...Accepted` / `...Rejected` / `EnderDragonSnapshotDelta`), and wither boss commands plus its runtime snapshot (`SummonWitherCommand` / `DamageWitherCommand` / `WitherCommandAccepted` / `WitherCommandRejected` / `WitherSnapshotDelta`), lowered from the composing app's hand-rolled per-domain codecs.
+  
+  `BrewingStandState`, `StatusEffectState`, `EnchantedItem`, and the wither runtime shapes are declared independently here rather than imported from `@nerima-games/mx-gameplay` or `@nerima-games/mc-sim` — a wire format and a domain type have a different change budget, the same rule `protocol.ts` already applies to `Vec3` and `BlockPos` against `@nerima-games/mc-kernel`. `wither-runtime.ts`'s actual boss-fight rules are being lowered to `@nerima-games/mx-gameplay` separately; only the wire shape is here. `PROTOCOL_VERSION` is unchanged — adding new message tags does not require a bump (`docs/versioning.md` §7).
+
+- [#16](https://github.com/nerima-games/mx-multiplayer/pull/16) [`5a58241`](https://github.com/nerima-games/mx-multiplayer/commit/5a582415d05ff2b46e5630f84e5aadd68c9acfa1) Thanks [@takeokunn](https://github.com/takeokunn)! - Add `makeBrowserWebSocketTransport`, a `TransportPort` implementation over a real WebSocket, and `validateMultiplayerUrl` for checking a candidate multiplayer server URL against the loopback/secure-context rule. Both are lowered from the composing app, which previously carried this logic itself.
+
 ## 0.6.0
 
 ### Minor Changes
