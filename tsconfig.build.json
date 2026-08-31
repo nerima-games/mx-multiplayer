@@ -1,9 +1,9 @@
 {
   // Shipped source only. `types: []` (inherited) is deliberate: if a Node type
-  // ever leaks into domain code this project fails, which is what keeps
-  // mc-kernel usable from browser, worker and server repos alike.
+  // ever leaks into domain or application code this project fails, which is
+  // what keeps mc-kernel usable from browser, worker and server repos alike.
   "extends": "./tsconfig.base.json",
-  "include": ["src/index.ts", "src/domain/**/*.ts", "src/stages/**/*.ts"],
+  "include": ["src/index.ts", "src/domain/**/*.ts", "src/application/**/*.ts", "src/stages/**/*.ts"],
   "exclude": [
     "node_modules",
     "coverage",

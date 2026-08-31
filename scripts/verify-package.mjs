@@ -200,6 +200,8 @@ try {
       "UPSTREAM_STAGE_IDS",
       "multiplayerModule",
       "makeMultiplayerStages",
+      "makeBrowserWebSocketTransport",
+      "validateMultiplayerUrl",
     ])};
     const missing = expectedExports.filter((name) => !(name in mod));
     if (missing.length > 0) {
