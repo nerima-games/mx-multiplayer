@@ -14,6 +14,7 @@
  */
 
 export * from './application/browser-transport.js'
+export * from './application/server/command-application.js'
 export * from './application/server/frame-inspection.js'
 export * from './application/server/reconnect-auth.js'
 export * from './application/server/transport-security.js'
