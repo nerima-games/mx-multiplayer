@@ -1,6 +1,18 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { EntityKind, makeEntityManager, makeVitalsService, type SpawnRequest, type VitalsServiceApi } from '@nerima-games/mc-sim'
+import {
+  EntityKind,
+  makeEntityManager,
+  makeInventoryService,
+  makeVitalsService,
+  OccupantId,
+  VehicleId,
+  type InventoryServiceApi,
+  type SpawnRequest,
+  type Vehicle,
+  type VehicleServiceApi,
+  type VitalsServiceApi,
+} from '@nerima-games/mc-sim'
 import { position } from '@nerima-games/mc-kernel'
 import {
   applyAuthoritativeCommand,
@@ -85,6 +97,147 @@ const inventorySelect = (commandId: string, expectedRevision: number, player = a
   world,
 })
 
+const bowUse = (commandId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'BowUseCommand',
+  action: 'start',
+  commandId: CommandId.make(commandId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const inventoryMove = (commandId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'PlayerInventoryCommand',
+  action: { _tag: 'move-item', count: 1, destination: 1, source: 0 },
+  commandId: CommandId.make(commandId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const inventoryDrop = (commandId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'PlayerInventoryCommand',
+  action: { _tag: 'drop-item', count: 1, destination: 'world', source: 0 },
+  commandId: CommandId.make(commandId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const inventorySwap = (
+  commandId: string,
+  source: number,
+  destination: number,
+  expectedRevision: number,
+  player = alice,
+): AuthoritativeCommand => ({
+  _tag: 'PlayerInventoryCommand',
+  action: { _tag: 'swap-items', destination, source },
+  commandId: CommandId.make(commandId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const inventoryEquip = (commandId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'PlayerInventoryCommand',
+  action: { _tag: 'equip-item', equipmentSlot: 'head', source: 0 },
+  commandId: CommandId.make(commandId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const inventoryUnequip = (commandId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'PlayerInventoryCommand',
+  action: { _tag: 'unequip-item', destination: 0, equipmentSlot: 'head' },
+  commandId: CommandId.make(commandId),
+  expectedRevision,
+  player,
+  world,
+})
+
+/** Delegates to the real service so its own domain logic still runs, and records every call this file makes. */
+const countingInventory = (
+  real: InventoryServiceApi,
+  calls: Array<string>,
+): Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'> => ({
+  equipFromInventory: (inventorySlot, equipmentSlot) => {
+    calls.push(`equip:${inventorySlot}:${equipmentSlot}`)
+    return real.equipFromInventory(inventorySlot, equipmentSlot)
+  },
+  moveStack: (sourceIndex, targetIndex) => {
+    calls.push(`move:${sourceIndex}:${targetIndex}`)
+    return real.moveStack(sourceIndex, targetIndex)
+  },
+  unequipToInventory: (equipmentSlot, inventorySlot) => {
+    calls.push(`unequip:${equipmentSlot}:${inventorySlot}`)
+    return real.unequipToInventory(equipmentSlot, inventorySlot)
+  },
+})
+
+const vehicleMount = (commandId: string, entityId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'VehicleCommand',
+  action: 'mount',
+  commandId: CommandId.make(commandId),
+  entityId: EntityId.make(entityId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const vehicleDismount = (commandId: string, entityId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'VehicleCommand',
+  action: 'dismount',
+  commandId: CommandId.make(commandId),
+  entityId: EntityId.make(entityId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const vehicleMove = (commandId: string, entityId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+  _tag: 'VehicleCommand',
+  action: { _tag: 'move', direction: 'forward' },
+  commandId: CommandId.make(commandId),
+  entityId: EntityId.make(entityId),
+  expectedRevision,
+  player,
+  world,
+})
+
+const emptyBoat = (id: string): Vehicle => ({
+  dimension: 'overworld',
+  id: VehicleId(id),
+  occupant: undefined,
+  position: position(0, 64, 0),
+  type: 'boat',
+  velocity: { x: 0, y: 0, z: 0 },
+  yawRadians: 0,
+})
+
+const occupiedBoat = (id: string, occupant: string): Vehicle => ({
+  ...emptyBoat(id),
+  occupant: OccupantId(occupant),
+})
+
+/** A fake `VehicleServiceApi` slice: a fixed roster plus call recorders, so a test can assert exactly-once writes without mc-sim's own Ref machinery. */
+const fakeVehicles = (
+  initial: ReadonlyArray<Vehicle>,
+  mountCalls: Array<string> = [],
+  dismountCalls: Array<string> = [],
+): Pick<VehicleServiceApi, 'dismount' | 'mount' | 'vehicles'> => ({
+  dismount: (id, occupant) => {
+    dismountCalls.push(`dismount:${id}:${occupant}`)
+    return Effect.succeed(undefined)
+  },
+  mount: (id, occupant) => {
+    mountCalls.push(`mount:${id}:${occupant}`)
+    return Effect.succeed(undefined)
+  },
+  vehicles: Effect.succeed(initial),
+})
+
 describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
   describe('EntityPickupCommand — the contested-pickup case', () => {
     it.effect('two peers racing for the same entity within one tick: the loser gets stale-revision, the entity is removed exactly once', () =>
@@ -93,7 +246,12 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         const target = yield* entities.spawn(zombie(1))
         const session = new AuthoritativeSession()
         session.restore(baseSnapshot)
-        const services: WorldWriteServices<NoBehaviour> = { entities, vitalsFor: () => undefined }
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities,
+          inventoryFor: () => undefined,
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
         const apply = applyAuthoritativeCommand(session, services)
 
         // Both peers last saw revision 0 — the realistic shape of "raced within one tick."
@@ -115,7 +273,12 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         yield* entities.despawn(target.id)
         const session = new AuthoritativeSession()
         session.restore(baseSnapshot)
-        const services: WorldWriteServices<NoBehaviour> = { entities, vitalsFor: () => undefined }
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities,
+          inventoryFor: () => undefined,
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
         const apply = applyAuthoritativeCommand(session, services)
 
         const result = yield* apply(pickup('late-pickup', target.id, 0))
@@ -131,7 +294,12 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         const entities = yield* makeEntityManager<NoBehaviour>()
         const session = new AuthoritativeSession()
         session.restore(baseSnapshot)
-        const services: WorldWriteServices<NoBehaviour> = { entities, vitalsFor: () => undefined }
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities,
+          inventoryFor: () => undefined,
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
         const apply = applyAuthoritativeCommand(session, services)
 
         const result = yield* apply(pickup('nonexistent-pickup', 'never-spawned', 0))
@@ -146,7 +314,12 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         const target = yield* entities.spawn(zombie(1))
         const session = new AuthoritativeSession()
         session.restore(baseSnapshot)
-        const services: WorldWriteServices<NoBehaviour> = { entities, vitalsFor: () => undefined }
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities,
+          inventoryFor: () => undefined,
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
         const apply = applyAuthoritativeCommand(session, services)
 
         const first = yield* apply(pickup('retry-me', target.id, 0))
@@ -162,6 +335,8 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
   describe("PlayerVitalsCommand — 'respawn' and 'activity' write through, 'eat' does not", () => {
     const withAlice = (vitals: VitalsServiceApi): WorldWriteServices<NoBehaviour> => ({
       entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+      inventoryFor: () => undefined,
+      vehiclesFor: () => undefined,
       vitalsFor: (player) => (player === alice ? vitals : undefined),
     })
 
@@ -283,13 +458,18 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
     )
   })
 
-  describe('every other command tag reports CommandNotWritable rather than reaching into a rules module', () => {
-    it.effect('PlayerInventoryCommand — mc-sim exposes InventoryService but not a per-player lookup this file builds', () =>
+  describe('every command tag or action this file still cannot write through reports CommandNotWritable rather than reaching into a rules module', () => {
+    it.effect("PlayerInventoryCommand 'select-slot' — that is HotbarService's job, not InventoryService's", () =>
       Effect.gen(function* () {
         const entities = yield* makeEntityManager<NoBehaviour>()
         const session = new AuthoritativeSession()
         session.restore(baseSnapshot)
-        const services: WorldWriteServices<NoBehaviour> = { entities, vitalsFor: () => undefined }
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities,
+          inventoryFor: () => undefined,
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
         const apply = applyAuthoritativeCommand(session, services)
 
         const result = yield* apply(inventorySelect('select', 0))
@@ -301,6 +481,335 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         expect(result.reason.length).toBeGreaterThan(0)
         // Nothing was admitted to the ledger for an unwritable command — it never reaches `session.execute`.
         expect(session.revision(world)).toBe(0)
+      }),
+    )
+
+    it.effect("PlayerInventoryCommand 'move-item' — InventoryServiceApi.moveStack has no partial count", () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: (player) => (player === alice ? inventory : undefined),
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(inventoryMove('move', 0))
+
+        expect(result).toMatchObject({ _tag: 'CommandNotWritable', commandTag: 'PlayerInventoryCommand' })
+        expect(session.revision(world)).toBe(0)
+      }),
+    )
+
+    it.effect("PlayerInventoryCommand 'drop-item' — no entity-spawn service for a dropped stack", () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: (player) => (player === alice ? inventory : undefined),
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(inventoryDrop('drop', 0))
+
+        expect(result).toMatchObject({ _tag: 'CommandNotWritable', commandTag: 'PlayerInventoryCommand' })
+        expect(session.revision(world)).toBe(0)
+      }),
+    )
+
+    it.effect("VehicleCommand 'move' — turning a direction into a velocity needs vehicle-physics constants this file does not own", () =>
+      Effect.gen(function* () {
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: () => fakeVehicles([]),
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(vehicleMove('vmove', 'boat-1', 0))
+
+        expect(result).toMatchObject({ _tag: 'CommandNotWritable', commandTag: 'VehicleCommand' })
+        expect(session.revision(world)).toBe(0)
+      }),
+    )
+
+    it.effect("BowUseCommand — a whole tag with no mc-sim service at all, resolved through UNAVAILABLE_REASONS' default case", () =>
+      Effect.gen(function* () {
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(bowUse('bow-1', 0))
+
+        expect(result).toMatchObject({ _tag: 'CommandNotWritable', commandTag: 'BowUseCommand' })
+        if (result._tag !== 'CommandNotWritable') {
+          throw new Error('expected CommandNotWritable')
+        }
+        expect(result.reason.length).toBeGreaterThan(0)
+        expect(session.revision(world)).toBe(0)
+      }),
+    )
+  })
+
+  describe("PlayerInventoryCommand — 'swap-items', 'equip-item' and 'unequip-item' write through, replay does not double-apply", () => {
+    it.effect('swap-items calls InventoryServiceApi.moveStack exactly once, even on replay', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const first = yield* apply(inventorySwap('swap-1', 0, 1, 0))
+        const replay = yield* apply(inventorySwap('swap-1', 0, 1, 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        // The replay's decide closure never ran (ledger returned the cached result), so
+        // moveStack was never called for it — exactly one call reaches mc-sim.
+        expect(calls).toStrictEqual(['move:0:1'])
+      }),
+    )
+
+    it.effect('a genuinely new swap-items command after the first still moves — replay protection is per commandId, not per action', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        yield* apply(inventorySwap('swap-a', 0, 1, 0))
+        yield* apply(inventorySwap('swap-b', 1, 2, 1))
+
+        expect(calls).toStrictEqual(['move:0:1', 'move:1:2'])
+      }),
+    )
+
+    it.effect('equip-item calls InventoryServiceApi.equipFromInventory exactly once, even on replay', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const first = yield* apply(inventoryEquip('equip-1', 0))
+        const replay = yield* apply(inventoryEquip('equip-1', 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        expect(calls).toStrictEqual(['equip:0:head'])
+      }),
+    )
+
+    it.effect('unequip-item calls InventoryServiceApi.unequipToInventory exactly once, even on replay', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const first = yield* apply(inventoryUnequip('unequip-1', 0))
+        const replay = yield* apply(inventoryUnequip('unequip-1', 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        expect(calls).toStrictEqual(['unequip:head:0'])
+      }),
+    )
+
+    it.effect('an unauthorized player is rejected without any mc-sim write', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(inventorySwap('nobody', 0, 1, 0, bob))
+
+        expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
+        expect(calls).toStrictEqual([])
+      }),
+    )
+  })
+
+  describe("VehicleCommand — 'mount' and 'dismount' write through, replay does not double-apply", () => {
+    it.effect('mount is accepted and calls VehicleServiceApi.mount exactly once, even on replay', () =>
+      Effect.gen(function* () {
+        const mountCalls: Array<string> = []
+        const vehicles = fakeVehicles([emptyBoat('boat-1')], mountCalls)
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: (player) => (player === alice ? vehicles : undefined),
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const first = yield* apply(vehicleMount('mount-1', 'boat-1', 0))
+        const replay = yield* apply(vehicleMount('mount-1', 'boat-1', 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        // The replay's decide closure never ran (ledger returned the cached result), so
+        // mount was never called for it — exactly one call reaches mc-sim.
+        expect(mountCalls).toStrictEqual(['mount:boat-1:alice'])
+      }),
+    )
+
+    it.effect('mounting an already-occupied vehicle is rejected as vehicle-occupied, without calling mount', () =>
+      Effect.gen(function* () {
+        const mountCalls: Array<string> = []
+        const vehicles = fakeVehicles([occupiedBoat('boat-1', 'bob')], mountCalls)
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: (player) => (player === alice ? vehicles : undefined),
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(vehicleMount('mount-2', 'boat-1', 0))
+
+        expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'vehicle-occupied' })
+        expect(mountCalls).toStrictEqual([])
+      }),
+    )
+
+    it.effect('mounting a vehicle that does not exist is rejected as resource-not-found', () =>
+      Effect.gen(function* () {
+        const vehicles = fakeVehicles([])
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: (player) => (player === alice ? vehicles : undefined),
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(vehicleMount('mount-3', 'never-spawned', 0))
+
+        expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'resource-not-found' })
+      }),
+    )
+
+    it.effect('dismount is accepted for the current occupant and calls VehicleServiceApi.dismount exactly once, even on replay', () =>
+      Effect.gen(function* () {
+        const dismountCalls: Array<string> = []
+        const vehicles = fakeVehicles([occupiedBoat('boat-1', 'alice')], [], dismountCalls)
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: (player) => (player === alice ? vehicles : undefined),
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const first = yield* apply(vehicleDismount('dismount-1', 'boat-1', 0))
+        const replay = yield* apply(vehicleDismount('dismount-1', 'boat-1', 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        expect(dismountCalls).toStrictEqual(['dismount:boat-1:alice'])
+      }),
+    )
+
+    it.effect('dismounting a vehicle the player is not the occupant of is rejected as not-mounted', () =>
+      Effect.gen(function* () {
+        const dismountCalls: Array<string> = []
+        const vehicles = fakeVehicles([occupiedBoat('boat-1', 'bob')], [], dismountCalls)
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: (player) => (player === alice ? vehicles : undefined),
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(vehicleDismount('dismount-2', 'boat-1', 0))
+
+        expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'not-mounted' })
+        expect(dismountCalls).toStrictEqual([])
+      }),
+    )
+
+    it.effect('an unauthorized player is rejected without reading the roster or calling mount', () =>
+      Effect.gen(function* () {
+        const mountCalls: Array<string> = []
+        const vehicles = fakeVehicles([emptyBoat('boat-1')], mountCalls)
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          inventoryFor: () => undefined,
+          vehiclesFor: (player) => (player === alice ? vehicles : undefined),
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const result = yield* apply(vehicleMount('nobody', 'boat-1', 0, bob))
+
+        expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
+        expect(mountCalls).toStrictEqual([])
       }),
     )
   })

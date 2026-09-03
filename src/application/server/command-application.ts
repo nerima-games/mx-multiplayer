@@ -15,15 +15,21 @@
  * the rule this file follows: apply a remote peer's action by writing
  * through an mc-sim SERVICE, never by calling into a rules module.
  *
- * Only two of the twenty `AuthoritativeCommand` tags are wired here —
- * `EntityPickupCommand` and `PlayerVitalsCommand` — because those are the
- * ones with an mc-sim service whose shape needs no game-rule table this
- * package would have to invent to use it. `UNAVAILABLE_REASONS` below is the
- * verified map of why every other tag is not: some have no mc-sim service at
- * all, some have one shaped for a single player where multiplayer needs a
- * per-player registry this file does not yet build, and one (`'eat'`, inside
- * `PlayerVitalsCommand`) needs an item→food-value table that belongs to
- * mx-gameplay, not here.
+ * Four of the twenty `AuthoritativeCommand` tags are wired here —
+ * `EntityPickupCommand`, `PlayerInventoryCommand`, `PlayerVitalsCommand` and
+ * `VehicleCommand` — because those are the ones with an mc-sim service whose
+ * shape needs no game-rule table this package would have to invent to use
+ * it. The latter two are only PARTIALLY wired: each has actions this file
+ * writes through (`PlayerInventoryCommand`'s `'swap-items'`, `'equip-item'`,
+ * `'unequip-item'`; `VehicleCommand`'s `'mount'`, `'dismount'`) and actions
+ * it does not, for the same "no table to invent" reason, returned as
+ * `CommandNotWritable` next to the applier that makes the call — see
+ * `EAT_UNAVAILABLE_REASON` for the precedent and the per-action reasons
+ * declared next to `applyPlayerInventory` and `applyVehicle` for the rest.
+ * `UNAVAILABLE_REASONS` below is the verified map of why every other WHOLE
+ * tag is not written through: some have no mc-sim service at all, some have
+ * one shaped for a single player where multiplayer needs a per-player
+ * registry this file does not yet build.
  *
  * ---------------------------------------------------------------------------
  * `decided`, not `result._tag === 'AuthoritativeCommandAccepted'`
@@ -47,25 +53,42 @@
  */
 import type { AuthoritativeCommand, AuthoritativeCommandResult, CommandId, PlayerId } from '../../domain/protocol.js'
 import { AuthoritativeSession, type CommandDecision } from '../../domain/authoritative-session.js'
-import { type EntityManagerApi, type VitalsServiceApi, EntityId as toSimEntityId } from '@nerima-games/mc-sim'
+import {
+  type EntityManagerApi,
+  type InventoryServiceApi,
+  type Vehicle,
+  type VehicleServiceApi,
+  type VitalsServiceApi,
+  EntityId as toSimEntityId,
+  OccupantId as toSimOccupantId,
+  VehicleId as toSimVehicleId,
+} from '@nerima-games/mc-sim'
 import { Effect } from 'effect'
 
 /**
- * What a host must supply for the two command families this file writes
+ * What a host must supply for the four command families this file writes
  * through. `entities` is narrowed to exactly the two methods used — `find`
  * and `despawn` — so this file does not depend on the host's entity
  * behaviour type beyond what `EntityManagerApi` already keeps agnostic to it
  * in those two signatures (see mc-sim's `entity-manager.ts`).
  *
- * `vitalsFor` is a lookup rather than a single `VitalsServiceApi`, because
- * mc-sim's `VitalsService` is one `Context.Tag` per provide (one player's
- * vitals), not a per-player registry like `EntityManagerApi` is generic
- * over. A multiplayer host holds N players; this file does not decide how
- * the host indexes them, only that it can be asked for one by `PlayerId`.
+ * `vitalsFor`, `inventoryFor` and `vehiclesFor` are lookups rather than a
+ * single service instance, because mc-sim's `VitalsService`,
+ * `InventoryService` and `VehicleService` are each one `Context.Tag` per
+ * provide (one player's vitals, one player's inventory), not a per-player
+ * registry like `EntityManagerApi` is generic over. A multiplayer host holds
+ * N players; this file does not decide how the host indexes them, only that
+ * it can be asked for one by `PlayerId`. `inventoryFor` and `vehiclesFor`
+ * are narrowed the same way `entities` is, to exactly the methods
+ * `applyPlayerInventory` and `applyVehicle` call.
  */
 export type WorldWriteServices<Behaviour> = {
   readonly entities: Pick<EntityManagerApi<Behaviour>, 'find' | 'despawn'>
   readonly vitalsFor: (player: PlayerId) => VitalsServiceApi | undefined
+  readonly inventoryFor: (
+    player: PlayerId,
+  ) => Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'> | undefined
+  readonly vehiclesFor: (player: PlayerId) => Pick<VehicleServiceApi, 'dismount' | 'mount' | 'vehicles'> | undefined
 }
 
 /** A command this file has no mc-sim service to write through yet. See `UNAVAILABLE_REASONS`. */
@@ -79,7 +102,20 @@ export type CommandNotWritable = {
 export type CommandApplicationOutcome = AuthoritativeCommandResult | CommandNotWritable
 
 type EntityPickupCommand = Extract<AuthoritativeCommand, { readonly _tag: 'EntityPickupCommand' }>
+type PlayerInventoryCommand = Extract<AuthoritativeCommand, { readonly _tag: 'PlayerInventoryCommand' }>
 type PlayerVitalsCommand = Extract<AuthoritativeCommand, { readonly _tag: 'PlayerVitalsCommand' }>
+type VehicleCommand = Extract<AuthoritativeCommand, { readonly _tag: 'VehicleCommand' }>
+
+/** Shared by every action-level carve-out below — see `EAT_UNAVAILABLE_REASON` for the first of these. */
+const commandNotWritable = (
+  command: { readonly commandId: CommandId; readonly _tag: AuthoritativeCommand['_tag'] },
+  reason: string,
+): CommandNotWritable => ({
+  _tag: 'CommandNotWritable',
+  commandId: command.commandId,
+  commandTag: command._tag,
+  reason,
+})
 
 /**
  * `EntityPickupCommand` — the exact "contested pickup" case
@@ -113,6 +149,90 @@ const applyEntityPickup =
       }
       return result
     })
+
+const SELECT_SLOT_UNAVAILABLE_REASON =
+  "'select-slot' sets which slot a player is holding. That is `HotbarServiceApi.setSelectedSlot` (mc-sim's application/hotbar-service.ts) — InventoryServiceApi has no concept of an active slot at all. Wiring it would mean adding a third host-supplied per-player lookup beyond `inventoryFor`, which this session's scope did not extend to."
+
+const MOVE_ITEM_UNAVAILABLE_REASON =
+  "'move-item' carries a partial `count`, but `InventoryServiceApi.moveStack(sourceIndex, targetIndex)` — the only slot-to-slot transfer this service exposes — moves or merges the WHOLE stack and takes no count. Honoring `count` here would mean this package deciding what a partial move does (split the stack? clamp to available room?), which is exactly the kind of rule `domain/inventory.ts` owns, not this file."
+
+const DROP_ITEM_UNAVAILABLE_REASON =
+  "'drop-item' has to both remove `count` items from `source` and spawn a pickup-able entity in the world for them. `InventoryServiceApi` covers the removal, but the spawn half needs `EntityManagerApi<Behaviour>.spawn`, whose `SpawnRequest<Behaviour>` needs a `kind`, `healthPoints` and a host-typed `behaviour` this file has no dropped-item value for — the same host-behaviour gap `EntityAttackCommand`'s reason names below. Deciding what a dropped stack becomes as an entity is mx-gameplay's, not this file's."
+
+/** The three `PlayerInventoryAction` variants `applyPlayerInventory` writes through, dispatched to their `InventoryServiceApi` counterpart. */
+type WritableInventoryAction = Extract<PlayerInventoryCommand['action'], { readonly _tag: 'equip-item' | 'swap-items' | 'unequip-item' }>
+
+const isWritableInventoryAction = (action: PlayerInventoryCommand['action']): action is WritableInventoryAction =>
+  action._tag === 'equip-item' || action._tag === 'swap-items' || action._tag === 'unequip-item'
+
+/** Only called for `'select-slot'`/`'move-item'`/`'drop-item'` — `isWritableInventoryAction` has already ruled out the other three. */
+const inventoryActionUnavailableReason = (action: Exclude<PlayerInventoryCommand['action'], WritableInventoryAction>): string => {
+  switch (action._tag) {
+    case 'select-slot':
+      return SELECT_SLOT_UNAVAILABLE_REASON
+    case 'move-item':
+      return MOVE_ITEM_UNAVAILABLE_REASON
+    default:
+      return DROP_ITEM_UNAVAILABLE_REASON
+  }
+}
+
+const writeInventoryAction = (
+  inventory: Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'>,
+  action: WritableInventoryAction,
+): Effect.Effect<unknown> => {
+  if (action._tag === 'swap-items') {
+    return inventory.moveStack(action.source, action.destination)
+  }
+  if (action._tag === 'equip-item') {
+    return inventory.equipFromInventory(action.source, action.equipmentSlot)
+  }
+  return inventory.unequipToInventory(action.equipmentSlot, action.destination)
+}
+
+/**
+ * `PlayerInventoryCommand` — three of its six actions write through
+ * `InventoryServiceApi` unconditionally, the same "no domain check to fail"
+ * shape `applyPlayerVitals` uses for `'respawn'`/`'activity'`: none of
+ * `moveStack`/`equipFromInventory`/`unequipToInventory` reject at the
+ * `CommandRejectionReason` level (there is no `'invalid-slot'` literal in
+ * `protocol.ts`), they resolve to a discriminated result mc-sim's own delta
+ * stream is expected to reflect. `'select-slot'`, `'move-item'` and
+ * `'drop-item'` are not written through — see the reasons above — and that
+ * check runs BEFORE `inventoryFor` is consulted, same ordering
+ * `applyPlayerVitals` uses for `'eat'`.
+ */
+const applyPlayerInventory =
+  (
+    session: AuthoritativeSession,
+    inventoryFor: (
+      player: PlayerId,
+    ) => Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'> | undefined,
+  ) =>
+  (command: PlayerInventoryCommand): Effect.Effect<CommandApplicationOutcome> => {
+    const { action } = command
+    if (!isWritableInventoryAction(action)) {
+      return Effect.succeed(commandNotWritable(command, inventoryActionUnavailableReason(action)))
+    }
+
+    const inventory = inventoryFor(command.player)
+    if (inventory === undefined) {
+      return Effect.succeed(session.execute(command, () => ({ accepted: false, reason: 'unauthorized-player' })))
+    }
+
+    return Effect.gen(function* () {
+      let decided = false
+      const decide = (): CommandDecision => {
+        decided = true
+        return { accepted: true }
+      }
+      const result = session.execute(command, decide)
+      if (decided && result._tag === 'AuthoritativeCommandAccepted') {
+        yield* writeInventoryAction(inventory, action)
+      }
+      return result
+    })
+  }
 
 const EAT_UNAVAILABLE_REASON =
   "mc-sim's VitalsServiceApi.eat takes numeric foodPoints/saturationModifier; mapping the wire format's item name to those numbers is a game-rule table (which item restores how much) that mc-sim does not expose. Writing it through would mean this package inventing that table itself, which plan.md §3.14 reserves for mx-gameplay."
@@ -162,6 +282,100 @@ const applyPlayerVitals =
     })
   }
 
+const VEHICLE_MOVE_UNAVAILABLE_REASON =
+  "'move' asks to advance a vehicle by a `direction` ('forward'/'backward'), but `VehicleServiceApi.updateVelocity`/`updateTransform` (mc-sim's application/vehicle-service.ts) take an already-computed `VehicleVelocity` or transform — turning a direction into one needs a speed/acceleration constant and the vehicle's current `yawRadians` composed through mc-physics, which are movement rules this package would have to invent, not plumbing. `mount` and `dismount` need none of that: only vehicle and occupant identity, which this file already turns wire ids into elsewhere (see `toSimEntityId` above)."
+
+type MountAction = 'dismount' | 'mount'
+type SimVehicleId = ReturnType<typeof toSimVehicleId>
+type SimOccupantId = ReturnType<typeof toSimOccupantId>
+
+/** `vehicleId` and `occupant` travel together everywhere below — bundled so neither `decideVehicleAction` nor `writeVehicleAction` needs a fourth parameter. */
+type VehicleActionTarget = { readonly occupant: SimOccupantId; readonly vehicleId: SimVehicleId }
+
+/** Accept/reject only — see `applyVehicle`'s doc comment for why this runs before `session.execute`, not after. */
+const decideVehicleAction = (action: MountAction, target: Vehicle | undefined, who: VehicleActionTarget): CommandDecision => {
+  if (target === undefined) {
+    return { accepted: false, reason: 'resource-not-found' }
+  }
+  if (action === 'mount') {
+    if (target.occupant === undefined) {
+      return { accepted: true }
+    }
+    return { accepted: false, reason: 'vehicle-occupied' }
+  }
+  if (target.occupant === who.occupant) {
+    return { accepted: true }
+  }
+  return { accepted: false, reason: 'not-mounted' }
+}
+
+/** The write half of `mount`/`dismount` — `Effect.ignore` is deliberate, see `applyVehicle`'s doc comment. */
+const writeVehicleAction = (
+  vehicles: Pick<VehicleServiceApi, 'dismount' | 'mount' | 'vehicles'>,
+  action: MountAction,
+  who: VehicleActionTarget,
+): Effect.Effect<void> => {
+  if (action === 'mount') {
+    return vehicles.mount(who.vehicleId, who.occupant).pipe(Effect.ignore)
+  }
+  return vehicles.dismount(who.vehicleId, who.occupant).pipe(Effect.ignore)
+}
+
+/**
+ * `VehicleCommand`'s `'mount'` and `'dismount'` write through
+ * `VehicleServiceApi`. Unlike vitals and inventory, mount/dismount DO have a
+ * session-level accept/reject decision — `CommandRejectionReason` already
+ * carries `'not-mounted'` and `'vehicle-occupied'` literals for exactly this
+ * (protocol.ts), so this applier reads the roster BEFORE calling `decide`,
+ * same reason `applyEntityPickup` reads `find` first: the decision has to be
+ * synchronous and any mc-sim read it needs has to resolve before `execute`.
+ *
+ * The read-then-write has the same TOCTOU gap `applyEntityPickup`'s header
+ * documents for `despawn` — another peer could mount the same vehicle
+ * between the read and the write — and this applier resolves it the same
+ * way: the accept/reject decision is already recorded in the ledger by the
+ * time `mount`/`dismount` runs, and `Effect.ignore` on that call is
+ * deliberate, not a swallowed bug. `VehicleService`'s own `Ref.modify` is
+ * still the arbitration primitive for who actually ends up the occupant;
+ * this applier's job ends at calling it, matching `applyEntityPickup`'s
+ * despawn.
+ *
+ * `'move'` has no service shape to write through without inventing vehicle
+ * physics — see `VEHICLE_MOVE_UNAVAILABLE_REASON`.
+ */
+const applyVehicle =
+  (
+    session: AuthoritativeSession,
+    vehiclesFor: (player: PlayerId) => Pick<VehicleServiceApi, 'dismount' | 'mount' | 'vehicles'> | undefined,
+  ) =>
+  (command: VehicleCommand): Effect.Effect<CommandApplicationOutcome> => {
+    const { action } = command
+    if (action !== 'mount' && action !== 'dismount') {
+      return Effect.succeed(commandNotWritable(command, VEHICLE_MOVE_UNAVAILABLE_REASON))
+    }
+
+    const vehicles = vehiclesFor(command.player)
+    if (vehicles === undefined) {
+      return Effect.succeed(session.execute(command, () => ({ accepted: false, reason: 'unauthorized-player' })))
+    }
+
+    return Effect.gen(function* () {
+      const who: VehicleActionTarget = { occupant: toSimOccupantId(command.player), vehicleId: toSimVehicleId(command.entityId) }
+      const roster = yield* vehicles.vehicles
+      const target = roster.find((vehicle) => vehicle.id === who.vehicleId)
+      let decided = false
+      const decide = (): CommandDecision => {
+        decided = true
+        return decideVehicleAction(action, target, who)
+      }
+      const result = session.execute(command, decide)
+      if (decided && result._tag === 'AuthoritativeCommandAccepted') {
+        yield* writeVehicleAction(vehicles, action, who)
+      }
+      return result
+    })
+  }
+
 /**
  * Every `AuthoritativeCommand` tag this file does NOT wire, and why —
  * verified against mc-sim's published `application/` services (`git ls-tree
@@ -172,7 +386,7 @@ const applyPlayerVitals =
  * uses.
  */
 const UNAVAILABLE_REASONS: Record<
-  Exclude<AuthoritativeCommand['_tag'], 'EntityPickupCommand' | 'PlayerVitalsCommand'>,
+  Exclude<AuthoritativeCommand['_tag'], 'EntityPickupCommand' | 'PlayerInventoryCommand' | 'PlayerVitalsCommand' | 'VehicleCommand'>,
   string
 > = {
   BowUseCommand: 'mc-sim has no projectile-charge application service.',
@@ -187,14 +401,10 @@ const UNAVAILABLE_REASONS: Record<
   IgniteTntCommand: 'domain/primed-tnt.ts exists but is not wrapped by an application service.',
   InsertEyeIntoEndPortalFrameCommand: 'mc-sim has no end-portal-frame application service.',
   NetherPortalUseCommand: 'mc-sim has no portal-traversal application service.',
-  PlayerInventoryCommand:
-    "mc-sim exposes InventoryService, but as one Context.Tag instance per provide, the same single-player shape VitalsService has. Wiring it needs the same host-supplied per-player lookup WorldWriteServices adds for vitals, plus a mapping from PlayerInventoryAction's select-slot/move-item/swap-items/sort variants to InventoryServiceApi's methods — not attempted this session.",
   ThrowEyeOfEnderCommand: 'mc-sim has no stronghold/eye-of-ender application service.',
   ToggleLeverCommand: 'lever/redstone device state belongs to mx-redstone, not mc-sim.',
-  VehicleCommand:
-    'mc-sim exposes VehicleService, but wiring mount/dismount/move needs occupant-id and vehicle-id plumbing this session did not design — left for a follow-up alongside PlayerInventoryCommand.',
   VehicleUseCommand:
-    'mc-sim exposes VehicleService, but wiring mount/dismount needs occupant-id and vehicle-id plumbing this session did not design — left for a follow-up alongside PlayerInventoryCommand.',
+    "VehicleUseCommand's wire shape is CommandHeader only — protocol.ts's definition carries no entityId and no action, unlike VehicleCommand. There is no vehicle to act on in the message at all, so no amount of occupant-id/vehicle-id plumbing wires this one; VehicleCommand's mount/dismount now write through (see applyVehicle) precisely because that command does carry an entityId.",
   VillagerTradeCommand: 'mc-sim has no villager/trade application service.',
   WorldTimeWeatherCommand:
     "'set-time' sends a raw non-negative tick integer, but TimeServiceApi.setTimeOfDay wants a [0,1) fraction, and the tick-per-second conversion constant lives in domain/time-of-day.ts, which mc-sim's index.ts does not re-export. 'set-weather' sends a bare 'clear'|'rain'|'thunder' literal, but WeatherServiceApi.applyTransition takes a complete WeatherState already computed by gameplay rules. Neither sub-case has a clean write-through today.",
@@ -212,8 +422,12 @@ export const applyAuthoritativeCommand =
     switch (command._tag) {
       case 'EntityPickupCommand':
         return applyEntityPickup(session, services.entities)(command)
+      case 'PlayerInventoryCommand':
+        return applyPlayerInventory(session, services.inventoryFor)(command)
       case 'PlayerVitalsCommand':
         return applyPlayerVitals(session, services.vitalsFor)(command)
+      case 'VehicleCommand':
+        return applyVehicle(session, services.vehiclesFor)(command)
       default:
         return Effect.succeed({
           _tag: 'CommandNotWritable',
