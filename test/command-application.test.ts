@@ -2,11 +2,14 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import {
   EntityKind,
+  InventoryService,
   makeEntityManager,
+  makeHotbarService,
   makeInventoryService,
   makeVitalsService,
   OccupantId,
   VehicleId,
+  type HotbarServiceApi,
   type InventoryServiceApi,
   type SpawnRequest,
   type Vehicle,
@@ -88,9 +91,9 @@ const eat = (commandId: string, expectedRevision: number, player = alice): Autho
   world,
 })
 
-const inventorySelect = (commandId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
+const inventorySelect = (commandId: string, slot: number, expectedRevision: number, player = alice): AuthoritativeCommand => ({
   _tag: 'PlayerInventoryCommand',
-  action: { _tag: 'select-slot', slot: 0 },
+  action: { _tag: 'select-slot', slot },
   commandId: CommandId.make(commandId),
   expectedRevision,
   player,
@@ -176,6 +179,14 @@ const countingInventory = (
   },
 })
 
+/** Delegates to the real service so its own domain logic (index clamping) still runs, and records every call this file makes. */
+const countingHotbar = (real: HotbarServiceApi, calls: Array<string>): Pick<HotbarServiceApi, 'setSelectedSlot'> => ({
+  setSelectedSlot: (slot) => {
+    calls.push(`select:${slot}`)
+    return real.setSelectedSlot(slot)
+  },
+})
+
 const vehicleMount = (commandId: string, entityId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
   _tag: 'VehicleCommand',
   action: 'mount',
@@ -248,6 +259,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities,
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -275,6 +287,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities,
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -296,6 +309,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities,
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -316,6 +330,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities,
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -335,6 +350,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
   describe("PlayerVitalsCommand — 'respawn' and 'activity' write through, 'eat' does not", () => {
     const withAlice = (vitals: VitalsServiceApi): WorldWriteServices<NoBehaviour> => ({
       entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+      hotbarFor: () => undefined,
       inventoryFor: () => undefined,
       vehiclesFor: () => undefined,
       vitalsFor: (player) => (player === alice ? vitals : undefined),
@@ -459,31 +475,6 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
   })
 
   describe('every command tag or action this file still cannot write through reports CommandNotWritable rather than reaching into a rules module', () => {
-    it.effect("PlayerInventoryCommand 'select-slot' — that is HotbarService's job, not InventoryService's", () =>
-      Effect.gen(function* () {
-        const entities = yield* makeEntityManager<NoBehaviour>()
-        const session = new AuthoritativeSession()
-        session.restore(baseSnapshot)
-        const services: WorldWriteServices<NoBehaviour> = {
-          entities,
-          inventoryFor: () => undefined,
-          vehiclesFor: () => undefined,
-          vitalsFor: () => undefined,
-        }
-        const apply = applyAuthoritativeCommand(session, services)
-
-        const result = yield* apply(inventorySelect('select', 0))
-
-        expect(result).toMatchObject({ _tag: 'CommandNotWritable', commandTag: 'PlayerInventoryCommand' })
-        if (result._tag !== 'CommandNotWritable') {
-          throw new Error('expected CommandNotWritable')
-        }
-        expect(result.reason.length).toBeGreaterThan(0)
-        // Nothing was admitted to the ledger for an unwritable command — it never reaches `session.execute`.
-        expect(session.revision(world)).toBe(0)
-      }),
-    )
-
     it.effect("PlayerInventoryCommand 'move-item' — InventoryServiceApi.moveStack has no partial count", () =>
       Effect.gen(function* () {
         const inventory = yield* makeInventoryService()
@@ -491,6 +482,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: (player) => (player === alice ? inventory : undefined),
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -511,6 +503,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: (player) => (player === alice ? inventory : undefined),
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -530,6 +523,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: () => fakeVehicles([]),
           vitalsFor: () => undefined,
@@ -549,6 +543,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -576,6 +571,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -601,6 +597,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -622,6 +619,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -645,6 +643,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -668,6 +667,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: (player) => (player === alice ? countingInventory(inventory, calls) : undefined),
           vehiclesFor: () => undefined,
           vitalsFor: () => undefined,
@@ -675,6 +675,68 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         const apply = applyAuthoritativeCommand(session, services)
 
         const result = yield* apply(inventorySwap('nobody', 0, 1, 0, bob))
+
+        expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
+        expect(calls).toStrictEqual([])
+      }),
+    )
+  })
+
+  describe("PlayerInventoryCommand — 'select-slot' writes through HotbarServiceApi, replay does not double-apply", () => {
+    const withHotbar = (hotbar: Pick<HotbarServiceApi, 'setSelectedSlot'>): WorldWriteServices<NoBehaviour> => ({
+      entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+      hotbarFor: (player) => (player === alice ? hotbar : undefined),
+      inventoryFor: () => undefined,
+      vehiclesFor: () => undefined,
+      vitalsFor: () => undefined,
+    })
+
+    it.effect('select-slot calls HotbarServiceApi.setSelectedSlot exactly once, even on replay', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const hotbar = yield* makeHotbarService().pipe(Effect.provideService(InventoryService, inventory))
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const apply = applyAuthoritativeCommand(session, withHotbar(countingHotbar(hotbar, calls)))
+
+        const first = yield* apply(inventorySelect('select-1', 3, 0))
+        const replay = yield* apply(inventorySelect('select-1', 3, 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        // The replay's decide closure never ran (ledger returned the cached result), so
+        // setSelectedSlot was never called for it — exactly one call reaches mc-sim.
+        expect(calls).toStrictEqual(['select:3'])
+      }),
+    )
+
+    it.effect('a genuinely new select-slot command after the first still writes — replay protection is per commandId, not per action', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const hotbar = yield* makeHotbarService().pipe(Effect.provideService(InventoryService, inventory))
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const apply = applyAuthoritativeCommand(session, withHotbar(countingHotbar(hotbar, calls)))
+
+        yield* apply(inventorySelect('select-a', 2, 0))
+        yield* apply(inventorySelect('select-b', 5, 1))
+
+        expect(calls).toStrictEqual(['select:2', 'select:5'])
+      }),
+    )
+
+    it.effect('an unauthorized player is rejected without any mc-sim write', () =>
+      Effect.gen(function* () {
+        const inventory = yield* makeInventoryService()
+        const hotbar = yield* makeHotbarService().pipe(Effect.provideService(InventoryService, inventory))
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const apply = applyAuthoritativeCommand(session, withHotbar(countingHotbar(hotbar, calls)))
+
+        const result = yield* apply(inventorySelect('nobody', 1, 0, bob))
 
         expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
         expect(calls).toStrictEqual([])
@@ -691,6 +753,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: (player) => (player === alice ? vehicles : undefined),
           vitalsFor: () => undefined,
@@ -716,6 +779,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: (player) => (player === alice ? vehicles : undefined),
           vitalsFor: () => undefined,
@@ -736,6 +800,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: (player) => (player === alice ? vehicles : undefined),
           vitalsFor: () => undefined,
@@ -756,6 +821,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: (player) => (player === alice ? vehicles : undefined),
           vitalsFor: () => undefined,
@@ -779,6 +845,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: (player) => (player === alice ? vehicles : undefined),
           vitalsFor: () => undefined,
@@ -800,6 +867,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         session.restore(baseSnapshot)
         const services: WorldWriteServices<NoBehaviour> = {
           entities: { despawn: () => Effect.succeed(false), find: () => Effect.succeed(undefined) },
+          hotbarFor: () => undefined,
           inventoryFor: () => undefined,
           vehiclesFor: (player) => (player === alice ? vehicles : undefined),
           vitalsFor: () => undefined,

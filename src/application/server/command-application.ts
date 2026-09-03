@@ -20,12 +20,13 @@
  * `VehicleCommand` — because those are the ones with an mc-sim service whose
  * shape needs no game-rule table this package would have to invent to use
  * it. The latter two are only PARTIALLY wired: each has actions this file
- * writes through (`PlayerInventoryCommand`'s `'swap-items'`, `'equip-item'`,
- * `'unequip-item'`; `VehicleCommand`'s `'mount'`, `'dismount'`) and actions
- * it does not, for the same "no table to invent" reason, returned as
- * `CommandNotWritable` next to the applier that makes the call — see
- * `EAT_UNAVAILABLE_REASON` for the precedent and the per-action reasons
- * declared next to `applyPlayerInventory` and `applyVehicle` for the rest.
+ * writes through (`PlayerInventoryCommand`'s `'select-slot'`, `'swap-items'`,
+ * `'equip-item'`, `'unequip-item'`; `VehicleCommand`'s `'mount'`,
+ * `'dismount'`) and actions it does not, for the same "no table to invent"
+ * reason, returned as `CommandNotWritable` next to the applier that makes
+ * the call — see `EAT_UNAVAILABLE_REASON` for the precedent and the
+ * per-action reasons declared next to `applyPlayerInventory` and
+ * `applyVehicle` for the rest.
  * `UNAVAILABLE_REASONS` below is the verified map of why every other WHOLE
  * tag is not written through: some have no mc-sim service at all, some have
  * one shaped for a single player where multiplayer needs a per-player
@@ -55,6 +56,7 @@ import type { AuthoritativeCommand, AuthoritativeCommandResult, CommandId, Playe
 import { AuthoritativeSession, type CommandDecision } from '../../domain/authoritative-session.js'
 import {
   type EntityManagerApi,
+  type HotbarServiceApi,
   type InventoryServiceApi,
   type Vehicle,
   type VehicleServiceApi,
@@ -72,15 +74,18 @@ import { Effect } from 'effect'
  * behaviour type beyond what `EntityManagerApi` already keeps agnostic to it
  * in those two signatures (see mc-sim's `entity-manager.ts`).
  *
- * `vitalsFor`, `inventoryFor` and `vehiclesFor` are lookups rather than a
- * single service instance, because mc-sim's `VitalsService`,
- * `InventoryService` and `VehicleService` are each one `Context.Tag` per
- * provide (one player's vitals, one player's inventory), not a per-player
- * registry like `EntityManagerApi` is generic over. A multiplayer host holds
- * N players; this file does not decide how the host indexes them, only that
- * it can be asked for one by `PlayerId`. `inventoryFor` and `vehiclesFor`
- * are narrowed the same way `entities` is, to exactly the methods
- * `applyPlayerInventory` and `applyVehicle` call.
+ * `vitalsFor`, `inventoryFor`, `hotbarFor` and `vehiclesFor` are lookups
+ * rather than a single service instance, because mc-sim's `VitalsService`,
+ * `InventoryService`, `HotbarService` and `VehicleService` are each one
+ * `Context.Tag` per provide (one player's vitals, one player's inventory),
+ * not a per-player registry like `EntityManagerApi` is generic over. A
+ * multiplayer host holds N players; this file does not decide how the host
+ * indexes them, only that it can be asked for one by `PlayerId`.
+ * `inventoryFor`, `hotbarFor` and `vehiclesFor` are narrowed the same way
+ * `entities` is, to exactly the methods `applyPlayerInventory` and
+ * `applyVehicle` call — `hotbarFor` to `setSelectedSlot` alone, since
+ * `select-slot` is the only `PlayerInventoryAction` `HotbarServiceApi`
+ * backs.
  */
 export type WorldWriteServices<Behaviour> = {
   readonly entities: Pick<EntityManagerApi<Behaviour>, 'find' | 'despawn'>
@@ -88,6 +93,7 @@ export type WorldWriteServices<Behaviour> = {
   readonly inventoryFor: (
     player: PlayerId,
   ) => Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'> | undefined
+  readonly hotbarFor: (player: PlayerId) => Pick<HotbarServiceApi, 'setSelectedSlot'> | undefined
   readonly vehiclesFor: (player: PlayerId) => Pick<VehicleServiceApi, 'dismount' | 'mount' | 'vehicles'> | undefined
 }
 
@@ -150,14 +156,14 @@ const applyEntityPickup =
       return result
     })
 
-const SELECT_SLOT_UNAVAILABLE_REASON =
-  "'select-slot' sets which slot a player is holding. That is `HotbarServiceApi.setSelectedSlot` (mc-sim's application/hotbar-service.ts) — InventoryServiceApi has no concept of an active slot at all. Wiring it would mean adding a third host-supplied per-player lookup beyond `inventoryFor`, which this session's scope did not extend to."
-
 const MOVE_ITEM_UNAVAILABLE_REASON =
   "'move-item' carries a partial `count`, but `InventoryServiceApi.moveStack(sourceIndex, targetIndex)` — the only slot-to-slot transfer this service exposes — moves or merges the WHOLE stack and takes no count. Honoring `count` here would mean this package deciding what a partial move does (split the stack? clamp to available room?), which is exactly the kind of rule `domain/inventory.ts` owns, not this file."
 
 const DROP_ITEM_UNAVAILABLE_REASON =
   "'drop-item' has to both remove `count` items from `source` and spawn a pickup-able entity in the world for them. `InventoryServiceApi` covers the removal, but the spawn half needs `EntityManagerApi<Behaviour>.spawn`, whose `SpawnRequest<Behaviour>` needs a `kind`, `healthPoints` and a host-typed `behaviour` this file has no dropped-item value for — the same host-behaviour gap `EntityAttackCommand`'s reason names below. Deciding what a dropped stack becomes as an entity is mx-gameplay's, not this file's."
+
+/** The single `PlayerInventoryAction` variant `applySelectSlot` writes through, dispatched to `HotbarServiceApi`. */
+type SelectSlotAction = Extract<PlayerInventoryCommand['action'], { readonly _tag: 'select-slot' }>
 
 /** The three `PlayerInventoryAction` variants `applyPlayerInventory` writes through, dispatched to their `InventoryServiceApi` counterpart. */
 type WritableInventoryAction = Extract<PlayerInventoryCommand['action'], { readonly _tag: 'equip-item' | 'swap-items' | 'unequip-item' }>
@@ -165,16 +171,14 @@ type WritableInventoryAction = Extract<PlayerInventoryCommand['action'], { reado
 const isWritableInventoryAction = (action: PlayerInventoryCommand['action']): action is WritableInventoryAction =>
   action._tag === 'equip-item' || action._tag === 'swap-items' || action._tag === 'unequip-item'
 
-/** Only called for `'select-slot'`/`'move-item'`/`'drop-item'` — `isWritableInventoryAction` has already ruled out the other three. */
-const inventoryActionUnavailableReason = (action: Exclude<PlayerInventoryCommand['action'], WritableInventoryAction>): string => {
-  switch (action._tag) {
-    case 'select-slot':
-      return SELECT_SLOT_UNAVAILABLE_REASON
-    case 'move-item':
-      return MOVE_ITEM_UNAVAILABLE_REASON
-    default:
-      return DROP_ITEM_UNAVAILABLE_REASON
+/** Only called for `'move-item'`/`'drop-item'` — `applyPlayerInventory` special-cases `'select-slot'` before this runs, and `isWritableInventoryAction` has already ruled out the other three. */
+const inventoryActionUnavailableReason = (
+  action: Extract<PlayerInventoryCommand['action'], { readonly _tag: 'drop-item' | 'move-item' }>,
+): string => {
+  if (action._tag === 'move-item') {
+    return MOVE_ITEM_UNAVAILABLE_REASON
   }
+  return DROP_ITEM_UNAVAILABLE_REASON
 }
 
 const writeInventoryAction = (
@@ -191,16 +195,53 @@ const writeInventoryAction = (
 }
 
 /**
- * `PlayerInventoryCommand` — three of its six actions write through
- * `InventoryServiceApi` unconditionally, the same "no domain check to fail"
- * shape `applyPlayerVitals` uses for `'respawn'`/`'activity'`: none of
- * `moveStack`/`equipFromInventory`/`unequipToInventory` reject at the
- * `CommandRejectionReason` level (there is no `'invalid-slot'` literal in
- * `protocol.ts`), they resolve to a discriminated result mc-sim's own delta
- * stream is expected to reflect. `'select-slot'`, `'move-item'` and
- * `'drop-item'` are not written through — see the reasons above — and that
- * check runs BEFORE `inventoryFor` is consulted, same ordering
- * `applyPlayerVitals` uses for `'eat'`.
+ * `'select-slot'` writes through `HotbarServiceApi.setSelectedSlot`
+ * unconditionally, the same "no domain check to fail" shape
+ * `applyPlayerInventory` uses for its three `InventoryServiceApi` actions
+ * below: `setSelectedSlot` clamps an out-of-range index via
+ * `Hotbar.clampHotbarIndex` (mc-sim's domain/hotbar.ts) rather than
+ * rejecting one, so there is no `CommandRejectionReason` this applier could
+ * report even if it wanted to. Split out of `applyPlayerInventory` because
+ * it writes through a different per-player lookup (`hotbarFor`, not
+ * `inventoryFor`) — `HotbarService` and `InventoryService` are separate
+ * mc-sim `Context.Tag`s.
+ */
+const applySelectSlot =
+  (session: AuthoritativeSession, hotbarFor: (player: PlayerId) => Pick<HotbarServiceApi, 'setSelectedSlot'> | undefined) =>
+  (command: PlayerInventoryCommand, action: SelectSlotAction): Effect.Effect<CommandApplicationOutcome> => {
+    const hotbar = hotbarFor(command.player)
+    if (hotbar === undefined) {
+      return Effect.succeed(session.execute(command, () => ({ accepted: false, reason: 'unauthorized-player' })))
+    }
+
+    return Effect.gen(function* () {
+      let decided = false
+      const decide = (): CommandDecision => {
+        decided = true
+        return { accepted: true }
+      }
+      const result = session.execute(command, decide)
+      if (decided && result._tag === 'AuthoritativeCommandAccepted') {
+        yield* hotbar.setSelectedSlot(action.slot)
+      }
+      return result
+    })
+  }
+
+/**
+ * `PlayerInventoryCommand` — four of its six actions write through mc-sim
+ * unconditionally, the same "no domain check to fail" shape
+ * `applyPlayerVitals` uses for `'respawn'`/`'activity'`: none of
+ * `setSelectedSlot`/`moveStack`/`equipFromInventory`/`unequipToInventory`
+ * reject at the `CommandRejectionReason` level (there is no
+ * `'invalid-slot'` literal in `protocol.ts`), they resolve to a
+ * discriminated result mc-sim's own delta stream is expected to reflect.
+ * `'select-slot'` is dispatched to `applySelectSlot` before the
+ * `InventoryServiceApi`-backed check below runs, since it writes through a
+ * different service. `'move-item'` and `'drop-item'` are not written
+ * through — see the reasons above — and that check runs BEFORE
+ * `inventoryFor` is consulted, same ordering `applyPlayerVitals` uses for
+ * `'eat'`.
  */
 const applyPlayerInventory =
   (
@@ -208,9 +249,14 @@ const applyPlayerInventory =
     inventoryFor: (
       player: PlayerId,
     ) => Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'> | undefined,
+    hotbarFor: (player: PlayerId) => Pick<HotbarServiceApi, 'setSelectedSlot'> | undefined,
   ) =>
   (command: PlayerInventoryCommand): Effect.Effect<CommandApplicationOutcome> => {
     const { action } = command
+    if (action._tag === 'select-slot') {
+      return applySelectSlot(session, hotbarFor)(command, action)
+    }
+
     if (!isWritableInventoryAction(action)) {
       return Effect.succeed(commandNotWritable(command, inventoryActionUnavailableReason(action)))
     }
@@ -423,7 +469,7 @@ export const applyAuthoritativeCommand =
       case 'EntityPickupCommand':
         return applyEntityPickup(session, services.entities)(command)
       case 'PlayerInventoryCommand':
-        return applyPlayerInventory(session, services.inventoryFor)(command)
+        return applyPlayerInventory(session, services.inventoryFor, services.hotbarFor)(command)
       case 'PlayerVitalsCommand':
         return applyPlayerVitals(session, services.vitalsFor)(command)
       case 'VehicleCommand':
