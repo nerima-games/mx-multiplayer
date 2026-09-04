@@ -86,6 +86,26 @@ describe('deterministic interpolation', () => {
     }),
   )
 
+  it.effect('treats a gap exactly at teleportDistance as a teleport, not a lerp target one unit short', () =>
+    Effect.sync(() => {
+      // A movement distance strictly greater than the threshold (the case above)
+      // cannot distinguish `>=` from `>` on the boundary itself.
+      const subject = makeSubject(4, 8)
+      const before = snapshot(1, 0, 0)
+      const exactlyAtThreshold = snapshot(2, 10, 8)
+      subject.ingest(alice, before)
+      subject.ingest(alice, exactlyAtThreshold)
+      // Midway in tick, but a lerp would place x at 4 — a teleport snap must not.
+      expect(subject.sample(alice, 5)?.at.x).toBe(0)
+
+      const justBelowThreshold = makeSubject(4, 8)
+      const near = snapshot(2, 10, 7.999)
+      justBelowThreshold.ingest(alice, before)
+      justBelowThreshold.ingest(alice, near)
+      expect(justBelowThreshold.sample(alice, 5)?.at.x).toBeCloseTo(3.9995)
+    }),
+  )
+
   it.effect('walks past a non-matching pair to interpolate within a later one in a 3-snapshot history', () =>
     Effect.sync(() => {
       const subject = makeSubject(4, 16)
