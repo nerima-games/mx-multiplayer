@@ -9,6 +9,7 @@ import {
   makeVitalsService,
   OccupantId,
   VehicleId,
+  type EntityManagerApi,
   type HotbarServiceApi,
   type InventoryServiceApi,
   type SpawnRequest,
@@ -179,12 +180,36 @@ const countingInventory = (
   },
 })
 
+/** Delegates to the real service so its own arbitration (`Ref.modify`) still runs, and records every `despawn` invocation — `find` passes through untouched since only the write half is under test. */
+const countingEntities = <Behaviour>(
+  real: Pick<EntityManagerApi<Behaviour>, 'despawn' | 'find'>,
+  calls: Array<string>,
+): Pick<EntityManagerApi<Behaviour>, 'despawn' | 'find'> => ({
+  despawn: (id) => {
+    calls.push(`despawn:${id}`)
+    return real.despawn(id)
+  },
+  find: real.find,
+})
+
 /** Delegates to the real service so its own domain logic (index clamping) still runs, and records every call this file makes. */
 const countingHotbar = (real: HotbarServiceApi, calls: Array<string>): Pick<HotbarServiceApi, 'setSelectedSlot'> => ({
   setSelectedSlot: (slot) => {
     calls.push(`select:${slot}`)
     return real.setSelectedSlot(slot)
   },
+})
+
+/**
+ * Delegates to the real service so its own domain logic still runs, and
+ * records every `respawn` invocation. `respawn` is a plain `Effect` value on
+ * `VitalsServiceApi`, not a method, so the wrapper re-describes it with
+ * `Effect.tap` rather than intercepting a call — each `yield*` of the
+ * returned Effect re-runs the tap, exactly once per actual respawn.
+ */
+const countingVitals = (real: VitalsServiceApi, calls: Array<string>): VitalsServiceApi => ({
+  ...real,
+  respawn: real.respawn.pipe(Effect.tap(() => Effect.sync(() => calls.push('respawn')))),
 })
 
 const vehicleMount = (commandId: string, entityId: string, expectedRevision: number, player = alice): AuthoritativeCommand => ({
@@ -345,6 +370,36 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         expect(yield* entities.count).toBe(0)
       }),
     )
+
+    it.effect('replaying the same accepted commandId calls EntityManagerApi.despawn exactly once', () =>
+      Effect.gen(function* () {
+        const entities = yield* makeEntityManager<NoBehaviour>()
+        const target = yield* entities.spawn(zombie(1))
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const services: WorldWriteServices<NoBehaviour> = {
+          entities: countingEntities(entities, calls),
+          hotbarFor: () => undefined,
+          inventoryFor: () => undefined,
+          vehiclesFor: () => undefined,
+          vitalsFor: () => undefined,
+        }
+        const apply = applyAuthoritativeCommand(session, services)
+
+        const first = yield* apply(pickup('retry-me-2', target.id, 0))
+        const replay = yield* apply(pickup('retry-me-2', target.id, 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        // `entities.count === 0` alone (the test above) cannot distinguish one despawn
+        // from two: despawn on an already-gone entity is a no-op `Ref.modify` that
+        // returns `false` and changes nothing observable. Only a call-count spy proves
+        // the replay's decide closure never ran, the same "gate on decided" invariant
+        // this file's header documents.
+        expect(calls).toStrictEqual([`despawn:${target.id}`])
+      }),
+    )
   })
 
   describe("PlayerVitalsCommand — 'respawn' and 'activity' write through, 'eat' does not", () => {
@@ -441,6 +496,28 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
         expect(second).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
         expect(afterFirst.healthPoints).toBe(afterFirst.maxHealthPoints)
         expect(afterSecond).toStrictEqual(afterFirst)
+      }),
+    )
+
+    it.effect('respawn calls VitalsServiceApi.respawn exactly once, even on replay', () =>
+      Effect.gen(function* () {
+        const vitals = yield* makeVitalsService()
+        yield* vitals.damage({ amount: 15, cause: 'test' })
+        const calls: Array<string> = []
+        const session = new AuthoritativeSession()
+        session.restore(baseSnapshot)
+        const apply = applyAuthoritativeCommand(session, withAlice(countingVitals(vitals, calls)))
+
+        const first = yield* apply(respawn('respawn-replay', 0))
+        const replay = yield* apply(respawn('respawn-replay', 0))
+
+        expect(first).toMatchObject({ _tag: 'AuthoritativeCommandAccepted' })
+        expect(replay).toStrictEqual(first)
+        // The replay's decide closure never ran (ledger returned the cached result), so
+        // vitals.respawn was never called for it — exactly one call reaches mc-sim, the
+        // same "gate on decided, not merely on the result tag" invariant this file's
+        // header documents for every other applier (see the module doc comment).
+        expect(calls).toStrictEqual(['respawn'])
       }),
     )
 
