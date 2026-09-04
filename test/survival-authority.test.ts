@@ -78,6 +78,20 @@ describe('survival authority', () => {
     })
   })
 
+  it('floors overkill damage at zero rather than going negative, so death detection (health === 0) still fires', () => {
+    // bob starts at 4 health; an attackDamage far beyond that would drive health to -6
+    // without a floor. Death detection below is a strict `health === 0` check, so an
+    // unclamped negative health would silently skip ActorDied/ItemDropped entirely —
+    // the target would end the command still nominally alive.
+    const authority = new SurvivalAuthority(initial(), { attackDamage: 10 })
+    const result = authority.execute({ ...header('overkill'), _tag: 'Attack', target: bob })
+    expect(result).toMatchObject({
+      accepted: true,
+      events: [{ _tag: 'ActorDamaged', health: 0 }, { _tag: 'ActorDied' }, { _tag: 'ItemDropped', item: 'apple' }],
+    })
+    expect(authority.snapshot().actors.find((actor) => actor.player === bob)?.health).toBe(0)
+  })
+
   it('round-trips snapshots and rotates the authenticated session on rejoin', () => {
     const first = new SurvivalAuthority(initial())
     first.execute({ ...header('break'), _tag: 'BreakBlock', at: { x: 2, y: 64, z: 0 } })

@@ -140,6 +140,26 @@ describe('hunger authority', () => {
     expect(authority.snapshot()).toStrictEqual(before)
   })
 
+  it('regenerates at exactly food 18, the documented threshold, but not at food 17', () => {
+    // The default `snapshot()` fixture starts at food 19, which is >= 18 AND >= 19 —
+    // it cannot distinguish the correct threshold from an off-by-one on it. Pin the
+    // boundary itself: 18 must heal, 17 must not.
+    const base = snapshot()
+    const atThreshold = createHungerAuthority({
+      ...base,
+      actors: [{ ...base.actors[0]!, state: { food: 18, saturation: 0, exhaustion: 0, health: 18 } }],
+    })
+    atThreshold.tick(4000)
+    expect(atThreshold.snapshot().actors[0]?.state).toMatchObject({ health: 19, exhaustion: 6 })
+
+    const belowThreshold = createHungerAuthority({
+      ...base,
+      actors: [{ ...base.actors[0]!, state: { food: 17, saturation: 0, exhaustion: 0, health: 18 } }],
+    })
+    belowThreshold.tick(4000)
+    expect(belowThreshold.snapshot().actors[0]?.state).toMatchObject({ health: 18, exhaustion: 0 })
+  })
+
   it('drains saturation before food, and leaves an already-dead actor unticked', () => {
     const base = snapshot()
     const saturated = createHungerAuthority({
