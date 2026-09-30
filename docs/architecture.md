@@ -75,14 +75,14 @@ graph BT
 
 > **mc-kernel は全リポジトリから import 可能。** グラフに描かないのは、
 > 全ノードから kernel へエッジを引くと図が読めなくなるためと、
-> `scripts/check-dependency-whitelist.ts` が `dependencyGraph` に kernel を書くことを
-> 設定エラーとして拒否するため(rule 4)。ただし `package.json` への記載は必要。
+> the graph omits the shared kernel edge for readability. The direct dependency remains
+> declared in `package.json`.
 
 ## 3. このリポジトリの位置
 
-**mx-multiplayer の実行時依存は `@nerima-games/mc-sim` ただ 1 つ。**
+**The direct runtime dependencies are the packages listed in `package.json`: `@nerima-games/mc-kernel`, `@nerima-games/mc-sim`, and `effect`.**
 
-その 1 本しかないことが設計そのものである。
+The direct dependency list in `package.json` is the design boundary.
 
 - **上流(mc-sim)へ**: リモートピアの行動を世界に反映するときは、必ず mc-sim のサービス
   (`InventoryService` / `EntityManager` 等)に書き込む。mx-gameplay を呼ぶことは決してない。
@@ -93,15 +93,13 @@ graph BT
 
 ### 到達できるが import してはいけないもの
 
-`pnpm install` すると `node_modules` には mc-physics も mc-worldgen も mc-save も物理的に存在する
-(mc-sim の推移的依存として)。**それらを import することは禁止**である。
+Transitive packages may be present after installation, but they are not direct dependencies and must not be imported by this package.
 
 ```
 mx-multiplayer -> mc-sim -> mc-physics   ... mc-physics の import は transitive-import 違反
 ```
 
-`pnpm check:deps` が `transitive-import` として非ゼロ終了する。
-「推移的依存は import ライセンスではない」— 16 リポジトリ分割が静かにモノリスへ戻る唯一の経路がこれである。
+The direct dependency list in `package.json` is the dependency boundary. A transitive dependency is not an import license.
 
 ## 4. 設計ルール
 
@@ -131,12 +129,8 @@ mx-multiplayer → mx-gameplay の呼び出しではなく、mc-sim の `Invento
 kit を実行時依存にすると、出荷ビルドが「同梱されないハーネス」から入力を取ることになり、
 リリースビルドから入力処理が丸ごと消える。
 
-強制は 2 段構え:
-
-1. `scripts/check-dependency-whitelist.ts` の `DEV_ONLY_PACKAGES` が
-   `dependencies` への出現を `dev-only-package-in-dependencies` として拒否
-2. 出荷ソース(`index.ts` / `domain/`)からの import を
-   `dev-only-package-in-shipped-source` として拒否
+The package does not declare `mc-playground-kit` in `dependencies`, and its shipped
+source does not import the kit.
 
 なお **mx-multiplayer は kit を devDependency としても使わない**。
 プレビューを持つのは mx-gameplay と mx-redstone であり、こちらの検証はループバックで完結する
@@ -150,6 +144,4 @@ mx-multiplayer は `StageRegistration.after` で**順序制約を宣言するだ
 
 ### 4.4 依存ホワイトリストは CI で強制(plan.md §2.3-5)
 
-`pnpm check:deps` は違反があれば必ず非ゼロ終了する。
-参照実装の `check-package-dag.ts` は警告を出して常に 0 で終了していた
-— 落ちないゲートはドキュメントであってゲートではない。
+The package dependency boundary is reviewed from `package.json`; `pnpm verify` remains the repository verification command.

@@ -11,7 +11,7 @@
 
 | 名前 | 種別 | 契約 |
 | --- | --- | --- |
-| `PROTOCOL_VERSION` | `number` | このビルドが話すプロトコルバージョン。現在 `3` |
+| `PROTOCOL_VERSION` | `number` | The wire protocol version exported by `src/domain/protocol.ts`; the source and compatibility tests are authoritative |
 | `PlayerId` / `PlayerName` / `WorldId` | branded Schema | 非空文字列。`.make(...)` でコンストラクト |
 | `Vec3` | Schema | `{ x, y, z }` すべて `finite()` |
 | `BlockPos` | Schema | `{ x, y, z }` すべて `int()` |
@@ -21,7 +21,7 @@
 | `MESSAGE_TAGS` | `ReadonlyArray` | 既知タグの一覧。網羅性テスト用 |
 | `Frame` | Schema | `{ protocolVersion, message }` |
 
-### メッセージ一覧（42 タグ）
+### Message tags
 
 | タグ群 | 意味 |
 | --- | --- |
@@ -31,6 +31,7 @@
 | `PlayerInventoryCommand` から `VehicleCommand` | authoritative server に送る操作要求 |
 | `AuthoritativeCommandAccepted` / `AuthoritativeCommandRejected` / `AuthoritativeResyncRequest` | command 結果と再同期要求 |
 | `Ping` / `Pong` | 生存確認。**タイムスタンプではない**([design-notes.md](./design-notes.md) DN-3) |
+| subsystem command/result and delta tags (`Anvil*`, `Crafting*`, `PlayerDamage*`, `Brewing*`, `Enchanting*`, `Wither*`, `EnderDragon*`) | subsystem-specific synchronization |
 
 > **「主張している」**の含意: `BlockBreak` はドロップが何であるかを言わない。
 > それはルールであり、mx-gameplay と mc-sim のものである。
@@ -211,34 +212,12 @@ const makeMultiplayerStagesForPreview: Effect<{ state; stages }, never, Transpor
 全体の stage 順序は [responsibility.md](./responsibility.md) §2.1 を参照。これは
 mx-multiplayer の公開 API ではなく、mc-compose が所有するフレーム契約である。
 
-**API ロックファイルはこの表から外れた。** plan.md §9 の未決事項
-「API ロックファイルのツール選定（api-extractor 相当の Effect-TS 互換手段）」は決着し、
-実装されている。
+## 9. Published package boundary
 
-| 項目 | 内容 |
-| --- | --- |
-| 生成物 | リポジトリ直下の `api-lock.md`（公開宣言 58 件 + 参照されている非 export 宣言 3 件。コミット対象） |
-| 生成器 | `scripts/api-lock.ts`（16 リポジトリに byte-identical で vendor。`scripts/check-dependency-whitelist.ts` と同じ方式で、編集してよいのは `REPOSITORY_POLICY` だけ） |
-| 検査 | `pnpm api:check` — `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了 |
-| 更新 | `pnpm api:update` |
-| 配線 | `pnpm verify` の `check:deps` と `test` の間、および CI の `API lock` ステップ |
-| 追加依存 | **なし**（`typescript` は既に devDependency） |
+`package.json` is the source of truth for the published surface:
 
-理由と実測の正本は mc-kernel の `docs/versioning.md` §7。
-`@microsoft/api-extractor` は「`Context.Tag` のサービスクラスが写らない」ことを決め手に却下されている。
+- `exports["."]` exposes only `./dist/index.js` and `./dist/index.d.ts`.
+- `files` includes only `dist`, `LICENSE`, and `README.md`.
+- There are no published subpath exports; deep imports from `src/` or `dist/` are unsupported.
 
-本リポジトリで言えば `TransportPort` がその当のものである。`api-lock.md` には
-
-```ts
-const TransportPort_base: Context.TagClass<TransportPort, "@nerima-games/mx-multiplayer/TransportPort", TransportService>;
-```
-
-が残っており、§5 で議論した「**Port が運ぶのはテキストであってメッセージ値ではない**」
-という決定 —— `send: (frame: WireText) => ...`、`inbound: Queue.Dequeue<WireText>` ——
-はこの `TransportService` の中身として写る。`WireText` を `NetworkMessage` に戻す変更は
-文章上の約束ではなく `pnpm api:check` の失敗になる。api-extractor を採っていた場合、
-ここは `export class TransportPort extends TransportPort_base {}` という空の殻に潰れ、
-Tag 識別子文字列も `TransportService` も消えていた。
-
-捕まえないもの: **挙動**（コーデックが何を吐くかはテストの仕事）と、
-**interface / 型リテラルのメンバ順**（ソース順を保つので並べ替えは API 変更でなくても diff になる）。
+The root barrel in `src/index.ts` and the declarations produced by `pnpm build` must stay aligned with this boundary.

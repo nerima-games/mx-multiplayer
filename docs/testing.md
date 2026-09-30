@@ -7,18 +7,18 @@ plan.md §3.14 検証:
 
 | レイヤ | 検証手段 | 現状 |
 | --- | --- | --- |
-| プロトコル / コーデック | ラウンドトリップ + 不正入力の拒否 | `test/codec.test.ts`(15 tests) |
-| 接続ライフサイクル | 状態機械の遷移表。**不正遷移が拒否されること**を含む | `test/connection.test.ts`(11 tests) |
-| トランスポート | **ループバック同期テスト**(2 本の実トランスポート) | `test/transport.test.ts`(7 tests) |
-| 公開 API | バレルのピン留め + 越境しそうな名前の検査 | `test/public-api.test.ts`(4 tests) |
-| 依存境界 | ホワイトリスト・推移閉包・`Date.now()` 禁止 | `test/check-dependency-whitelist.test.ts`(44 tests) |
-| プレビューが見つけたもの | 現在の（誤った）挙動の固定 + プレビュー由来の新規チェック | `test/preview-findings.test.ts`(13 tests、§9) |
+| プロトコル / コーデック | ラウンドトリップ + 不正入力の拒否 | `test/codec.test.ts` |
+| 接続ライフサイクル | 状態機械の遷移表。**不正遷移が拒否されること**を含む | `test/connection.test.ts` |
+| トランスポート | **ループバック同期テスト**(2 本の実トランスポート) | `test/transport.test.ts` |
+| 公開 API | バレルのピン留め + 越境しそうな名前の検査 | `test/public-api.test.ts` |
+| サーバー側 command application | mc-sim service への反映と拒否 | `test/command-application.test.ts` |
+| プレビューが見つけたもの | 現在の（誤った）挙動の固定 + プレビュー由来の新規チェック | `test/preview-findings.test.ts` |
 | セッション全体 | **ローカル 2 クライアントのプレビュー**（フォールト注入つき） | `apps/preview-two-clients/`（§8-9） |
 | 実 WebSocket | **ここでは検証しない**。アダプタの責務 | — |
 | 画面 | **ここでは検証しない**。mx-ui の責務 | — |
 | モジュール間相互作用 | **ここでは検証しない**。mc-compose の E2E が最終ゲート | — |
 
-現在 **120 tests / 7 files**。すべて `pnpm test` で 700ms 前後。
+The complete test suite under `test/` is executed by `pnpm test`; this document intentionally avoids duplicating a volatile test count.
 
 `pnpm verify` はプレビューを**実行しない**。プレビューは完成条件であってゲートではない。
 型検査（`tsconfig.preview.json`）と lint（`oxlint … apps`）は掛かる。
@@ -103,7 +103,7 @@ CI では `Coverage` step が同じコマンドを実行し、非ゼロ終了で
 | --- | --- |
 | ~~`no message schema declares a wall-clock field`~~ | **書いた**（`test/preview-findings.test.ts`）。メッセージ集合の確定を待つ必要は無かった —— 今の `MESSAGE_TAGS` を掃けば今の答えが出るし、集合が増えれば増えたまま答え続ける |
 | プロパティテスト(任意の `NetworkMessage` でラウンドトリップ) | `effect/FastCheck` の Arbitrary 生成。`.npmrc` の `fast-check` hoist は既に用意済み |
-| mc-sim 反映のシナリオテスト | mc-sim 公開後 |
+| mc-sim 反映のシナリオテスト | `test/command-application.test.ts` |
 | プロトコル後方互換テスト(旧バージョンのフレーム fixture) | v2 到達時。fixture は**コミットして凍結**する |
 | アダプタの実ソケットテスト | アダプタの所在確定後。**このリポジトリには置かない** |
 
@@ -154,7 +154,7 @@ machine フォールトは `a`〜`z` で、DN-8 が名指しする 3 本
 | # | 症状 | 場所 |
 | --- | --- | --- |
 | **M1** | **バージョンがメッセージ形状より後に検査されている。** 新しいビルドから来たフレームは、このビルドのスキーマが受け付けない形を含んだ瞬間に `malformed-frame` になる（実測 3/4） | `domain/codec.ts:89-100` |
-| **M2** | `ConnectionState.Connecting.attempt` は常に 1。生成箇所は 2 つだけで、どちらもリテラルを書く。export されており `api-lock.md` にも載っている | `domain/connection.ts:80`, `:116` |
+| **M2** | `ConnectionState.Connecting.attempt` is initialized through the shared `FIRST_ATTEMPT` constant | `domain/connection.ts` |
 | **M3** | 決着した接続が、実際のソケットが次に届けるイベント（書き込み失敗の後の close、Disconnect の 2 度押し）を「不正」として拒否する | `domain/connection.ts:113-121` |
 | **M4 (解決済み)** | `connectionGatedTransport` が各 send 時に現在状態を読み、`Connected` 以外を typed `TransportError` で拒否する | `domain/transport.ts` / `test/transport.test.ts` |
 

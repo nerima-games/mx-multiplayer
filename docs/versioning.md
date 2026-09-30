@@ -1,41 +1,25 @@
 # バージョニングと公開
 
-## 1. 現在地
+## 1. Package metadata
 
-- **package version**: `0.5.0`
-- **公開状態**: GitHub Packages に公開済み
-- **`package.json#exports`**: `tsc -p tsconfig.release.json` が出す `./dist/index.js` / `./dist/index.d.ts` を指す(Wave 0 でビルド pipeline が追加された。§6)
+- `package.json` is the source of truth for the package version and dependency versions. Do not copy the current package version into documentation.
+- The package is published to GitHub Packages.
+- `package.json#exports["."]` exposes `./dist/index.js` and `./dist/index.d.ts`.
+- `package.json#files` publishes only `dist`, `LICENSE`, and `README.md`.
 
-## 2. なぜ公開しないのか(plan.md §6 Step 0 / Step 3)
+## 2. Release order
 
-plan.md §6 Step 0 item 2:
-> 開発中は `workspace:*` 解決でモノレポ同等の DX。
-> **npm 公開・バージョン bump 運用は界面安定(4 週間 API ロック無変更)まで開始しない**
+Release follows the dependency graph from the kernel and simulation layers to the
+consumer-facing composition packages. Published package metadata remains defined by
+`package.json`; dependency order does not justify duplicating package versions in docs.
 
-plan.md §8 のリスク表:
-> 新規構築初期は全界面が高 churn → npm 公開を遅らせ dev-meta workspace で開発。bump 連鎖を構造的に回避
+## 3. Runtime dependencies
 
-16 リポジトリが相互に依存する状態で早期に publish を始めると、
-mc-kernel の 1 行変更が 15 リポジトリの bump 連鎖を引き起こす。
-それを構造的に避けるため、開発中は `@nerima-games/mc-dev-meta` が
-15 リポジトリを 1 つの pnpm workspace に束ね、`workspace:*` で解決する。
+[architecture.md](./architecture.md) describes the dependency boundary. The direct runtime dependencies are the packages listed in `package.json`, including `@nerima-games/mc-kernel`, `@nerima-games/mc-sim`, and `effect`.
 
-## 3. `dependencies` に `@nerima-games/mc-sim` が無い理由
+The dependency versions are exact pins in `package.json`; this document must not duplicate them.
 
-[architecture.md](./architecture.md) のとおり mx-multiplayer の実行時依存は mc-sim だけである。
-にもかかわらず `package.json` には `effect` しか無い。
-
-理由は **ボトムアップの publish-then-pin** である:
-
-1. 依存順(kernel → noise/meshing/physics/save/audio → worldgen → sim → render → kit →
-   gameplay/redstone → ui → multiplayer → compose)に完成させる
-2. 完成した層から publish する
-3. 下流はそこで初めて**公開済みバージョンを pin** する
-
-現時点では mc-sim が存在しないため、`dependencies` に書くと `pnpm install` が失敗する。
-**ポリシー側(`scripts/check-dependency-whitelist.ts` の `REPOSITORY_POLICY`)には
-mc-sim が既に宣言してある** ので、契約は最初から機械可読な形で存在する。
-`package.json` があとから追いつく。
+The package is released bottom-up, but release order does not change the package metadata contract.
 
 ## 4. 0.x の間の約束
 
@@ -43,7 +27,7 @@ mc-sim が既に宣言してある** ので、契約は最初から機械可読�
 | --- | --- |
 | 公開 API | **破壊的変更を予告なく入れてよい。** 0.x とはそういう意味である |
 | バージョン | 変更のたびに patch/minor を上げるが、semver の保証はしない |
-| プロトコル | `PROTOCOL_VERSION` は 7。`EyeOfEnderThrown` を追加したため、Protocol v6 以前の peer とは互換でない |
+| プロトコル | `PROTOCOL_VERSION` in `src/domain/protocol.ts` is the wire-compatibility source of truth; protocol changes require an explicit compatibility note |
 | ドキュメント | `docs/` は実装と同時に更新する。ここだけは 0.x でも守る |
 
 ## 5. 1.0.0 の条件
@@ -58,7 +42,7 @@ mc-sim が既に宣言してある** ので、契約は最初から機械可読�
    都度異なってよい
 3. **参照実装のテスト資産の移植が完了**([porting.md](./porting.md) の 1〜6)
 4. **ビルド / publish パイプラインが存在する**(§6)
-5. **カバレッジ 99% ゲートが有効**([testing.md](./testing.md) §6)
+5. **カバレッジ 100% ゲートが有効**([testing.md](./testing.md) §6)
 
 ## 6. ビルドと publish
 
