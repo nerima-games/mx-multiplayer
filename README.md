@@ -110,8 +110,8 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
 大きな位置差は補間せず、設定した teleport 距離でスナップする。切断時は `disconnect` で
 対象プレイヤー、または全履歴を削除する。
 
-これは protocol v1 の wire format を変更しない受信側コンポーネントである。sequence と tick は
-サーバや上位の同期処理がスナップショットへ付与する。API と利用例は
+これは `src/domain/protocol.ts` の `PROTOCOL_VERSION` を正本とする wire format を変更しない
+受信側コンポーネントである。sequence と tick はサーバや上位の同期処理がスナップショットへ付与する。API と利用例は
 [docs/public-api.md](./docs/public-api.md) を参照。
 
 ## 現状

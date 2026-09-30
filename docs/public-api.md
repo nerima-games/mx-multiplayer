@@ -162,7 +162,7 @@ const pose = snapshots.sample(playerId, serverTick - 2)
 snapshots.disconnect(playerId)
 ```
 
-sequence/tick は wire protocol v1 のフィールドではない。既存プロトコルとの互換性を保つため、
+sequence/tick は `src/domain/protocol.ts` の `PROTOCOL_VERSION` が定義する wire protocol のフィールドではない。既存プロトコルとの互換性を保つため、
 サーバまたは上位の同期処理が `PlayerTransformSnapshot` を構築する際に付与する。
 
 ## 7. authoritative revision 管理(`domain/authoritative-sync.ts`)
