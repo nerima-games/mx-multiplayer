@@ -417,17 +417,15 @@ describe('multiplayer:outbound — queue-level connection gate', () => {
   it.effect('counts a message that fails to encode as unencodable, and does not send it', () =>
     Effect.gen(function* () {
       const { state, peer, outbound } = yield* registered
-      // A branded invariant violated locally (see codec.test.ts and
-      // Preview-findings.test.ts's "an invalid value fails at the sender"):
-      // `at.x` fails `Vec3`'s `finite()` refinement, so `encodeFrame` returns
-      // `Left`. `as` bypasses the type system the same way a bug that produced
-      // This value in production would.
-      const unencodable = {
+      // Deliberately corrupt a previously validated value to exercise the
+      // sender-side codec failure path without a type assertion.
+      const unencodable = PlayerMove.make({
         _tag: 'PlayerMove',
-        at: { x: Number.NaN, y: 0, z: 0 },
+        at: { x: 0, y: 0, z: 0 },
         facing: { pitchRadians: 0, yawRadians: 0 },
         player: alice,
-      } as NetworkMessage
+      })
+      Object.assign(unencodable.at, { x: Number.NaN })
 
       yield* Ref.set(state.connection, connected)
       yield* Ref.set(state.outbox, [unencodable])

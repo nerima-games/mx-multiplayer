@@ -299,7 +299,10 @@ describe('checks the preview kept after they passed', () => {
       const offenders: Array<string> = []
       for (const message of samples) {
         const encoded = Either.getOrThrow(encodeFrame(message))
-        const parsed = JSON.parse(encoded) as { readonly message: Record<string, unknown> }
+        const parsed: unknown = JSON.parse(encoded)
+        if (typeof parsed !== 'object' || parsed === null || !('message' in parsed) || typeof parsed.message !== 'object' || parsed.message === null) {
+          throw new Error('encoded frame must contain an object message')
+        }
         for (const key of Object.keys(parsed.message)) {
           if (suspicious.some((needle) => key.toLowerCase().includes(needle))) {
             offenders.push(`${message._tag}.${key}`)

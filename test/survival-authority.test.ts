@@ -4,6 +4,13 @@ import { PlayerId, SurvivalAuthority, WorldId, type SurvivalCommand, type Surviv
 
 const alice = PlayerId.make('alice')
 const bob = PlayerId.make('bob')
+const actorAt = <T>(actors: ReadonlyArray<T>, index: number): T => {
+  const actor = actors[index]
+  if (actor === undefined) {
+    throw new Error(`fixture actor ${index} is missing`)
+  }
+  return actor
+}
 const initial = (): SurvivalSnapshot => ({
   world: WorldId.make('overworld'),
   revision: 7,
@@ -211,8 +218,8 @@ describe('survival authority', () => {
     const soloSleeping: SurvivalSnapshot = {
       ...base,
       actors: [
-        { ...base.actors[0]!, sleeping: { dimension: 'overworld', bed: { x: 0, y: 64, z: 1 } } },
-        { ...base.actors[1]!, gameMode: 'creative' },
+        { ...actorAt(base.actors, 0), sleeping: { dimension: 'overworld', bed: { x: 0, y: 64, z: 1 } } },
+        { ...actorAt(base.actors, 1), gameMode: 'creative' },
       ],
     }
     const authority = new SurvivalAuthority(soloSleeping)
@@ -226,7 +233,7 @@ describe('survival authority', () => {
     const base = initial()
     const sleeping: SurvivalSnapshot = {
       ...base,
-      actors: [{ ...base.actors[0]!, sleeping: { dimension: 'overworld', bed: { x: 0, y: 64, z: 1 } } }, base.actors[1]!],
+      actors: [{ ...actorAt(base.actors, 0), sleeping: { dimension: 'overworld', bed: { x: 0, y: 64, z: 1 } } }, actorAt(base.actors, 1)],
     }
     const authority = new SurvivalAuthority(sleeping, {
       validateSleep: () => ({ dimension: 'overworld', bedValid: true, nightOrThunder: true, safe: true }),
@@ -292,7 +299,7 @@ describe('survival authority', () => {
     const authority = new SurvivalAuthority(durable)
     const result = authority.execute({ ...header('graze'), _tag: 'Attack', target: bob })
     expect(result).toMatchObject({ accepted: true, events: [{ _tag: 'ActorDamaged', health: 16 }] })
-    expect(authority.snapshot().actors[1]).toMatchObject({ inventory: durable.actors[1]!.inventory, sleeping: { dimension: 'overworld' } })
+    expect(authority.snapshot().actors[1]).toMatchObject({ inventory: actorAt(durable.actors, 1).inventory, sleeping: { dimension: 'overworld' } })
     expect(authority.snapshot().actors[2]).toStrictEqual(durable.actors[2])
   })
 

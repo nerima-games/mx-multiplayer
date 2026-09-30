@@ -2,7 +2,7 @@ id: no-type-assertion
 language: TypeScript
 # Wave 0 installs at warning; W3-mx-multiplayer removes the pre-existing
 # assertions this rule already catches in this repository and raises this to error.
-severity: warning
+severity: error
 files:
   - "src/**/*.ts"
   - "src/**/*.tsx"
@@ -12,6 +12,10 @@ files:
   - "test/**/*.tsx"
   - "test/**/*.mts"
   - "test/**/*.cts"
+  - "apps/**/*.ts"
+  - "apps/**/*.tsx"
+  - "apps/**/*.mts"
+  - "apps/**/*.cts"
   - "vitest.config.ts"
 message: >-
   Narrow unknown values with a type guard or construct a validated value;

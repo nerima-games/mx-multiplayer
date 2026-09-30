@@ -78,7 +78,7 @@ const readNumber = (
 }
 
 const isWireFault = (value: string): value is WireFault =>
-  (WIRE_FAULTS as ReadonlyArray<string>).includes(value)
+  WIRE_FAULTS.some((fault) => fault === value)
 
 export const parseArguments = (argv: ReadonlyArray<string>): PreviewOptions => {
   const accumulator: Accumulator = { ...DEFAULTS }

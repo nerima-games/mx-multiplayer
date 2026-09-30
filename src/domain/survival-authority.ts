@@ -325,9 +325,7 @@ export class SurvivalAuthority {
     if (!ready) return [...prefix, progress]
     for (const actor of actors) {
       if (actor.sleeping === undefined) continue
-      const { sleeping: _sleeping, ...awake } = actor
-      Object.assign(actor, awake)
-      delete (actor as { sleeping?: SurvivalSleepState }).sleeping
+      Reflect.deleteProperty(actor, 'sleeping')
     }
     return [...prefix, progress, { _tag: 'NightSkipped', sleeping, required }]
   }

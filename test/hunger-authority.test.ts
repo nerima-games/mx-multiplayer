@@ -3,6 +3,13 @@ import { describe, expect, it } from '@effect/vitest'
 import { createHungerAuthority, PlayerId, WorldId, type HungerSnapshot } from '../src/index'
 
 const alice = PlayerId.make('alice')
+const actorAt = <T>(actors: ReadonlyArray<T>, index: number): T => {
+  const actor = actors[index]
+  if (actor === undefined) {
+    throw new Error(`fixture actor ${index} is missing`)
+  }
+  return actor
+}
 const snapshot = (difficulty: HungerSnapshot['difficulty'] = 'normal'): HungerSnapshot => ({
   world: WorldId.make('overworld'), revision: 2, difficulty, tickRemainderMs: 0,
   actors: [{ player: alice, session: 'one', state: { food: 19, saturation: 0, exhaustion: 0, health: 18 }, food: { apple: 2 } }],
@@ -37,7 +44,7 @@ describe('hunger authority', () => {
     expect(healing.tick(1)).toMatchObject([{ _tag: 'HungerChanged', state: { health: 19 } }])
     for (const [difficulty, floor] of [['easy', 10], ['normal', 1], ['hard', 0]] as const) {
       const base = snapshot(difficulty)
-      const authority = createHungerAuthority({ ...base, actors: [{ ...base.actors[0]!, state: { food: 0, saturation: 0, exhaustion: 0, health: difficulty === 'easy' ? 10 : 1 } }] })
+      const authority = createHungerAuthority({ ...base, actors: [{ ...actorAt(base.actors, 0), state: { food: 0, saturation: 0, exhaustion: 0, health: difficulty === 'easy' ? 10 : 1 } }] })
       const events = authority.tick(4000)
       expect(authority.snapshot().actors[0]?.state.health).toBe(floor)
       expect(events.some((event) => event._tag === 'HungerDeath')).toBe(difficulty === 'hard')
@@ -82,7 +89,7 @@ describe('hunger authority', () => {
     const authority = createHungerAuthority(withBob)
     expect(authority.rejoin(alice, 'one', 'alice-two')).toBe(true)
     expect(authority.snapshot().actors).toStrictEqual([
-      { player: alice, session: 'alice-two', state: withBob.actors[0]!.state, food: withBob.actors[0]!.food },
+      { player: alice, session: 'alice-two', state: actorAt(withBob.actors, 0).state, food: actorAt(withBob.actors, 0).food },
       withBob.actors[1],
     ])
   })
@@ -97,7 +104,7 @@ describe('hunger authority', () => {
 
   it('rejects every non-Respawn command from a dead actor, and accepts Respawn to revive them', () => {
     const base = snapshot()
-    const dead = { ...base, actors: [{ ...base.actors[0]!, state: { ...base.actors[0]!.state, health: 0 } }] }
+    const dead = { ...base, actors: [{ ...actorAt(base.actors, 0), state: { ...actorAt(base.actors, 0).state, health: 0 } }] }
     const authority = createHungerAuthority(dead)
     expect(authority.execute({ ...header('move'), _tag: 'Activity', activity: 'walk', amount: 1 })).toMatchObject({ reason: 'invalid-command' })
     expect(authority.execute({ ...header('respawn'), _tag: 'Respawn' })).toMatchObject({ accepted: true })
@@ -112,7 +119,7 @@ describe('hunger authority', () => {
     const full = snapshot()
     const authorityFull = createHungerAuthority({
       ...full,
-      actors: [{ ...full.actors[0]!, state: { ...full.actors[0]!.state, food: 20 } }],
+      actors: [{ ...actorAt(full.actors, 0), state: { ...actorAt(full.actors, 0).state, food: 20 } }],
     })
     expect(authorityFull.execute({ ...header('full'), _tag: 'Eat', item: 'apple' })).toMatchObject({ reason: 'cannot-eat' })
   })
@@ -147,14 +154,14 @@ describe('hunger authority', () => {
     const base = snapshot()
     const atThreshold = createHungerAuthority({
       ...base,
-      actors: [{ ...base.actors[0]!, state: { food: 18, saturation: 0, exhaustion: 0, health: 18 } }],
+      actors: [{ ...actorAt(base.actors, 0), state: { food: 18, saturation: 0, exhaustion: 0, health: 18 } }],
     })
     atThreshold.tick(4000)
     expect(atThreshold.snapshot().actors[0]?.state).toMatchObject({ health: 19, exhaustion: 6 })
 
     const belowThreshold = createHungerAuthority({
       ...base,
-      actors: [{ ...base.actors[0]!, state: { food: 17, saturation: 0, exhaustion: 0, health: 18 } }],
+      actors: [{ ...actorAt(base.actors, 0), state: { food: 17, saturation: 0, exhaustion: 0, health: 18 } }],
     })
     belowThreshold.tick(4000)
     expect(belowThreshold.snapshot().actors[0]?.state).toMatchObject({ health: 18, exhaustion: 0 })
@@ -164,7 +171,7 @@ describe('hunger authority', () => {
     const base = snapshot()
     const saturated = createHungerAuthority({
       ...base,
-      actors: [{ ...base.actors[0]!, state: { food: 15, saturation: 1, exhaustion: 4, health: 18 } }],
+      actors: [{ ...actorAt(base.actors, 0), state: { food: 15, saturation: 1, exhaustion: 4, health: 18 } }],
     })
     // The actor already carries a full drain unit (exhaustion 4) before this
     // Tick; the while loop fires once, and saturation (currently 1) is
@@ -174,7 +181,7 @@ describe('hunger authority', () => {
 
     const dead = createHungerAuthority({
       ...base,
-      actors: [{ ...base.actors[0]!, state: { food: 10, saturation: 0, exhaustion: 0, health: 0 } }],
+      actors: [{ ...actorAt(base.actors, 0), state: { food: 10, saturation: 0, exhaustion: 0, health: 0 } }],
     })
     expect(dead.tick(4000)).toStrictEqual([])
     expect(dead.snapshot().actors[0]?.state).toStrictEqual({ food: 10, saturation: 0, exhaustion: 0, health: 0 })
@@ -184,7 +191,7 @@ describe('hunger authority', () => {
     const base = snapshot()
     const starving = createHungerAuthority({
       ...base,
-      actors: [{ ...base.actors[0]!, state: { food: 1, saturation: 0, exhaustion: 8, health: 18 } }],
+      actors: [{ ...actorAt(base.actors, 0), state: { food: 1, saturation: 0, exhaustion: 8, health: 18 } }],
     })
     // Two full drain units (exhaustion 8) with no saturation to spend first:
     // Food loses two units, but only has one to give before the floor clamps

@@ -568,7 +568,7 @@ const encodeSideValidation = Effect.sync((): Check => {
     ['a 300-character chat (maxLength 256)', () =>
       encodeFrame({ ...SAMPLES.Chat, text: 'x'.repeat(300) })],
     ['an empty player id', () =>
-      encodeFrame({ ...SAMPLES.PlayerLeave, player: '' as unknown as typeof ALICE })],
+      encodeFrame({ ...SAMPLES.PlayerLeave, player: PlayerId.make('') })],
   ]
 
   const rows: Array<string> = [`  ${pad('value the sender should never put on the wire', 50)}encodeFrame says`]
@@ -693,7 +693,11 @@ const noWallClockOnTheWire = Effect.sync((): Check => {
       offenders.push(`${tag}: sample does not encode`)
       continue
     }
-    const parsed = JSON.parse(encoded.right) as { readonly message: Record<string, unknown> }
+    const parsed: unknown = JSON.parse(encoded.right)
+    if (typeof parsed !== 'object' || parsed === null || !('message' in parsed) || typeof parsed.message !== 'object' || parsed.message === null) {
+      offenders.push(`${tag}: encoded frame has no object message`)
+      continue
+    }
     for (const key of Object.keys(parsed.message)) {
       if (suspicious.some((needle) => key.toLowerCase().includes(needle))) {
         offenders.push(`${tag}.${key}`)
