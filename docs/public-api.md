@@ -11,7 +11,7 @@
 
 | 名前 | 種別 | 契約 |
 | --- | --- | --- |
-| `PROTOCOL_VERSION` | `number` | The wire protocol version exported by `src/domain/protocol.ts`; the source and compatibility tests are authoritative |
+| `PROTOCOL_VERSION` | `number` | `src/domain/protocol.ts` が export する wire protocol 版数。値の正本は実装と互換性テスト |
 | `PlayerId` / `PlayerName` / `WorldId` | branded Schema | 非空文字列。`.make(...)` でコンストラクト |
 | `Vec3` | Schema | `{ x, y, z }` すべて `finite()` |
 | `BlockPos` | Schema | `{ x, y, z }` すべて `int()` |
@@ -21,7 +21,7 @@
 | `MESSAGE_TAGS` | `ReadonlyArray` | 既知タグの一覧。網羅性テスト用 |
 | `Frame` | Schema | `{ protocolVersion, message }` |
 
-### Message tags
+### メッセージタグ
 
 | タグ群 | 意味 |
 | --- | --- |
@@ -31,7 +31,7 @@
 | `PlayerInventoryCommand` から `VehicleCommand` | authoritative server に送る操作要求 |
 | `AuthoritativeCommandAccepted` / `AuthoritativeCommandRejected` / `AuthoritativeResyncRequest` | command 結果と再同期要求 |
 | `Ping` / `Pong` | 生存確認。**タイムスタンプではない**([design-notes.md](./design-notes.md) DN-3) |
-| subsystem command/result and delta tags (`Anvil*`, `Crafting*`, `PlayerDamage*`, `Brewing*`, `Enchanting*`, `Wither*`, `EnderDragon*`) | subsystem-specific synchronization |
+| subsystem command/result and delta tags (`Anvil*`、`Crafting*`、`PlayerDamage*`、`Brewing*`、`Enchanting*`、`Wither*`、`EnderDragon*`) | 各サブシステムの同期 |
 
 > **「主張している」**の含意: `BlockBreak` はドロップが何であるかを言わない。
 > それはルールであり、mx-gameplay と mc-sim のものである。
@@ -212,12 +212,12 @@ const makeMultiplayerStagesForPreview: Effect<{ state; stages }, never, Transpor
 全体の stage 順序は [responsibility.md](./responsibility.md) §2.1 を参照。これは
 mx-multiplayer の公開 API ではなく、mc-compose が所有するフレーム契約である。
 
-## 9. Published package boundary
+## 9. 公開パッケージの境界
 
-`package.json` is the source of truth for the published surface:
+公開範囲の正本は `package.json` である。
 
-- `exports["."]` exposes only `./dist/index.js` and `./dist/index.d.ts`.
-- `files` includes only `dist`, `LICENSE`, and `README.md`.
-- There are no published subpath exports; deep imports from `src/` or `dist/` are unsupported.
+- `exports["."]` が公開するのは `./dist/index.js` と `./dist/index.d.ts` だけである。
+- `files` に含むのは `dist`、`LICENSE`、`README.md` だけである。
+- 公開するサブパス export はなく、`src/` や `dist/` の deep import は保証しない。
 
-The root barrel in `src/index.ts` and the declarations produced by `pnpm build` must stay aligned with this boundary.
+`src/index.ts` の root barrel と `pnpm build` が生成する declaration は、この境界と一致させる。

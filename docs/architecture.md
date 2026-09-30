@@ -75,14 +75,14 @@ graph BT
 
 > **mc-kernel は全リポジトリから import 可能。** グラフに描かないのは、
 > 全ノードから kernel へエッジを引くと図が読めなくなるためと、
-> the graph omits the shared kernel edge for readability. The direct dependency remains
-> declared in `package.json`.
+> 共有 kernel のエッジを省いても読みやすさを保てるためである。直接依存は
+> `package.json` に宣言する。
 
 ## 3. このリポジトリの位置
 
-**The direct runtime dependencies are the packages listed in `package.json`: `@nerima-games/mc-kernel`, `@nerima-games/mc-sim`, and `effect`.**
+**直接の実行時依存は `package.json` に列挙した `@nerima-games/mc-kernel`、`@nerima-games/mc-sim`、`effect` である。**
 
-The direct dependency list in `package.json` is the design boundary.
+`package.json` の直接依存一覧が設計上の境界である。
 
 - **上流(mc-sim)へ**: リモートピアの行動を世界に反映するときは、必ず mc-sim のサービス
   (`InventoryService` / `EntityManager` 等)に書き込む。mx-gameplay を呼ぶことは決してない。
@@ -93,13 +93,13 @@ The direct dependency list in `package.json` is the design boundary.
 
 ### 到達できるが import してはいけないもの
 
-Transitive packages may be present after installation, but they are not direct dependencies and must not be imported by this package.
+インストール後に推移的パッケージが存在しても、直接依存ではないため、このパッケージから import してはならない。
 
 ```
 mx-multiplayer -> mc-sim -> mc-physics   ... mc-physics の import は transitive-import 違反
 ```
 
-The direct dependency list in `package.json` is the dependency boundary. A transitive dependency is not an import license.
+`package.json` の直接依存一覧が依存境界であり、推移的依存は import の許可証ではない。
 
 ## 4. 設計ルール
 
@@ -129,8 +129,7 @@ mx-multiplayer → mx-gameplay の呼び出しではなく、mc-sim の `Invento
 kit を実行時依存にすると、出荷ビルドが「同梱されないハーネス」から入力を取ることになり、
 リリースビルドから入力処理が丸ごと消える。
 
-The package does not declare `mc-playground-kit` in `dependencies`, and its shipped
-source does not import the kit.
+このパッケージは `dependencies` に `mc-playground-kit` を宣言せず、出荷ソースからも kit を import しない。
 
 なお **mx-multiplayer は kit を devDependency としても使わない**。
 プレビューを持つのは mx-gameplay と mx-redstone であり、こちらの検証はループバックで完結する
@@ -144,4 +143,4 @@ mx-multiplayer は `StageRegistration.after` で**順序制約を宣言するだ
 
 ### 4.4 依存ホワイトリストは CI で強制(plan.md §2.3-5)
 
-The package dependency boundary is reviewed from `package.json`; `pnpm verify` remains the repository verification command.
+パッケージの依存境界は `package.json` で確認し、リポジトリの検証コマンドは `pnpm verify` とする。

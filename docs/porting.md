@@ -92,10 +92,10 @@ plan.md §6 Step 2 の構築順で mx-multiplayer は mc-sim の後、mc-compose
 3. **接続状態機械**(`domain/connection.ts`)— `client-service.test.ts` の遷移期待値から表を起こす
 4. **トランスポート Port とループバック**(`domain/transport.ts`)
 5. **mc-sim への反映**(受信 → `EntityManager` / `InventoryService` への書き込み)
-   — the package now declares `@nerima-games/mc-sim` as a direct dependency; host integration remains the host's responsibility
+   — パッケージは現在 `@nerima-games/mc-sim` を直接依存として宣言する。host 統合は host の責務である
 6. **stage 登録**(`GameModule` / `StageRegistration`)— mc-kernel の契約型が確定してから
 
-The repository contains the protocol, codec, connection, transport, and stage-registration layers described above. Host-side state integration remains outside this package.
+このリポジトリには上記の protocol、codec、connection、transport、stage registration 層が存在する。host 側の状態統合はこのパッケージの範囲外である。
 
 ## 4. 移植時の注意
 

@@ -18,7 +18,7 @@ plan.md §3.14 検証:
 | 画面 | **ここでは検証しない**。mx-ui の責務 | — |
 | モジュール間相互作用 | **ここでは検証しない**。mc-compose の E2E が最終ゲート | — |
 
-The complete test suite under `test/` is executed by `pnpm test`; this document intentionally avoids duplicating a volatile test count.
+`test/` 以下の全テストは `pnpm test` で実行する。変動するテスト数はこの文書に重複して書かない。
 
 `pnpm verify` はプレビューを**実行しない**。プレビューは完成条件であってゲートではない。
 型検査（`tsconfig.preview.json`）と lint（`oxlint … apps`）は掛かる。
@@ -94,7 +94,7 @@ it.effect('rejects a coordinate that arrived as null, which is what a NaN turns 
 ## 6. カバレッジ
 
 計測は `pnpm test:coverage` で常に動く。**閾値は 4 指標(branches/functions/lines/statements)とも
-100% で有効**(`vitest.config.ts` の `coverage.thresholds`、org 標準 plan.md §2.2/§2.8、Wave 0)。
+100% で有効**(`vitest.config.ts` の `coverage.thresholds` と plan.md §2.2/§2.8)。
 CI では `Coverage` step が同じコマンドを実行し、非ゼロ終了でゲートになる。
 
 ## 7. まだ書いていないテスト
@@ -104,7 +104,7 @@ CI では `Coverage` step が同じコマンドを実行し、非ゼロ終了で
 | ~~`no message schema declares a wall-clock field`~~ | **書いた**（`test/preview-findings.test.ts`）。メッセージ集合の確定を待つ必要は無かった —— 今の `MESSAGE_TAGS` を掃けば今の答えが出るし、集合が増えれば増えたまま答え続ける |
 | プロパティテスト(任意の `NetworkMessage` でラウンドトリップ) | `effect/FastCheck` の Arbitrary 生成。`.npmrc` の `fast-check` hoist は既に用意済み |
 | mc-sim 反映のシナリオテスト | `test/command-application.test.ts` |
-| プロトコル後方互換テスト(旧バージョンのフレーム fixture) | v2 到達時。fixture は**コミットして凍結**する |
+| プロトコル後方互換テスト(旧バージョンのフレーム fixture) | 旧バージョンとの同時運用が必要になった時点。fixture は**コミットして凍結**する |
 | アダプタの実ソケットテスト | アダプタの所在確定後。**このリポジトリには置かない** |
 
 ## 8. ローカル 2 クライアントのプレビュー

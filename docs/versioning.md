@@ -1,25 +1,24 @@
 # バージョニングと公開
 
-## 1. Package metadata
+## 1. パッケージメタデータ
 
-- `package.json` is the source of truth for the package version and dependency versions. Do not copy the current package version into documentation.
-- The package is published to GitHub Packages.
-- `package.json#exports["."]` exposes `./dist/index.js` and `./dist/index.d.ts`.
-- `package.json#files` publishes only `dist`, `LICENSE`, and `README.md`.
+- `package.json` をパッケージ版数と依存版数の正本とする。現在のパッケージ版数をドキュメントへ複写しない。
+- パッケージは GitHub Packages に公開する。
+- `package.json#exports["."]` は `./dist/index.js` と `./dist/index.d.ts` を公開する。
+- `package.json#files` により公開するのは `dist`、`LICENSE`、`README.md` だけである。
 
-## 2. Release order
+## 2. リリース順序
 
-Release follows the dependency graph from the kernel and simulation layers to the
-consumer-facing composition packages. Published package metadata remains defined by
-`package.json`; dependency order does not justify duplicating package versions in docs.
+リリースは kernel と simulation 層から、利用者向けの合成パッケージへ依存グラフ順に進める。
+公開パッケージのメタデータは `package.json` が定義する。依存順序を理由に版数を docs へ複写しない。
 
-## 3. Runtime dependencies
+## 3. 実行時依存
 
-[architecture.md](./architecture.md) describes the dependency boundary. The direct runtime dependencies are the packages listed in `package.json`, including `@nerima-games/mc-kernel`, `@nerima-games/mc-sim`, and `effect`.
+[architecture.md](./architecture.md) §3 が依存境界を説明する。直接の実行時依存は `package.json` に列挙したパッケージであり、`@nerima-games/mc-kernel`、`@nerima-games/mc-sim`、`effect` を含む。
 
-The dependency versions are exact pins in `package.json`; this document must not duplicate them.
+依存版数は `package.json` の exact pin を正本とし、この文書に重複して書かない。
 
-The package is released bottom-up, but release order does not change the package metadata contract.
+パッケージは下流へ向けて段階的にリリースするが、リリース順序はパッケージメタデータの契約を変えない。
 
 ## 4. 0.x の間の約束
 
@@ -27,7 +26,7 @@ The package is released bottom-up, but release order does not change the package
 | --- | --- |
 | 公開 API | **破壊的変更を予告なく入れてよい。** 0.x とはそういう意味である |
 | バージョン | 変更のたびに patch/minor を上げるが、semver の保証はしない |
-| プロトコル | `PROTOCOL_VERSION` in `src/domain/protocol.ts` is the wire-compatibility source of truth; protocol changes require an explicit compatibility note |
+| プロトコル | `src/domain/protocol.ts` の `PROTOCOL_VERSION` が wire 互換性の正本。プロトコル変更には互換性の注記を付ける |
 | ドキュメント | `docs/` は実装と同時に更新する。ここだけは 0.x でも守る |
 
 ## 5. 1.0.0 の条件
@@ -48,7 +47,7 @@ The package is released bottom-up, but release order does not change the package
 
 `tsconfig.base.json` は今も `noEmit: true` で検査専用だが、`tsconfig.release.json`
 (`extends: tsconfig.base.json`, `noEmit: false`, `rootDir: src`, `outDir: dist`)だけが emit する
-(Wave 0、plan.md §2.2/§2.4)。`pnpm build` = `node scripts/clean-dist.mjs && tsc -p tsconfig.release.json`。
+(plan.md §2.2/§2.4)。`pnpm build` = `node scripts/clean-dist.mjs && tsc -p tsconfig.release.json`。
 
 - `package.json#exports` は `./dist/index.js` / `./dist/index.d.ts` を指す
 - `scripts/verify-package.mjs`(`pnpm package:verify`)が pack した tarball を別ディレクトリに
