@@ -1,5 +1,15 @@
 # @nerima-games/mx-multiplayer
 
+## 0.12.0
+
+### Minor Changes
+
+- [#42](https://github.com/nerima-games/mx-multiplayer/pull/42) [`13d577e`](https://github.com/nerima-games/mx-multiplayer/commit/13d577e5477df67be22203400a427c0cf276c7c1) Thanks [@takeokunn](https://github.com/takeokunn)! - Follow the Tier 3 kernel and simulation package pins through their 0.8.0 and 0.5.0 releases.
+
+### Patch Changes
+
+- [#42](https://github.com/nerima-games/mx-multiplayer/pull/42) [`13d577e`](https://github.com/nerima-games/mx-multiplayer/commit/13d577e5477df67be22203400a427c0cf276c7c1) Thanks [@takeokunn](https://github.com/takeokunn)! - Enforce the no-type-assertion rule as an error and align compiler and package documentation contracts.
+
 ## 0.11.1
 
 ### Patch Changes
