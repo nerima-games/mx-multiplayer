@@ -44,12 +44,13 @@ codec test が集合と union の一致を検証する。
 ```typescript
 type WireText = string
 
-const encodeFrame: (message: NetworkMessage) => Either<WireText, ProtocolError>
-const encodeFrameAsVersion: (protocolVersion: number, message: NetworkMessage) => Either<WireText, ProtocolError>
+const encodeFrame: (message: unknown) => Either<WireText, ProtocolError>
+const encodeFrameAsVersion: (protocolVersion: number, message: unknown) => Either<WireText, ProtocolError>
 const decodeFrame: (text: WireText) => Either<NetworkMessage, ProtocolError>
 ```
 
-**契約**: 表現可能なすべての `m` について `decodeFrame(encodeFrame(m)) == m`。
+**契約**: runtime input を encode 境界で検証し、表現可能な `m` について
+`decodeFrame(encodeFrame(m)) == m`。不正な入力は `unencodable-message` になる。
 
 - `encodeFrameAsVersion` はテスト用。「このビルドが話せないバージョンのフレーム」を作る唯一の手段であり、
   バージョンチェックが本当に**拒否**しているか(ベストエフォートで解釈していないか)を証明するために公開している。

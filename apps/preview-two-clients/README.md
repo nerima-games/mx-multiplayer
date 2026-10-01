@@ -95,7 +95,7 @@ $ pnpm preview --once --ascii --script --fault future-message --fault-at 1 --vie
 | # | 症状 | 詳細 |
 | --- | --- | --- |
 | **M1** | **バージョンがメッセージ形状より**後に**検査されている** | DN-1 は「バージョンはメッセージの外側に置く。内側に置くと、未知バージョンのフレームを弾くためにまず『もう存在しないかもしれないメッセージ形状』をパースする必要が生じる」と言い、`domain/protocol.ts:205-211` が繰り返している。エンベロープは確かに外側にあるが、`domain/codec.ts:89-99` は `Frame` を**まるごと**（`message: NetworkMessage` を含めて）構造デコードし、バージョン比較は `:100` の後である。結果、**新しいビルドから来たフレームは、このビルドのスキーマが受け付けない形を含んだ瞬間に `malformed-frame` になる**。実測 3/4。2 つの判定は交換可能ではない —— DN-1 は前者に「フレームを捨てる」、後者に「**ピア**を切ってユーザにそう伝える」を割り当てている。ローリングアップグレード（DN-1 が存在する唯一の理由）が「パケットが壊れています」として出る |
-| **M2** | **`ConnectionState.Connecting.attempt` は常に 1** | 生成箇所は `domain/connection.ts:80` と `:116` の 2 つだけで、どちらもリテラル `1` を書く。前の attempt を読むものも増やすものも無い。7 回試行して観測値は `[1,1,1,1,1,1,1]`。このフィールドは export されており `api-lock.md` にも載っているので、mx-ui は永久に「attempt 1」を描ける。DN-8 の「試行回数**上限**を持たない」は正しい（上限は `Schedule` でアダプタのもの）が、**進行中の試行の序数**は別物で、機械が入口で上書きするのでアダプタからは供給できない |
+| **M2** | **`ConnectionState.Connecting.attempt` は常に 1** | 生成箇所は `domain/connection.ts:80` と `:116` の 2 つだけで、どちらもリテラル `1` を書く。前の attempt を読むものも増やすものも無い。7 回試行して観測値は `[1,1,1,1,1,1,1]`。このフィールドは公開 API なので、mx-ui は永久に「attempt 1」を描ける。DN-8 の「試行回数**上限**を持たない」は正しい（上限は `Schedule` でアダプタのもの）が、**進行中の試行の序数**は別物で、機械が入口で上書きするのでアダプタからは供給できない |
 | **M3** | **決着した接続が、実際のソケットが次に届けるイベントを拒否する** | `Closed + PeerClosed`、`Closed + TransportFailed`、`Disconnected + CloseRequested` がすべて `undefined`。しかしソケットは書き込み失敗と close を**両方**届けるし、ユーザは Disconnect を 2 回押す。`domain/connection.ts:16-21` は「`undefined` を受け取った呼び出し側は自分のロジックのバグを見つけたのだ」と書いているが、この 3 つに呼び出し側のバグは無い。**遷移の間違いではなく契約の問題**である —— 決着後はこれらを合法かつ冪等にするか、`undefined` に第 3 の意味（「もう処理済み」）を与えて全アダプタに状態フィルタを義務づけるかのどちらかで、今はドキュメントが後者を言い、コードが前者を意味している |
 | **M4 (解決済み)** | **Connected-only send gate** | `connectionGatedTransport` が各 send 時に現在の `ConnectionState` を読み、`Connected` 以外を `TransportError(not-connected)` で拒否する。raw transport はハンドシェイクと後方互換性のため維持する |
 
@@ -119,11 +119,9 @@ $ pnpm preview --once --ascii --script --fault future-message --fault-at 1 --vie
 
 ## 制約
 
-- `apps` は `SCAN_ROOTS` に入っている（`scripts/check-dependency-whitelist.ts:238`）。
-  したがって import は他のソースと同様にゲートされる。**新規依存は 0 個**——色ライブラリすら足していない。
+- プレビューはこのリポジトリ自身のモジュールと `effect` だけを import する。**新規依存は 0 個**——色ライブラリすら足していない。
   `effect` と、このリポジトリ自身のモジュールしか import しない。
-- `Date.now()` / `new Date()` / `performance.now()` 禁止も適用される。
-  **エスケープハッチ (`mc-kernel-allow-time-source`) は使っていない。**
+- `Date.now()` / `new Date()` / `performance.now()` は使わない。
   ここではそれが単なる遵守ではなく**主題**である —— DN-3 はプロトコルから壁時計を外した。
   往復時間をミリ秒で測るプレビューは、**それが消えていることを証明するはずの唯一の場所**に
   壁時計を戻すことになる。`Ping`/`Pong` は**ノンス**で対応付けており、

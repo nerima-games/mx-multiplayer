@@ -7,9 +7,8 @@
  * Why there is no colour library here
  * ---------------------------------------------------------------------------
  *
- * `pnpm check:deps` gates `apps/` exactly like `domain/` (`SCAN_ROOTS`,
- * `scripts/check-dependency-whitelist.ts:238`), and a dependency added for a dev
- * tool is still a dependency in the lockfile that CI installs. Two dozen lines
+ * A dependency added for a dev tool is still a dependency in the lockfile that
+ * CI installs. Two dozen lines
  * of escape sequences are cheaper than that. mc-worldgen's terrain preview,
  * mx-redstone's circuit board and mx-gameplay's mining site all reached the same
  * conclusion and none of them added one either.
@@ -27,8 +26,7 @@
  * Adapted from mx-redstone's `apps/preview-circuit-board/ansi.ts`. The two are
  * deliberately separate copies: these are independent repositories, and a shared
  * preview harness would be a cross-repository dependency created for the
- * convenience of dev tooling — exactly the edge `pnpm check:deps` exists to
- * refuse.
+ * convenience of dev tooling.
  */
 
 export type Rgb = readonly [number, number, number]

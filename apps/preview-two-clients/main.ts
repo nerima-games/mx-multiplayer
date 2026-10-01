@@ -60,15 +60,13 @@
  * Constraints this app is written under
  * ---------------------------------------------------------------------------
  *
- *  - `apps` is in `SCAN_ROOTS` (`scripts/check-dependency-whitelist.ts:238`), so
- *    the preview's imports are gated like any other source here. It imports this
- *    repository's own modules and `effect`, and nothing else — no org package,
- *    no new npm dependency, not even a colour library.
- *  - The `Date.now()` / `new Date()` / `performance.now()` ban applies, and here
- *    it is not merely satisfied, it is the point. DN-3 removed the wall clock
+ *  - It imports this repository's own modules and `effect`, and nothing else —
+ *    no org package, no new npm dependency, not even a colour library.
+ *  - This preview does not use `Date.now()` / `new Date()` / `performance.now()`;
+ *    that is the point. DN-3 removed the wall clock
  *    from the protocol; a preview that measured round-trip time with `Date.now()`
  *    would put it back in the one place that is supposed to prove it is gone.
- *    `Ping`/`Pong` match on a NONCE. `mc-kernel-allow-time-source` is not taken.
+ *    `Ping`/`Pong` match on a NONCE.
  *  - `pnpm verify` does not run this app. `tsconfig.preview.json` typechecks it
  *    and `pnpm lint` lints it; `pnpm preview` is not a gate.
  */

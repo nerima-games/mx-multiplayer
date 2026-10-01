@@ -337,7 +337,7 @@ const versionBeforeShape = Effect.sync((): Check => {
  * counter's name.
  *
  * It is also part of the public API: `Connecting` is exported and appears in
- * `api-lock.md`, so mx-ui can render "attempt 3 of 5" against a value that is
+ * the public API, so mx-ui can render "attempt 3 of 5" against a value that is
  * always 1.
  *
  * DN-8 point 3 says the machine holds "no attempt budget", and that is right —
@@ -377,7 +377,7 @@ const attemptIsConstant = Effect.sync((): Check => {
       '  domain/connection.ts:116  Closed       + RetryRequested   -> { Connecting, attempt: 1 }',
       '',
       '  Those are the only two producers, and neither reads the previous attempt. The field is',
-      '  exported, is in api-lock.md, and is visible to mx-ui — which can therefore render',
+      '  exported and visible to mx-ui — which can therefore render',
       '  "attempt 1" forever. DN-8 correctly refuses to hold a retry BUDGET; the ordinal of the',
       '  attempt in flight is a different thing, and the adapter cannot supply it because the',
       '  machine overwrites it on the way in.',
@@ -556,17 +556,7 @@ const loopbackRoundTrip = Effect.gen(function* () {
  * no originating code anywhere near it.
  */
 const encodeSideValidation = Effect.sync((): Check => {
-  const encodeEmptyPlayerLeave = (): Either.Either<string, { readonly reason: string }> =>
-    Either.try({
-      try: () =>
-        Either.getOrThrow(
-          encodeFrame({
-            ...SAMPLES.PlayerLeave,
-            player: PlayerId.make(''),
-          }),
-        ),
-      catch: (error) => ({ reason: error instanceof Error ? error.message : String(error) }),
-    })
+  const emptyPlayerLeave = { _tag: 'PlayerLeave', player: '' }
 
   const cases: ReadonlyArray<readonly [string, () => Either.Either<string, { readonly reason: string }>]> = [
     ['a NaN coordinate (JSON.stringify(NaN) === "null")', () =>
@@ -579,7 +569,7 @@ const encodeSideValidation = Effect.sync((): Check => {
       encodeFrame({ ...SAMPLES.BlockBreak, at: { x: 0.5, y: 1, z: 2 } })],
     ['a 300-character chat (maxLength 256)', () =>
       encodeFrame({ ...SAMPLES.Chat, text: 'x'.repeat(300) })],
-    ['an empty player id at the runtime boundary', encodeEmptyPlayerLeave],
+    ['an empty player id at the runtime boundary', () => encodeFrame(emptyPlayerLeave)],
   ]
 
   const rows: Array<string> = [`  ${pad('value the sender should never put on the wire', 50)}encodeFrame says`]

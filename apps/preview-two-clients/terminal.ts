@@ -10,9 +10,8 @@
  *
  * Note what is NOT here: any read of a clock. The session advances one STEP in
  * response to a keystroke and never on a timer, so `Date.now()` /
- * `performance.now()` never come up and the escape hatch documented in
- * `scripts/check-dependency-whitelist.ts` (`mc-kernel-allow-time-source`) is not
- * taken. That is not a limitation being worked around, it is DN-3: this
+ * `performance.now()` never come up. That is not a limitation being worked
+ * around, it is DN-3: this
  * repository removed the wall clock from the protocol on purpose, and a preview
  * that measured round trips against `Date.now()` would put it straight back in
  * the one place that is supposed to prove it is gone. `Ping`/`Pong` match on a

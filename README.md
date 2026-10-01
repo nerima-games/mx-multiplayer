@@ -72,7 +72,6 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
 | `pnpm preview` | 内蔵プレビュー(ローカル 2 クライアント + フォールトインジェクション)。**`pnpm verify` には入らない**。[apps/preview-two-clients/README.md](./apps/preview-two-clients/README.md) |
 | `pnpm test` | vitest(`@effect/vitest` の `it.effect` が主 API) |
 | `pnpm test:watch` | vitest watch |
-| `pnpm test:coverage` | カバレッジ計測(閾値は未設定) |
 | `pnpm test:coverage` | vitest をカバレッジ付きで実行 |
 | `pnpm package:verify` | 出荷ビルドとパッケージ内容を検査 |
 | `pnpm verify` | `typecheck && lint && test`。CI と同じ内容 |
@@ -106,6 +105,10 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
   `test/command-application.test.ts` で検証している。未対応のコマンドは明示的に拒否する。
 - **実 WebSocket アダプタが無い。** `TransportPort` の実装はプラットフォーム層に置く。
   現在あるのはループバック(テスト用)と `disconnectedTransport` のみ
+- **ビルドとパッケージ検証がある。** `pnpm build` が `dist/` を生成し、`package.json` の `exports` は
+  生成物を参照する。`pnpm package:verify` は tarball の内容とインストール可能性を検査する。
+- **カバレッジ閾値は4指標とも100%。** `vitest.config.ts` の statements / branches / functions / lines
+  の閾値で管理する。
 - **プレビューは動く。** `pnpm preview`（[apps/preview-two-clients/](./apps/preview-two-clients/README.md)）。
   1 プロセスの中で 2 つのピアを `makeLoopbackPair` で配線し、15 ステップのハンドシェイクを
   1 キーストロークずつ進めながら、フレーム・状態遷移・**フォールト注入**を見せる。
@@ -113,9 +116,6 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
   `pnpm preview --stats` は初回実行（2026-07-27）で **4 件**の finding を出し、
   4 件とも `test/preview-findings.test.ts` に assertion として固定してある。
   うち 3 件（M1 / M3 / M4）は既存 107 本のテストが 1 つも捕まえていなかった
-- **ビルド / publish がまだ無い。** `package.json` の `exports` は TypeScript ソースを直接指している
-- **カバレッジ閾値は未設定。** 99% ゲートは完成条件到達時に有効化する
-
 確定しているのは**仕組み**のほうである: バージョン付きエンベロープ、テキストで止まるコーデック、
 `ProtocolError` と `TransportError` の分離、リトライ方針を持たない接続状態機械。
 

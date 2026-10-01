@@ -55,7 +55,7 @@ const WireEnvelope = Schema.parseJson(
 
 const decodeWireEnvelope = Schema.decodeUnknownEither(WireEnvelope)
 const decodeNetworkMessage = Schema.decodeUnknownEither(NetworkMessage)
-const encodeWireFrame = Schema.encodeEither(WireFrame)
+const encodeWireFrame = Schema.encodeUnknownEither(WireFrame)
 
 /**
  * Encode a message at an explicit protocol version.
@@ -66,7 +66,7 @@ const encodeWireFrame = Schema.encodeEither(WireFrame)
  */
 export const encodeFrameAsVersion = (
   protocolVersion: number,
-  message: NetworkMessageType,
+  message: unknown,
 ): Either.Either<WireText, ProtocolError> =>
   Either.mapLeft(
     encodeWireFrame({ message, protocolVersion }),
@@ -77,8 +77,8 @@ export const encodeFrameAsVersion = (
       }),
   )
 
-/** Encode a message into a frame at this build's protocol version. */
-export const encodeFrame = (message: NetworkMessageType): Either.Either<WireText, ProtocolError> =>
+/** Encode a runtime value into a frame at this build's protocol version. */
+export const encodeFrame = (message: unknown): Either.Either<WireText, ProtocolError> =>
   encodeFrameAsVersion(PROTOCOL_VERSION, message)
 
 /**

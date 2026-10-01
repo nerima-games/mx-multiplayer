@@ -23,7 +23,7 @@
 
 ## 読む順番
 
-1. **architecture.md** — このリポジトリがグラフのどこにいて、なぜ mc-sim にしか依存しないか
+1. **architecture.md** — このリポジトリがグラフのどこにいて、mc-kernel / mc-sim / effect に依存する理由
 2. **responsibility.md** — mx-ui との境界。ここを誤ると参照実装と同じ構造に戻る
 3. **design-notes.md** — 参照実装で実際に起きたことと、その回帰テスト
 4. **porting.md** — 実際に移植を始めるとき

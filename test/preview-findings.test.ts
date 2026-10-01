@@ -110,7 +110,7 @@ describe('M2 — `Connecting.attempt` is a constant, not a counter', () => {
   // And `:116`, and both write the literal `1`. Nothing reads the incoming
   // State's attempt and nothing increments it.
   //
-  // The field is exported and appears in `api-lock.md`, so mx-ui can render an
+  // The field is exported as part of the public API, so mx-ui can render an
   // Attempt counter against a value that never moves.
   //
   // DN-8 point 3 is right that the machine must hold no retry BUDGET — a budget

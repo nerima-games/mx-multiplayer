@@ -377,6 +377,12 @@ describe('protocol version', () => {
 describe('malformed input', () => {
   const rejected = (text: string) => failure(decodeFrame(text))
 
+  it.effect('rejects an empty player id at the encode boundary', () =>
+    Effect.sync(() => {
+      expect(failure(encodeFrame({ _tag: 'PlayerLeave', player: '' }))?.reason).toBe('unencodable-message')
+    }),
+  )
+
   it.effect('rejects text that is not JSON at all', () =>
     Effect.sync(() => {
       expect(rejected('not json')?.reason).toBe('malformed-frame')

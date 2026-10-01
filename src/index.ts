@@ -2,8 +2,9 @@
  * @nerima-games/mx-multiplayer — network synchronisation for the nerima-games
  * Minecraft-clone rebuild.
  *
- * Tier 3 (experience module) in the four-tier architecture. Its one runtime
- * dependency in the plan's graph is `@nerima-games/mc-sim`; it has no edge to
+ * Tier 3 (experience module) in the four-tier architecture. Its runtime
+ * dependencies are `@nerima-games/mc-kernel`, `@nerima-games/mc-sim`, and
+ * `effect`; it has no edge to
  * mx-gameplay, mx-redstone or mx-ui, because experience modules do not know one
  * another (plan.md §2.3-1).
  *

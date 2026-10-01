@@ -2,7 +2,7 @@
  * Named regression tests for the frame contract.
  *
  * Three things are being pinned, and none of them is visible to `tsc` or to
- * `pnpm check:deps`:
+ * ordinary typechecking:
  *
  *   - plan.md §2.3-1 / §2.3-3 — what is declared. Both rules are violated with
  *     STRINGS rather than with imports, so only a test can see it.
@@ -131,7 +131,7 @@ describe('§2.3-1 zero edges between experience modules', () => {
         // A peer's `BlockBreak` ends up changing what mx-gameplay simulates and
         // What mx-ui draws, so an edge to `gameplay:interactions` or
         // `ui:hud-sync` would read as obviously correct. It would also pass
-        // `pnpm check:deps` — it is a string — while coupling this repository's
+        // a typecheck — it is a string — while coupling this repository's
         // Frame position to a sibling's existence. §2.3-1 forbids it and the
         // Total order is mc-compose's (§2.3-3).
         expect(foreign).toStrictEqual([])
