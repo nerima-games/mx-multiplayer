@@ -104,6 +104,7 @@ describe('authoritative world revision admission', () => {
       expect(subject.revision(overworld)).toBeUndefined()
       expect(subject.revision(nether)).toBe(20)
 
+      subject.disconnect(undefined)
       subject.disconnect()
       expect(subject.ingestRevision(nether, 21)).toStrictEqual({
         accepted: false,

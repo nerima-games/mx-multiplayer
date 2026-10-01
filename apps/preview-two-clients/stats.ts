@@ -229,8 +229,8 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
 // ---------------------------------------------------------------------------
 
 /**
- * A frame from a newer build is reported as CORRUPTION, not as a version skew,
- * as soon as it carries anything this build's schema does not already accept.
+ * A frame from a newer build is reported as a version skew before this build
+ * has to understand the message shape.
  *
  * `docs/design-notes.md` DN-1 states the design in one sentence:
  *
@@ -238,19 +238,14 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
  *     弾くためにまず「もう存在しないかもしれないメッセージ形状」をパースする必要が
  *     生じるため。
  *
- * and `domain/protocol.ts:205-211` repeats it. The envelope IS on the outside —
- * `Frame = { protocolVersion, message }` — but `domain/codec.ts:89-99` decodes
- * the WHOLE `Frame`, message and all, and only then checks the version at
- * `:100`. So the message shape is parsed first after all, and the ordering the
- * design note describes is not the ordering the code has.
+ * and `domain/protocol.ts` repeats it. The envelope IS on the outside —
+ * `Frame = { protocolVersion, message }` — and `domain/codec.ts` decodes an
+ * opaque envelope, checks the version, and only then decodes the message shape.
  *
  * The two verdicts are not interchangeable. `docs/design-notes.md` DN-1 assigns
  * them different responses: `malformed-frame` drops the FRAME,
- * `unsupported-protocol-version` drops the PEER and tells the user why. A player
- * whose client is one version behind therefore sees "corrupt data" instead of
- * "your client is out of date", which is precisely the confusion DN-1 exists to
- * remove — and the reference implementation's failure was the same confusion for
- * the same reason, one layer up.
+ * `unsupported-protocol-version` drops the PEER and tells the user why during a
+ * rolling upgrade.
  */
 const versionBeforeShape = Effect.sync((): Check => {
   const forged = (message: unknown): string =>
@@ -305,21 +300,19 @@ const versionBeforeShape = Effect.sync((): Check => {
       '',
       `  ${String(misreported)} of ${String(counted)} frames from protocol ${String(PROTOCOL_VERSION + 1)} did NOT report unsupported-protocol-version.`,
       '',
-      '  domain/codec.ts:89-99 runs the structural decode of the WHOLE Frame — `message:',
-      '  NetworkMessage` included — and checks `frame.protocolVersion` afterwards at :100. The',
-      '  version field is on the envelope, but it is not READ before the message is parsed, so',
-      '  the ordering DN-1 asks for is not the ordering the code has.',
+      '  domain/codec.ts decodes an opaque envelope and checks protocolVersion before',
+      '  decoding NetworkMessage, so a future message shape cannot mask a version skew.',
       '',
       '  The two verdicts get different responses (DN-1): malformed-frame drops the FRAME,',
-      '  unsupported-protocol-version drops the PEER and says so to the user. A rolling upgrade',
-      '  — the exact scenario DN-1 is about — therefore surfaces as "corrupt data".',
+      '  unsupported-protocol-version drops the PEER and says so to the user during a rolling',
+      '  upgrade.',
       '',
-      '  Both existing version tests use a message THIS build knows, so both pass:',
+      '  The version tests include both known and unknown message shapes:',
       '    `rejects a frame from a version this build does not speak` uses SAMPLES.Ping',
       '    `reports a version mismatch as a version problem`         uses SAMPLES.PlayerLeave',
-      '  A version bump that adds no new message is the one case that works.',
+      '  Both cases report the version mismatch before message interpretation.',
     ],
-    title: 'a frame from an unsupported version is reported as malformed as soon as its shape is new',
+    title: 'a frame from an unsupported version is rejected before message shape decoding',
   } satisfies Check
 })
 
@@ -337,7 +330,7 @@ const versionBeforeShape = Effect.sync((): Check => {
  * counter's name.
  *
  * It is also part of the public API: `Connecting` is exported and appears in
- * `api-lock.md`, so mx-ui can render "attempt 3 of 5" against a value that is
+ * the public API, so mx-ui can render "attempt 3 of 5" against a value that is
  * always 1.
  *
  * DN-8 point 3 says the machine holds "no attempt budget", and that is right —
@@ -377,7 +370,7 @@ const attemptIsConstant = Effect.sync((): Check => {
       '  domain/connection.ts:116  Closed       + RetryRequested   -> { Connecting, attempt: 1 }',
       '',
       '  Those are the only two producers, and neither reads the previous attempt. The field is',
-      '  exported, is in api-lock.md, and is visible to mx-ui — which can therefore render',
+      '  exported and visible to mx-ui — which can therefore render',
       '  "attempt 1" forever. DN-8 correctly refuses to hold a retry BUDGET; the ordinal of the',
       '  attempt in flight is a different thing, and the adapter cannot supply it because the',
       '  machine overwrites it on the way in.',
@@ -556,6 +549,8 @@ const loopbackRoundTrip = Effect.gen(function* () {
  * no originating code anywhere near it.
  */
 const encodeSideValidation = Effect.sync((): Check => {
+  const emptyPlayerLeave = { _tag: 'PlayerLeave', player: '' }
+
   const cases: ReadonlyArray<readonly [string, () => Either.Either<string, { readonly reason: string }>]> = [
     ['a NaN coordinate (JSON.stringify(NaN) === "null")', () =>
       encodeFrame({ ...SAMPLES.PlayerMove, at: { x: Number.NaN, y: 0, z: 0 } })],
@@ -567,8 +562,7 @@ const encodeSideValidation = Effect.sync((): Check => {
       encodeFrame({ ...SAMPLES.BlockBreak, at: { x: 0.5, y: 1, z: 2 } })],
     ['a 300-character chat (maxLength 256)', () =>
       encodeFrame({ ...SAMPLES.Chat, text: 'x'.repeat(300) })],
-    ['an empty player id', () =>
-      encodeFrame({ ...SAMPLES.PlayerLeave, player: '' as unknown as typeof ALICE })],
+    ['an empty player id at the runtime boundary', () => encodeFrame(emptyPlayerLeave)],
   ]
 
   const rows: Array<string> = [`  ${pad('value the sender should never put on the wire', 50)}encodeFrame says`]
@@ -693,7 +687,11 @@ const noWallClockOnTheWire = Effect.sync((): Check => {
       offenders.push(`${tag}: sample does not encode`)
       continue
     }
-    const parsed = JSON.parse(encoded.right) as { readonly message: Record<string, unknown> }
+    const parsed: unknown = JSON.parse(encoded.right)
+    if (typeof parsed !== 'object' || parsed === null || !('message' in parsed) || typeof parsed.message !== 'object' || parsed.message === null) {
+      offenders.push(`${tag}: encoded frame has no object message`)
+      continue
+    }
     for (const key of Object.keys(parsed.message)) {
       if (suspicious.some((needle) => key.toLowerCase().includes(needle))) {
         offenders.push(`${tag}.${key}`)

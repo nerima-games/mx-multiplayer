@@ -49,6 +49,10 @@ const validSnapshot = (snapshot: PlayerTransformSnapshot): boolean =>
   Number.isFinite(snapshot.facing.yawRadians) &&
   Number.isFinite(snapshot.facing.pitchRadians)
 
+const isNonEmptyHistory = (
+  history: ReadonlyArray<PlayerTransformSnapshot>,
+): history is readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>] => history.length > ZERO
+
 const distance = (left: Vec3, right: Vec3): number =>
   Math.hypot(right.x - left.x, right.y - left.y, right.z - left.z)
 
@@ -114,7 +118,7 @@ export class SnapshotInterpolator {
       return undefined
     }
     const history = this.#history.get(player)
-    if (history === undefined || history.length === ZERO) {
+    if (history === undefined || !isNonEmptyHistory(history)) {
       return undefined
     }
 
@@ -128,13 +132,16 @@ export class SnapshotInterpolator {
 
   /** Precondition, enforced by the only caller (`sample`): `history` is non-empty. */
   static #sampleAtBoundary(
-    history: ReadonlyArray<PlayerTransformSnapshot>,
+    history: readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>],
     renderTick: number,
   ): PlayerTransformSnapshot | undefined {
-    // Non-null: a non-empty array's first element and `.at(-1)` are always
-    // Present; there is no runtime path here where either is `undefined`.
-    const [first] = history as [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>]
-    const last = history.at(LAST_INDEX) as PlayerTransformSnapshot
+    // The tuple type guarantees that the first element exists; the loop keeps
+    // `last` aligned with the final history entry without a non-null assertion.
+    const [first] = history
+    let last = first
+    for (const snapshot of history) {
+      last = snapshot
+    }
     if (renderTick <= first.tick) {
       return first
     }
@@ -145,19 +152,18 @@ export class SnapshotInterpolator {
   }
 
   /** Precondition, enforced by the only caller (`sample`): `first.tick < renderTick < last.tick`. */
-  #interpolate(history: ReadonlyArray<PlayerTransformSnapshot>, renderTick: number): PlayerTransformSnapshot {
-    for (let index = NEIGHBOR_OFFSET; index < history.length; index += NEIGHBOR_OFFSET) {
-      // Non-null: `index` ranges over `[NEIGHBOR_OFFSET, history.length)`, so both
-      // `history[index]` and `history[index - NEIGHBOR_OFFSET]` are always in
-      // Bounds — the same array-length invariant `#sampleAtBoundary` relies on.
-      // Without this, `left !== undefined && right !== undefined` would add two
-      // Branches no test can take the false side of, since the loop bounds
-      // Already guarantee both are defined.
-      const right = history[index] as PlayerTransformSnapshot
-      const left = history[index - NEIGHBOR_OFFSET] as PlayerTransformSnapshot
+  #interpolate(
+    history: readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>],
+    renderTick: number,
+  ): PlayerTransformSnapshot {
+    let [left] = history
+    for (const right of history.slice(NEIGHBOR_OFFSET)) {
+      // The tuple and slice preserve the non-empty history invariant, so both
+      // Interpolation endpoints are defined for every iteration.
       if (renderTick <= right.tick) {
         return this.#interpolatePair(left, right, renderTick)
       }
+      left = right
       // Unreachable: the precondition above guarantees some `right` in this
       // Loop satisfies `renderTick <= right.tick` no later than the final
       // Element, so the loop always returns from inside the `if` above. The

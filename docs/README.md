@@ -23,15 +23,16 @@
 
 ## 読む順番
 
-1. **architecture.md** — このリポジトリがグラフのどこにいて、なぜ mc-sim にしか依存しないか
+1. **architecture.md** — このリポジトリがグラフのどこにいて、mc-kernel / mc-sim / effect に依存する理由
 2. **responsibility.md** — mx-ui との境界。ここを誤ると参照実装と同じ構造に戻る
 3. **design-notes.md** — 参照実装で実際に起きたことと、その回帰テスト
 4. **porting.md** — 実際に移植を始めるとき
 
 ## 現状
 
-このリポジトリは、バージョン 2 の 42 タグの wire protocol、コーデック、接続状態機械、
-スナップショット補間、authoritative 同期の境界を提供する。ゲーム規則と状態変更は
+このリポジトリは、`src/domain/protocol.ts` が定義する wire protocol、コーデック、接続状態機械、
+スナップショット補間、authoritative 同期の境界を提供する。protocol の版数とタグ集合は実装とテストを正本とし、
+ゲーム規則と状態変更は
 `@nerima-games/mc-sim`、実サーバーと stage 全体配置は mc-compose が所有する。
 
 ここで確定しているのは **transport/protocol の契約** である:

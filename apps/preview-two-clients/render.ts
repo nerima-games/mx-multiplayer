@@ -25,7 +25,7 @@ export const VIEW_MODES = ['wire', 'machine', 'faults'] as const
 export type ViewMode = (typeof VIEW_MODES)[number]
 
 export const isViewMode = (value: string): value is ViewMode =>
-  (VIEW_MODES as ReadonlyArray<string>).includes(value)
+  VIEW_MODES.some((mode) => mode === value)
 
 const GOOD: Rgb = [140, 200, 140]
 const BAD: Rgb = [235, 120, 120]

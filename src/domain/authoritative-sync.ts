@@ -19,8 +19,8 @@ export class AuthoritativeRevisionTracker {
   readonly #revisions = new Map<WorldId, number>()
 
   ingestSnapshot(snapshot: WorldSnapshot): RevisionAdmission {
-    if (this.#revisions.has(snapshot.world)) {
-      const current = this.#revisions.get(snapshot.world) as number
+    const current = this.#revisions.get(snapshot.world)
+    if (current !== undefined) {
       if (snapshot.revision <= current) {
         return {
           accepted: false,
@@ -36,7 +36,8 @@ export class AuthoritativeRevisionTracker {
 
   // eslint-disable-next-line max-statements -- Each admission branch preserves a distinct recovery reason.
   ingestRevision(world: WorldId, revision: number): RevisionAdmission {
-    if (!this.#revisions.has(world)) {
+    const current = this.#revisions.get(world)
+    if (current === undefined) {
       return {
         accepted: false,
         reason: 'snapshot-required',
@@ -44,7 +45,6 @@ export class AuthoritativeRevisionTracker {
       }
     }
 
-    const current = this.#revisions.get(world) as number
     if (revision <= current) {
       return { accepted: false, reason: 'duplicate-or-stale', receivedRevision: revision }
     }
@@ -74,7 +74,9 @@ export class AuthoritativeRevisionTracker {
     if (arguments.length === noArguments) {
       this.#revisions.clear()
     } else {
-      this.#revisions.delete(world as WorldId)
+      if (world !== undefined) {
+        this.#revisions.delete(world)
+      }
     }
   }
 }

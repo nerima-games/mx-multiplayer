@@ -75,14 +75,14 @@ graph BT
 
 > **mc-kernel は全リポジトリから import 可能。** グラフに描かないのは、
 > 全ノードから kernel へエッジを引くと図が読めなくなるためと、
-> `scripts/check-dependency-whitelist.ts` が `dependencyGraph` に kernel を書くことを
-> 設定エラーとして拒否するため(rule 4)。ただし `package.json` への記載は必要。
+> 共有 kernel のエッジを省いても読みやすさを保てるためである。直接依存は
+> `package.json` に宣言する。
 
 ## 3. このリポジトリの位置
 
-**mx-multiplayer の実行時依存は `@nerima-games/mc-sim` ただ 1 つ。**
+**直接の実行時依存は `package.json` に列挙した `@nerima-games/mc-kernel`、`@nerima-games/mc-sim`、`effect` である。**
 
-その 1 本しかないことが設計そのものである。
+`package.json` の直接依存一覧が設計上の境界である。
 
 - **上流(mc-sim)へ**: リモートピアの行動を世界に反映するときは、必ず mc-sim のサービス
   (`InventoryService` / `EntityManager` 等)に書き込む。mx-gameplay を呼ぶことは決してない。
@@ -93,15 +93,13 @@ graph BT
 
 ### 到達できるが import してはいけないもの
 
-`pnpm install` すると `node_modules` には mc-physics も mc-worldgen も mc-save も物理的に存在する
-(mc-sim の推移的依存として)。**それらを import することは禁止**である。
+インストール後に推移的パッケージが存在しても、直接依存ではないため、このパッケージから import してはならない。
 
 ```
 mx-multiplayer -> mc-sim -> mc-physics   ... mc-physics の import は transitive-import 違反
 ```
 
-`pnpm check:deps` が `transitive-import` として非ゼロ終了する。
-「推移的依存は import ライセンスではない」— 16 リポジトリ分割が静かにモノリスへ戻る唯一の経路がこれである。
+`package.json` の直接依存一覧が依存境界であり、推移的依存は import の許可証ではない。
 
 ## 4. 設計ルール
 
@@ -131,12 +129,7 @@ mx-multiplayer → mx-gameplay の呼び出しではなく、mc-sim の `Invento
 kit を実行時依存にすると、出荷ビルドが「同梱されないハーネス」から入力を取ることになり、
 リリースビルドから入力処理が丸ごと消える。
 
-強制は 2 段構え:
-
-1. `scripts/check-dependency-whitelist.ts` の `DEV_ONLY_PACKAGES` が
-   `dependencies` への出現を `dev-only-package-in-dependencies` として拒否
-2. 出荷ソース(`index.ts` / `domain/`)からの import を
-   `dev-only-package-in-shipped-source` として拒否
+このパッケージは `dependencies` に `mc-playground-kit` を宣言せず、出荷ソースからも kit を import しない。
 
 なお **mx-multiplayer は kit を devDependency としても使わない**。
 プレビューを持つのは mx-gameplay と mx-redstone であり、こちらの検証はループバックで完結する
@@ -150,6 +143,4 @@ mx-multiplayer は `StageRegistration.after` で**順序制約を宣言するだ
 
 ### 4.4 依存ホワイトリストは CI で強制(plan.md §2.3-5)
 
-`pnpm check:deps` は違反があれば必ず非ゼロ終了する。
-参照実装の `check-package-dag.ts` は警告を出して常に 0 で終了していた
-— 落ちないゲートはドキュメントであってゲートではない。
+パッケージの依存境界は `package.json` で確認し、リポジトリの検証コマンドは `pnpm verify` とする。

@@ -2,7 +2,7 @@
  * Named regression tests for the frame contract.
  *
  * Three things are being pinned, and none of them is visible to `tsc` or to
- * `pnpm check:deps`:
+ * ordinary typechecking:
  *
  *   - plan.md §2.3-1 / §2.3-3 — what is declared. Both rules are violated with
  *     STRINGS rather than with imports, so only a test can see it.
@@ -131,7 +131,7 @@ describe('§2.3-1 zero edges between experience modules', () => {
         // A peer's `BlockBreak` ends up changing what mx-gameplay simulates and
         // What mx-ui draws, so an edge to `gameplay:interactions` or
         // `ui:hud-sync` would read as obviously correct. It would also pass
-        // `pnpm check:deps` — it is a string — while coupling this repository's
+        // a typecheck — it is a string — while coupling this repository's
         // Frame position to a sibling's existence. §2.3-1 forbids it and the
         // Total order is mc-compose's (§2.3-3).
         expect(foreign).toStrictEqual([])
@@ -417,17 +417,15 @@ describe('multiplayer:outbound — queue-level connection gate', () => {
   it.effect('counts a message that fails to encode as unencodable, and does not send it', () =>
     Effect.gen(function* () {
       const { state, peer, outbound } = yield* registered
-      // A branded invariant violated locally (see codec.test.ts and
-      // Preview-findings.test.ts's "an invalid value fails at the sender"):
-      // `at.x` fails `Vec3`'s `finite()` refinement, so `encodeFrame` returns
-      // `Left`. `as` bypasses the type system the same way a bug that produced
-      // This value in production would.
-      const unencodable = {
+      // Deliberately corrupt a previously validated value to exercise the
+      // sender-side codec failure path without a type assertion.
+      const unencodable = PlayerMove.make({
         _tag: 'PlayerMove',
-        at: { x: Number.NaN, y: 0, z: 0 },
+        at: { x: 0, y: 0, z: 0 },
         facing: { pitchRadians: 0, yawRadians: 0 },
         player: alice,
-      } as NetworkMessage
+      })
+      Object.assign(unencodable.at, { x: Number.NaN })
 
       yield* Ref.set(state.connection, connected)
       yield* Ref.set(state.outbox, [unencodable])

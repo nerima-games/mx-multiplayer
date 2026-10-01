@@ -6,6 +6,7 @@ import {
   AuthoritativeSession,
   AuthoritativeSnapshot,
   CommandId,
+  EntityId,
   PlayerId,
   PlayerInventoryAction,
   WorldId,
@@ -80,7 +81,7 @@ describe('authoritative protocol schemas', () => {
     const entity: AuthoritativeEntityState = {
       _tag: 'living',
       at: { x: 0, y: 64, z: 0 },
-      entityId: 'zombie-1' as AuthoritativeEntityState['entityId'],
+      entityId: EntityId.make('zombie-1'),
       entityType: 'zombie',
       health: 20,
       maxHealth: 20,
