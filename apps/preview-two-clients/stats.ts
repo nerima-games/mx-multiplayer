@@ -556,6 +556,18 @@ const loopbackRoundTrip = Effect.gen(function* () {
  * no originating code anywhere near it.
  */
 const encodeSideValidation = Effect.sync((): Check => {
+  const encodeEmptyPlayerLeave = (): Either.Either<string, { readonly reason: string }> =>
+    Either.try({
+      try: () =>
+        Either.getOrThrow(
+          encodeFrame({
+            ...SAMPLES.PlayerLeave,
+            player: PlayerId.make(''),
+          }),
+        ),
+      catch: (error) => ({ reason: error instanceof Error ? error.message : String(error) }),
+    })
+
   const cases: ReadonlyArray<readonly [string, () => Either.Either<string, { readonly reason: string }>]> = [
     ['a NaN coordinate (JSON.stringify(NaN) === "null")', () =>
       encodeFrame({ ...SAMPLES.PlayerMove, at: { x: Number.NaN, y: 0, z: 0 } })],
@@ -567,8 +579,7 @@ const encodeSideValidation = Effect.sync((): Check => {
       encodeFrame({ ...SAMPLES.BlockBreak, at: { x: 0.5, y: 1, z: 2 } })],
     ['a 300-character chat (maxLength 256)', () =>
       encodeFrame({ ...SAMPLES.Chat, text: 'x'.repeat(300) })],
-    ['an empty player id', () =>
-      encodeFrame({ ...SAMPLES.PlayerLeave, player: PlayerId.make('') })],
+    ['an empty player id at the runtime boundary', encodeEmptyPlayerLeave],
   ]
 
   const rows: Array<string> = [`  ${pad('value the sender should never put on the wire', 50)}encodeFrame says`]

@@ -9,17 +9,13 @@
 
 ## 依存
 
-実行時依存は `@nerima-games/mc-sim` **ただ 1 つ**(加えて `@nerima-games/mc-kernel` は
-どこからでも import 可)。mx-gameplay / mx-redstone / mx-ui へのエッジはゼロである
+実行時依存は `package.json` に列挙された `@nerima-games/mc-kernel`、
+`@nerima-games/mc-sim`、`effect` である。mx-gameplay / mx-redstone / mx-ui へのエッジはゼロである
 — 体験モジュールは互いを知らない(plan.md §2.3-1)。
 
 **mc-sim を経由して到達できる mc-physics / mc-worldgen / mc-save の import は禁止**である。
-`pnpm check:deps` が `transitive-import` として非ゼロ終了する。
-
-> **現状**: `package.json` の `dependencies` は `effect` のみ。
-> ロスター全体が未公開のため(ボトムアップの publish-then-pin、plan.md §6 Step 3)、
-> 依存契約は `scripts/check-dependency-whitelist.ts` の `REPOSITORY_POLICY` 側にだけ宣言してある。
-> 詳細は [docs/versioning.md](./docs/versioning.md) §3。
+直接依存と import 境界の正本は [docs/architecture.md](./docs/architecture.md) §3 と
+`package.json` である。詳細は [docs/versioning.md](./docs/versioning.md) §3。
 
 ## ドキュメント
 
@@ -47,27 +43,6 @@
 | 宣言と実体の一致 | import する `@nerima-games/*` は `package.json` に記載されていなければならない |
 | mc-playground-kit は devDependency 専用 | `dependencies` に入れてはならない。実行時依存になると、出荷ビルドから入力処理が消える |
 | `Date.now()` 禁止 | 時刻はすべて注入された Clock Port から取得する |
-
-`scripts/check-dependency-whitelist.ts` は 16 リポジトリ共通のテンプレートである。
-姉妹リポジトリへ移植する際は、ファイル冒頭で囲ってある `REPOSITORY_POLICY` 定数だけを書き換えればよい。
-それ以外の部分はそのままコピーする。
-
-### `Date.now()` 禁止の実装方法
-
-oxlint 0.12 は `no-restricted-syntax` も `no-restricted-properties` も実装しておらず、
-`no-restricted-globals` は `oxlint --rules` の一覧に出るものの実装されていない
-(0.12.0 で実測確認済み)。
-
-そのため禁止は **`scripts/check-dependency-whitelist.ts` 側で実装**している。
-対象は `Date.now()` / `new Date()` / `performance.now()` の 3 つ。
-コメント・文字列リテラル・正規表現リテラルの中身はマスクされるので誤検知しない。
-
-Clock Port の実装アダプタ自身だけは実クロックを読む必要があるため、
-その行に `mc-kernel-allow-time-source` コメントを付けると除外される。
-
-参照実装の `packages/network` はこの禁止を**構造的に破っていた**
-— 全メッセージが必須 `timestamp` を持ち、それを 17 箇所の `Date.now()` が埋めていた。
-[docs/design-notes.md](./docs/design-notes.md) DN-3 を参照。
 
 ## 開発
 
@@ -98,10 +73,9 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
 | `pnpm test` | vitest(`@effect/vitest` の `it.effect` が主 API) |
 | `pnpm test:watch` | vitest watch |
 | `pnpm test:coverage` | カバレッジ計測(閾値は未設定) |
-| `pnpm check:deps` | 依存ホワイトリスト + 循環検査 + `Date.now()` 禁止の検査 |
-| `pnpm api:check` | `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了（[`docs/public-api.md`](./docs/public-api.md) §6） |
-| `pnpm api:update` | `api-lock.md` を書き直す。公開面を変える PR は結果を同じ PR に含める |
-| `pnpm verify` | `typecheck && lint && check:deps && api:check && test`。CI と同じ内容 |
+| `pnpm test:coverage` | vitest をカバレッジ付きで実行 |
+| `pnpm package:verify` | 出荷ビルドとパッケージ内容を検査 |
+| `pnpm verify` | `typecheck && lint && test`。CI と同じ内容 |
 
 ### スナップショット補間
 
@@ -127,7 +101,9 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
   位置は [stages/stage-ids.ts](./stages/stage-ids.ts) 冒頭）。骨格は plan.md §2.3-3 により
   mc-compose の唯一の所有物なので、ここからは直せない。
   契約型は `domain/frame-contract.ts` に暫定ミラーを置いている（mc-kernel 公開時に削除）
-- **mc-sim への状態反映がまだ無い。** mc-sim 公開後
+- **mc-sim への状態反映は実装済み。** `src/application/server/command-application.ts` が
+  対応する権威コマンドを mc-sim のサービスへ write-through し、
+  `test/command-application.test.ts` で検証している。未対応のコマンドは明示的に拒否する。
 - **実 WebSocket アダプタが無い。** `TransportPort` の実装はプラットフォーム層に置く。
   現在あるのはループバック(テスト用)と `disconnectedTransport` のみ
 - **プレビューは動く。** `pnpm preview`（[apps/preview-two-clients/](./apps/preview-two-clients/README.md)）。
