@@ -229,8 +229,8 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
 // ---------------------------------------------------------------------------
 
 /**
- * A frame from a newer build is reported as CORRUPTION, not as a version skew,
- * as soon as it carries anything this build's schema does not already accept.
+ * A frame from a newer build is reported as a version skew before this build
+ * has to understand the message shape.
  *
  * `docs/design-notes.md` DN-1 states the design in one sentence:
  *
@@ -238,19 +238,14 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
  *     弾くためにまず「もう存在しないかもしれないメッセージ形状」をパースする必要が
  *     生じるため。
  *
- * and `domain/protocol.ts:205-211` repeats it. The envelope IS on the outside —
- * `Frame = { protocolVersion, message }` — but `domain/codec.ts:89-99` decodes
- * the WHOLE `Frame`, message and all, and only then checks the version at
- * `:100`. So the message shape is parsed first after all, and the ordering the
- * design note describes is not the ordering the code has.
+ * and `domain/protocol.ts` repeats it. The envelope IS on the outside —
+ * `Frame = { protocolVersion, message }` — and `domain/codec.ts` decodes an
+ * opaque envelope, checks the version, and only then decodes the message shape.
  *
  * The two verdicts are not interchangeable. `docs/design-notes.md` DN-1 assigns
  * them different responses: `malformed-frame` drops the FRAME,
- * `unsupported-protocol-version` drops the PEER and tells the user why. A player
- * whose client is one version behind therefore sees "corrupt data" instead of
- * "your client is out of date", which is precisely the confusion DN-1 exists to
- * remove — and the reference implementation's failure was the same confusion for
- * the same reason, one layer up.
+ * `unsupported-protocol-version` drops the PEER and tells the user why during a
+ * rolling upgrade.
  */
 const versionBeforeShape = Effect.sync((): Check => {
   const forged = (message: unknown): string =>
@@ -305,21 +300,19 @@ const versionBeforeShape = Effect.sync((): Check => {
       '',
       `  ${String(misreported)} of ${String(counted)} frames from protocol ${String(PROTOCOL_VERSION + 1)} did NOT report unsupported-protocol-version.`,
       '',
-      '  domain/codec.ts:89-99 runs the structural decode of the WHOLE Frame — `message:',
-      '  NetworkMessage` included — and checks `frame.protocolVersion` afterwards at :100. The',
-      '  version field is on the envelope, but it is not READ before the message is parsed, so',
-      '  the ordering DN-1 asks for is not the ordering the code has.',
+      '  domain/codec.ts decodes an opaque envelope and checks protocolVersion before',
+      '  decoding NetworkMessage, so a future message shape cannot mask a version skew.',
       '',
       '  The two verdicts get different responses (DN-1): malformed-frame drops the FRAME,',
-      '  unsupported-protocol-version drops the PEER and says so to the user. A rolling upgrade',
-      '  — the exact scenario DN-1 is about — therefore surfaces as "corrupt data".',
+      '  unsupported-protocol-version drops the PEER and says so to the user during a rolling',
+      '  upgrade.',
       '',
-      '  Both existing version tests use a message THIS build knows, so both pass:',
+      '  The version tests include both known and unknown message shapes:',
       '    `rejects a frame from a version this build does not speak` uses SAMPLES.Ping',
       '    `reports a version mismatch as a version problem`         uses SAMPLES.PlayerLeave',
-      '  A version bump that adds no new message is the one case that works.',
+      '  Both cases report the version mismatch before message interpretation.',
     ],
-    title: 'a frame from an unsupported version is reported as malformed as soon as its shape is new',
+    title: 'a frame from an unsupported version is rejected before message shape decoding',
   } satisfies Check
 })
 

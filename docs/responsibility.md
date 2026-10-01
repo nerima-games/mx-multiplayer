@@ -13,8 +13,8 @@
 | 障害分類 | `ProtocolError`(再送無意味)/ `TransportError`(再送が正解) | `domain/errors.ts` |
 | 接続ライフサイクル | 明示的な状態機械。合法遷移の表 | `domain/connection.ts` |
 | トランスポート Port | `TransportPort` とループバック実装 | `domain/transport.ts` |
-| 状態同期 | 受信フレームを decode して host に渡し、host が `mc-sim` の authoritative state を反映する | `stages/registration.ts` はルールを持たない queue seam。状態変換は host/server の責務 |
-| stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | 実装済 `stages/registration.ts`。配置は mc-compose の skeleton が所有 |
+| 状態同期 | 受信フレームを decode して host に渡し、host が `mc-sim` の authoritative state を反映する | `src/stages/registration.ts` はルールを持たない queue seam。状態変換は host/server の責務 |
+| stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | 実装済 `src/stages/registration.ts`。配置は mc-compose の skeleton が所有 |
 
 ### 2.1 登録した 2 stage と、mc-compose 側の配置
 
@@ -27,8 +27,8 @@
 
 mc-compose の `domain/stage-skeleton.ts` は network phase を二つ所有している。
 `network:inbound` は input と simulation の間、`network:outbound` は simulation と presentation
-の間である。`test/e2e/roster-frame-order.test.ts` が `multiplayer:inbound` と
-`multiplayer:outbound` の順序を回帰検証する。
+の間である。`test/stage-registration.test.ts` が `multiplayer:inbound` と
+`multiplayer:outbound` の登録と `after` 制約を回帰検証する。
 
 **骨格の所有者は mc-compose のままである。** mx-multiplayer は stage の意味と最小の
 `after` 制約だけを宣言し、全体フレーム内の配置は変更しない。

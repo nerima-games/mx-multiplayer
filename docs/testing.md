@@ -12,7 +12,7 @@ plan.md §3.14 検証:
 | トランスポート | **ループバック同期テスト**(2 本の実トランスポート) | `test/transport.test.ts` |
 | 公開 API | バレルのピン留め + 越境しそうな名前の検査 | `test/public-api.test.ts` |
 | サーバー側 command application | mc-sim service への反映と拒否 | `test/command-application.test.ts` |
-| プレビューが見つけたもの | 現在の（誤った）挙動の固定 + プレビュー由来の新規チェック | `test/preview-findings.test.ts` |
+| プレビューが見つけたもの | 設計上の finding の測定 + プレビュー由来の新規チェック | `test/preview-findings.test.ts` |
 | セッション全体 | **ローカル 2 クライアントのプレビュー**（フォールト注入つき） | `apps/preview-two-clients/`（§8-9） |
 | 実 WebSocket | **ここでは検証しない**。アダプタの責務 | — |
 | 画面 | **ここでは検証しない**。mx-ui の責務 | — |
@@ -86,10 +86,11 @@ it.effect('rejects a coordinate that arrived as null, which is what a NaN turns 
 `pnpm test` は素の Node vitest プール(`environment: 'node'`, `pool: 'forks'`)で走る。
 
 これは Port とアダプタを分けた直接の見返りである。
-参照実装は `packages/network` の中にブラウザクライアント・Node サーバ・
-`scripts/multiplayer-server.ts` を同居させていたため、
+参照実装は `<reference-impl>/packages/network` の中にブラウザクライアント・Node サーバ・
+`<reference-impl>/packages/network/scripts/multiplayer-server.ts` を同居させていたため、
 テストが実ソケットとポート番号に依存していた
-(`test/node-websocket-server.test.ts` 175 LOC、`test/browser-websocket-client.test.ts` 175 LOC)。
+(`<reference-impl>/packages/network/test/node-websocket-server.test.ts` 175 LOC、
+`<reference-impl>/packages/network/test/browser-websocket-client.test.ts` 175 LOC)。
 
 ## 6. カバレッジ
 
@@ -149,31 +150,27 @@ machine フォールトは `a`〜`z` で、DN-8 が名指しする 3 本
 `test/preview-findings.test.ts` に assertion として落としてある —— レポートは読まれなければ効かないが、
 テストは落ちる。チェック自体は合格後も残してある。合格したら消すチェックは、コードを 1 回しか検査しない。
 
-初回実行（2026-07-27）は 4 件。**全部 pin 済み。**
+現在の実行では M2 / M3 / M-clock の 3 件を finding として報告し、M1 / M4 は解消済みである。
 
 | # | 症状 | 場所 |
 | --- | --- | --- |
-| **M1** | **バージョンがメッセージ形状より後に検査されている。** 新しいビルドから来たフレームは、このビルドのスキーマが受け付けない形を含んだ瞬間に `malformed-frame` になる（実測 3/4） | `domain/codec.ts:89-100` |
-| **M2** | `ConnectionState.Connecting.attempt` is initialized through the shared `FIRST_ATTEMPT` constant | `domain/connection.ts` |
-| **M3** | 決着した接続が、実際のソケットが次に届けるイベント（書き込み失敗の後の close、Disconnect の 2 度押し）を「不正」として拒否する | `domain/connection.ts:113-121` |
-| **M4 (解決済み)** | `connectionGatedTransport` が各 send 時に現在状態を読み、`Connected` 以外を typed `TransportError` で拒否する | `domain/transport.ts` / `test/transport.test.ts` |
+| **M1 (解消済み)** | opaque envelope を先に decode し、message shape より前に protocol version を検査する | `src/domain/codec.ts` / `test/codec.test.ts` |
+| **M2** | `ConnectionState.Connecting.attempt` は共有された初期値から常に 1 になる | `src/domain/connection.ts` |
+| **M3** | 決着した接続が、実際のソケットが次に届けるイベント（書き込み失敗の後の close、Disconnect の 2 度押し）を「不正」として拒否する | `src/domain/connection.ts:113-121` |
+| **M4 (解決済み)** | `connectionGatedTransport` が各 send 時に現在状態を読み、`Connected` 以外を typed `TransportError` で拒否する | `src/domain/transport.ts` / `test/transport.test.ts` |
 
-### M1 —— なぜ既存の 2 本が通ってしまうのか
+### M1 —— opaque envelope による version 先行検査
 
 DN-1 の設計は「バージョンはメッセージの**外側**に置く。内側に置くと、未知バージョンのフレームを
 弾くためにまず『もう存在しないかもしれないメッセージ形状』をパースする必要が生じるため」である。
-`Frame = { protocolVersion, message }` は確かに外側に置いている。しかし `decodeFrame` は
-`Frame` を**まるごと**（`message: NetworkMessage` を含めて）構造デコードし、
-バージョン比較はその**後**である。つまり「メッセージ形状を先にパースする」を回避できていない。
+`Frame = { protocolVersion, message }` は外側に置かれている。`decodeFrame` はまず
+`message` を `Schema.Unknown` とした opaque envelope を decode し、protocol version を検査する。
+対応する version のときだけ `message` を `NetworkMessage` として decode するため、
+未知の message shape が version mismatch を隠さない。
 
 2 つの判定は交換可能ではない。DN-1 は前者に「フレームを捨てる」、後者に
-「**ピア**を切ってユーザにそう伝える」を割り当てている。
-**ローリングアップグレード —— DN-1 が存在する唯一の理由 —— が「パケットが壊れています」として出る。**
-
-既存の 2 本が通るのは、どちらも **v+1 のエンベロープに「このビルドが知っているメッセージ」を包む**からである
-（`SAMPLES.Ping` と `SAMPLES.PlayerLeave`）。
-**メッセージを 1 つも変えないバージョン上げ**が唯一うまくいくケースであり、
-それは最も起こりそうにないケースである。
+「**ピア**を切ってユーザにそう伝える」を割り当てている。既知・未知の message shape の
+両方で version mismatch を先に返すことを `test/codec.test.ts` で検証している。
 
 ### M3・M4 —— なぜ単体テストからは見えないのか
 

@@ -189,7 +189,7 @@ tracker はゲーム状態を保持・変更せず、再接続や snapshot 要�
 
 | 境界 | 所有者 |
 | --- | --- |
-| `GameModule` / `StageRegistration` | mx-multiplayer の `stages/`。実装済み |
+| `GameModule` / `StageRegistration` | mx-multiplayer の `src/stages/`。実装済み |
 | decoded message を authoritative state に反映する処理 | host/server。mc-compose の multiplayer server は `mc-sim` とゲーム規則を使って所有する |
 | 実 WebSocket server と認証・origin policy | platform host。mc-compose の multiplayer server が所有する |
 | network phase の全体配置 | mc-compose の stage skeleton。実装済み |
@@ -197,12 +197,21 @@ tracker はゲーム状態を保持・変更せず、再接続や snapshot 要�
 ### 8.1 stage 登録
 
 ```ts
-const MULTIPLAYER_STAGE_IDS: { inbound: StageId; outbound: StageId }   // multiplayer:inbound / multiplayer:outbound
-const UPSTREAM_STAGE_IDS: { simPhysics: StageId }                      // sim:physics — outbound の唯一の after
+const MULTIPLAYER_STAGE_IDS: { inbound: StageId; outbound: StageId } // multiplayer:inbound / multiplayer:outbound
+const UPSTREAM_STAGE_IDS: { simPhysics: StageId }                    // sim:physics — outbound の唯一の after
+const EXPERIENCE_MODULE_STAGE_PREFIXES: readonly string[]
+const OWN_STAGE_PREFIX: string
 const multiplayerModule: GameModule<never, never, never, TransportPort>
+const multiplayerStages: (...args: unknown[]) => ReadonlyArray<StageRegistration>
 const makeMultiplayerStages: Effect<ReadonlyArray<StageRegistration>, never, TransportPort>
 const makeMultiplayerStagesForPreview: Effect<{ state; stages }, never, TransportPort>
+const makeMultiplayerFrameState: Effect<MultiplayerFrameState>
+const NO_NETWORK_FRAMES: NetworkFrameCounters
 ```
+
+上記は `test/public-api.test.ts` が固定する stage 公開値の代表一覧である。
+stage 実装の詳細と追加の host adapter は `src/stages/registration.ts` を正本とし、
+全公開値を列挙する一覧ではない。
 
 `RRegister` が `TransportPort` で `ROut` が `never` である点が、ロスターの中でこのリポジトリだけの
 形である。mc-render は自分が**提供する** `InputService` を acquire するが、ここで acquire する

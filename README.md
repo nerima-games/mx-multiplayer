@@ -91,15 +91,15 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
 
 **このリポジトリはまだ叩き台(pre-audit first cut)である。** 以下は確定事項ではない。
 
-- **メッセージ集合は代表的な 9 種のみ。** 参照実装の 18 種は再現していない
-  ([docs/porting.md](./docs/porting.md) 参照)
-- **`GameModule` / `StageRegistration` は実装済み**（[stages/](./stages/)）。
+- **メッセージ集合の正本は `src/domain/protocol.ts`**。`NetworkMessage` と `MESSAGE_TAGS` を
+  実装・テストで網羅的に管理し、タグ集合を固定数では説明しない。
+- **`GameModule` / `StageRegistration` は実装済み**（[src/stages/](./src/stages/)）。
   `multiplayer:inbound` と `multiplayer:outbound` の 2 本を登録する。
   ただし **mc-compose の標準 stage 骨格に `multiplayer:` を拾うフェーズが 1 つも無い**ため、
   今日この 2 本は**フレームの末尾、HUD の後ろ**に落ちる（実測値と、必要なフェーズ 2 つの
-  位置は [stages/stage-ids.ts](./stages/stage-ids.ts) 冒頭）。骨格は plan.md §2.3-3 により
+  位置は [src/stages/stage-ids.ts](./src/stages/stage-ids.ts) 冒頭）。骨格は plan.md §2.3-3 により
   mc-compose の唯一の所有物なので、ここからは直せない。
-  契約型は `domain/frame-contract.ts` に暫定ミラーを置いている（mc-kernel 公開時に削除）
+  stage の状態と登録契約は [src/stages/registration.ts](./src/stages/registration.ts) にある。
 - **mc-sim への状態反映は実装済み。** `src/application/server/command-application.ts` が
   対応する権威コマンドを mc-sim のサービスへ write-through し、
   `test/command-application.test.ts` で検証している。未対応のコマンドは明示的に拒否する。
@@ -113,15 +113,16 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
   1 プロセスの中で 2 つのピアを `makeLoopbackPair` で配線し、15 ステップのハンドシェイクを
   1 キーストロークずつ進めながら、フレーム・状態遷移・**フォールト注入**を見せる。
   ソケットは 1 つも開かず、`mc-playground-kit` も新規依存も使っていない。
-  `pnpm preview --stats` は初回実行（2026-07-27）で **4 件**の finding を出し、
-  4 件とも `test/preview-findings.test.ts` に assertion として固定してある。
-  うち 3 件（M1 / M3 / M4）は既存 107 本のテストが 1 つも捕まえていなかった
+  `pnpm preview --stats` は実行時に finding を測定し、現在は M2 / M3 / M-clock の
+  3 件を報告する。codec の境界検証は `test/preview-findings.test.ts` と
+  `test/codec.test.ts` に assertion として固定してある。
 確定しているのは**仕組み**のほうである: バージョン付きエンベロープ、テキストで止まるコーデック、
 `ProtocolError` と `TransportError` の分離、リトライ方針を持たない接続状態機械。
 
-ただし**エンベロープの検査順序は仕組みどおりになっていない** —— バージョンはエンベロープに載っているが、
-`domain/codec.ts` はメッセージ形状を先にパースしてからバージョンを見る。
-プレビューの M1 がそれで、[docs/testing.md](./docs/testing.md) §9 に詳細がある。
+エンベロープは opaque な `message` と `protocolVersion` として先に decode され、
+バージョンを検査してから `message` を `NetworkMessage` として decode する。
+実装は [src/domain/codec.ts](./src/domain/codec.ts) と
+[docs/testing.md](./docs/testing.md) §9 を参照。
 
 ## License
 
