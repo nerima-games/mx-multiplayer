@@ -35,10 +35,12 @@
           pkgs = pkgsFor system;
         in
         {
-          # Node 24 matches the `engines` field and the CI runner. pnpm comes
+          # Node 26 matches the CI runner; package.json allows >=24. pnpm comes
           # from corepack rather than nixpkgs so that the version is decided by
           # the `packageManager` field in package.json — one source of truth
-          # instead of two that can drift.
+          # instead of two that can drift. corepack_24 shims launch Corepack
+          # and pnpm with Node 24; nodejs_26 stays on PATH so project scripts
+          # run with Node 26.
           #
           # oxlint and ast-grep are NOT package.json devDependencies. They used
           # to be, and every repo in the org independently drifted onto a
@@ -47,7 +49,7 @@
           # 16 independently-drifting npm pins.
           default = pkgs.mkShell {
             packages = [
-              pkgs.nodejs_24
+              pkgs.nodejs_26
               pkgs.corepack_24
               pkgs.typescript-language-server
               pkgs.oxlint

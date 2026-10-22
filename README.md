@@ -49,7 +49,7 @@
 ### セットアップ
 
 ```console
-$ direnv allow                             # flake.nix の devShell で nodejs_24 + corepack_24 + oxlint + ast-grep が入る
+$ direnv allow                             # flake.nix の devShell で nodejs_26 + corepack_24 + oxlint + ast-grep が入る
 $ NODE_AUTH_TOKEN=$(gh auth token) pnpm install   # @nerima-games/mc-sim を GitHub Packages から解決する
 ```
 
