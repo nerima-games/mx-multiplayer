@@ -18,7 +18,8 @@
  * Every check answers a question of the form "if this were broken, what would I
  * see?". A measurement with no such answer is a number, not a check.
  */
-import { Effect, Result, Queue } from 'effect'
+import { WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { Effect, Queue, Result, Schema } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
   type ConnectionEvent,
@@ -37,12 +38,15 @@ import {
 } from '../../src/domain/transport'
 import {
   CommandId,
+  Base64Schema,
   EntityId,
+  LowercaseHexSha256Schema,
   MESSAGE_TAGS,
   type NetworkMessage,
   PROTOCOL_VERSION,
   PlayerId,
   PlayerName,
+  TransferIdSchema,
   WorldId,
 } from '../../src/domain/protocol'
 
@@ -64,9 +68,26 @@ const COMMAND_HEADER = { commandId: COMMAND_ID, expectedRevision: 1, player: ALI
 const ITEM = { count: 2, item: 'stone' }
 const ENTITY_ID = EntityId.make('entity-1')
 const ENTITY = { _tag: 'living' as const, at: { x: 1, y: 64, z: 1 }, entityId: ENTITY_ID, entityType: 'zombie', health: 20, maxHealth: 20 }
+const REPLICATED_REVISION = Schema.decodeUnknownSync(WorldRevisionSchema)(1)
+const TRANSFER_ID = Schema.decodeUnknownSync(TransferIdSchema)('preview-transfer')
+const TRANSFER_CHUNK = Schema.decodeUnknownSync(Base64Schema)('AQ==')
+const TRANSFER_DIGEST = Schema.decodeUnknownSync(LowercaseHexSha256Schema)('0'.repeat(64))
 
 /** One sample per tag, so a check can sweep the whole message set. */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
+  ReplicatedWorldDelta: { _tag: 'ReplicatedWorldDelta', blockChanges: [], changes: [], revision: REPLICATED_REVISION, world: OVERWORLD },
+  ReplicatedWorldSnapshot: { _tag: 'ReplicatedWorldSnapshot', blocks: [], owners: [], revision: REPLICATED_REVISION, world: OVERWORLD },
+  ReplicatedWorldSnapshotStart: {
+    _tag: 'ReplicatedWorldSnapshotStart',
+    chunkCount: 1,
+    revision: REPLICATED_REVISION,
+    sha256: TRANSFER_DIGEST,
+    totalBytes: 1,
+    transferId: TRANSFER_ID,
+    world: OVERWORLD,
+  },
+  ReplicatedWorldSnapshotChunk: { _tag: 'ReplicatedWorldSnapshotChunk', data: TRANSFER_CHUNK, index: 0, transferId: TRANSFER_ID },
+  ReplicatedWorldSnapshotEnd: { _tag: 'ReplicatedWorldSnapshotEnd', transferId: TRANSFER_ID },
   AnvilCommand: { _tag: 'AnvilCommand', ...COMMAND_HEADER, name: 'Excalibur', slot: 0 },
   AnvilCommandAccepted: { _tag: 'AnvilCommandAccepted', commandId: COMMAND_ID, revision: 2 },
   AnvilCommandRejected: { _tag: 'AnvilCommandRejected', commandId: COMMAND_ID, reason: 'missing-iron', revision: 1 },

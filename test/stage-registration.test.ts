@@ -19,6 +19,7 @@ import {
   decodeFrame,
   encodeFrame,
   encodeFrameAsVersion,
+  ReplicatedOwnerRegistryLimitsSchema,
   type ReplicatedOwnerRegistryLimits,
 } from '../src/domain/codec'
 import { AuthoritativeClientState, sha256Hex, SnapshotTransferReceiver } from '../src/domain/authoritative-sync'
@@ -37,7 +38,6 @@ import {
   BlockPlace,
   Base64Schema,
   Chat,
-  LowercaseHexSha256Schema,
   type NetworkMessage,
   PROTOCOL_VERSION,
   PlayerId,
@@ -74,7 +74,7 @@ import {
 const MAXIMUM_FRAME_JSON_DEPTH = 13
 const MAXIMUM_FRAME_COLLECTION_ITEMS = 31_149
 
-const EMPTY_C4_OWNER_LIMITS: ReplicatedOwnerRegistryLimits = {
+const EMPTY_C4_OWNER_LIMITS: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxRegisteredOwners: 0,
   maxDeltaBlockChanges: 256,
   maxSnapshotBlockReads: MAXIMUM_FRAME_COLLECTION_ITEMS,
@@ -83,7 +83,7 @@ const EMPTY_C4_OWNER_LIMITS: ReplicatedOwnerRegistryLimits = {
   maxDeltaFrameBytes: 1_048_576,
   maxSnapshotFrameBytes: 8_388_608,
   ownerStates: [],
-}
+})
 
 const ZERO_DT = DeltaTimeSecs(0)
 const ONE_FRAME = DeltaTimeSecs(1 / 60)
@@ -144,7 +144,7 @@ const snapshotTransferFor = (sync: MultiplayerClientSync, revision: number): Rea
       _tag: 'ReplicatedWorldSnapshotStart',
       chunkCount: 1,
       revision: Schema.decodeUnknownSync(WorldRevisionSchema)(revision),
-      sha256: Schema.decodeUnknownSync(LowercaseHexSha256Schema)(sha256Hex(bytes)),
+      sha256: Result.getOrThrow(sha256Hex(bytes)),
       totalBytes: bytes.length,
       transferId,
       world: connected.world,

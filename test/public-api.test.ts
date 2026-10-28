@@ -30,19 +30,48 @@ describe('public API surface', () => {
         'NetworkMessage',
         'MESSAGE_TAGS',
         'Frame',
+        'NonNegativeSafeIntegerSchema',
+        'PositiveSafeIntegerSchema',
+        'ReplicatedOwnerStateBoundsSchema',
+        'ReplicatedOwnerRegistryLimitsSchema',
+        'SnapshotTransferLimitsSchema',
+        'ReplicatedBlockKeySchema',
+        'ReplicatedWorldDeltaMessage',
+        'ReplicatedWorldSnapshot',
+        'ReplicatedWorldSnapshotStart',
+        'ReplicatedWorldSnapshotChunk',
+        'ReplicatedWorldSnapshotEnd',
+        'TransferIdSchema',
+        'Base64Schema',
+        'LowercaseHexSha256Schema',
         // Codec
         'encodeFrame',
         'encodeFrameAsVersion',
         'decodeFrame',
+        'decodeTransferredSnapshotFrame',
+        'encodeTransferredSnapshotFrame',
+        'createReplicatedOwnerRegistry',
+        'inspectReplicatedFrameTag',
+        'wireFrameByteLength',
         // Errors
         'ProtocolError',
         'TransportError',
+        'SnapshotInterpolationConfigError',
+        'SnapshotTransferConfigError',
         // Connection
         'initialConnectionState',
         'transition',
         'runTransitions',
         'canSend',
         'isSettled',
+        // C4 client synchronization and bounded snapshot transfer
+        'SnapshotTransferReceiver',
+        'AuthoritativeClientState',
+        'applyReplicatedWorldSnapshot',
+        'applyReplicatedWorldDelta',
+        'decodeTransferredSnapshot',
+        'decodeUtf8Frame',
+        'sha256Hex',
         // Authoritative resync admission
         'AuthoritativeRevisionTracker',
         // Transport
@@ -64,6 +93,8 @@ describe('public API surface', () => {
         'multiplayerStages',
         'makeMultiplayerStages',
         'makeMultiplayerStagesForPreview',
+        'makeMultiplayerStagesForClientPreview',
+        'makeMultiplayerHostWithClientSync',
         'makeMultiplayerFrameState',
         'NO_NETWORK_FRAMES',
       ]
@@ -113,7 +144,7 @@ describe('public API surface', () => {
   // Docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(8)
+      expect(PROTOCOL_VERSION).toBe(10)
     }),
   )
 })

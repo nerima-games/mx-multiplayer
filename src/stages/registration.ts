@@ -84,7 +84,7 @@ import type { ProtocolError } from '../domain/errors.js'
  * exactly the frames that were thrown away, so neither side can subtract its way
  * to the answer.
  */
-export type NetworkFrameCounters = {
+type NetworkFrameCounters = {
   /** Frames decoded and handled by the inbound protocol stage. */
   readonly received: number
   /** Frames that were not JSON, or not a known message. Frame dropped. */

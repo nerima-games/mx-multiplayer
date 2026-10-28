@@ -1,19 +1,28 @@
-import type {
-  AuthoritativeResyncRequest,
-  Base64,
-  NetworkMessage as NetworkMessageType,
-  ReplicatedWorldDeltaMessage,
-  ReplicatedWorldSnapshot,
-  ReplicatedWorldSnapshotChunk,
-  ReplicatedWorldSnapshotEnd,
-  ReplicatedWorldSnapshotStart,
-  WorldId,
-  WorldSnapshot,
+import {
+  LowercaseHexSha256Schema,
+  type AuthoritativeResyncRequest,
+  type Base64,
+  type LowercaseHexSha256,
+  type NetworkMessage as NetworkMessageType,
+  type ReplicatedWorldDeltaMessage,
+  type ReplicatedWorldSnapshot,
+  type ReplicatedWorldSnapshotChunk,
+  type ReplicatedWorldSnapshotEnd,
+  type ReplicatedWorldSnapshotStart,
+  type WorldId,
+  type WorldSnapshot,
 } from './protocol.js'
 import { ProtocolError, SnapshotTransferConfigError } from './errors.js'
 import type { ReplicatedBlockChange, ReplicatedOwnerChange, WorldBlockRead } from '@nerima-games/mc-sim'
-import { type ReplicatedOwnerRegistry, decodeTransferredSnapshotFrame } from './codec.js'
-import { Result } from 'effect'
+import {
+  NonNegativeSafeIntegerSchema,
+  PositiveSafeIntegerSchema,
+  decodeTransferredSnapshotFrame,
+  type PositiveSafeInteger,
+  type ReplicatedOwnerRegistry,
+  type WireText,
+} from './codec.js'
+import { Result, Schema } from 'effect'
 import type { WorldRevision } from '@nerima-games/mc-kernel'
 
 const ZERO = 0
@@ -400,7 +409,7 @@ const makeSha256InitialState = (): Sha256State => [
 ]
 
 /** SHA-256 without a platform dependency or a second full-size padded copy. */
-export const sha256Hex = (bytes: Uint8Array): string => {
+export const sha256Hex = (bytes: Uint8Array): Result.Result<LowercaseHexSha256, Schema.SchemaError> => {
   let state = makeSha256InitialState()
   const paddedLength = Math.ceil((bytes.length + SHA256_FINAL_LENGTH_BYTES + SHA256_MARKER_BYTES) / SHA256_BLOCK_BYTES) * SHA256_BLOCK_BYTES
   const bitLength = bytes.length * EIGHT
@@ -409,7 +418,8 @@ export const sha256Hex = (bytes: Uint8Array): string => {
     const block = prepareSha256Block(bytes, blockStart, padding)
     state = compressSha256Block(state, block)
   }
-  return state.map((word) => word.toString(HEX_RADIX).padStart(SHA256_HEX_WORD_WIDTH, '0')).join('')
+  const digest = state.map((word) => word.toString(HEX_RADIX).padStart(SHA256_HEX_WORD_WIDTH, '0')).join('')
+  return Schema.decodeUnknownResult(LowercaseHexSha256Schema)(digest)
 }
 
 const base64Value = (data: string, index: number): number => BASE64_ALPHABET.indexOf(data.charAt(index))
@@ -595,7 +605,7 @@ const decodeUtf8CodePoint = (bytes: Uint8Array, offset: number): Utf8CodePoint |
 }
 
 /** Decode UTF-8 without replacement characters, so malformed bytes cannot become a different JSON frame. */
-export const decodeUtf8Frame = (bytes: Uint8Array): string | undefined => {
+export const decodeUtf8Frame = (bytes: Uint8Array): WireText | undefined => {
   const characters: Array<string> = []
   for (let offset = ZERO; offset < bytes.length;) {
     const decoded = decodeUtf8CodePoint(bytes, offset)
@@ -608,13 +618,20 @@ export const decodeUtf8Frame = (bytes: Uint8Array): string | undefined => {
   return characters.join('')
 }
 
-export type SnapshotTransferLimits = Readonly<{
-  readonly maxTotalBytes: number
-  readonly maxChunkCount: number
-  readonly maxChunkBytes: number
-  readonly maxQueuedDeltaCount: number
-  readonly maxQueuedDeltaBytes: number
-}>
+export const SnapshotTransferLimitsSchema: Schema.Struct<{
+  maxTotalBytes: typeof PositiveSafeIntegerSchema
+  maxChunkCount: typeof PositiveSafeIntegerSchema
+  maxChunkBytes: typeof PositiveSafeIntegerSchema
+  maxQueuedDeltaCount: typeof NonNegativeSafeIntegerSchema
+  maxQueuedDeltaBytes: typeof NonNegativeSafeIntegerSchema
+}> = Schema.Struct({
+  maxTotalBytes: PositiveSafeIntegerSchema,
+  maxChunkCount: PositiveSafeIntegerSchema,
+  maxChunkBytes: PositiveSafeIntegerSchema,
+  maxQueuedDeltaCount: NonNegativeSafeIntegerSchema,
+  maxQueuedDeltaBytes: NonNegativeSafeIntegerSchema,
+})
+export type SnapshotTransferLimits = typeof SnapshotTransferLimitsSchema.Type
 
 export type SnapshotTransferFailureReason =
   | 'transfer-already-active'
@@ -639,7 +656,7 @@ export type SnapshotTransferReceipt = Readonly<{ readonly accepted: true }> | Sn
 
 export type QueuedReplicatedDelta = Readonly<{
   readonly delta: ReplicatedWorldDeltaMessage
-  readonly frameBytes: number
+  readonly frameBytes: PositiveSafeInteger
 }>
 
 export type CompletedSnapshotTransfer = Readonly<{
@@ -647,7 +664,7 @@ export type CompletedSnapshotTransfer = Readonly<{
   readonly revision: WorldRevision
   readonly lastKnownRevision: WorldRevision | undefined
   readonly frameBytes: Uint8Array
-  readonly maxTotalBytes: number
+  readonly maxTotalBytes: PositiveSafeInteger
   readonly queuedDeltas: ReadonlyArray<QueuedReplicatedDelta>
 }>
 
@@ -731,7 +748,8 @@ const getSnapshotFinishFailure = (
   if (active.nextIndex !== active.start.chunkCount || active.receivedBytes !== active.start.totalBytes) {
     return 'incomplete-transfer'
   }
-  if (sha256Hex(active.buffer) !== active.start.sha256) {
+  const digest = sha256Hex(active.buffer)
+  if (Result.isFailure(digest) || digest.success !== active.start.sha256) {
     return 'digest-mismatch'
   }
   return undefined
@@ -745,15 +763,16 @@ export class SnapshotTransferReceiver {
   readonly #limits: SnapshotTransferLimits
   #active: ActiveSnapshotTransfer | undefined
 
-  static make(limits: SnapshotTransferLimits): Result.Result<SnapshotTransferReceiver, SnapshotTransferConfigError> {
-    if (!hasValidTransferLimits(limits)) {
+  static make(limits: unknown): Result.Result<SnapshotTransferReceiver, SnapshotTransferConfigError> {
+    const limitsResult = Schema.decodeUnknownResult(SnapshotTransferLimitsSchema)(limits)
+    if (Result.isFailure(limitsResult) || !hasValidTransferLimits(limitsResult.success)) {
       return Result.fail(
         new SnapshotTransferConfigError({
           detail: 'transfer byte and chunk limits must be positive safe integers; queue limits must be non-negative safe integers',
         }),
       )
     }
-    return Result.succeed(new SnapshotTransferReceiver(limits))
+    return Result.succeed(new SnapshotTransferReceiver(limitsResult.success))
   }
 
   private constructor(limits: SnapshotTransferLimits) {
@@ -805,18 +824,23 @@ export class SnapshotTransferReceiver {
     return { accepted: true }
   }
 
-  queueDelta(delta: ReplicatedWorldDeltaMessage, frameBytes: number): SnapshotTransferReceipt & Readonly<{ queued?: boolean }> {
+  queueDelta(delta: ReplicatedWorldDeltaMessage, frameBytes: unknown): SnapshotTransferReceipt & Readonly<{ queued?: boolean }> {
     const active = this.#active
     if (active === undefined) {
       return { accepted: true, queued: false }
     }
-    const failure = this.#queuedDeltaFailure(active, delta, frameBytes)
+    const frameBytesResult = Schema.decodeUnknownResult(PositiveSafeIntegerSchema)(frameBytes)
+    if (Result.isFailure(frameBytesResult)) {
+      return this.#rejectActive(active, 'delta-queue-overflow')
+    }
+    const validFrameBytes = frameBytesResult.success
+    const failure = this.#queuedDeltaFailure(active, delta, validFrameBytes)
     if (failure !== undefined) {
       return this.#rejectActive(active, failure)
     }
 
-    active.queuedDeltas.push({ delta, frameBytes })
-    active.queuedDeltaBytes += frameBytes
+    active.queuedDeltas.push({ delta, frameBytes: validFrameBytes })
+    active.queuedDeltaBytes += validFrameBytes
     return { accepted: true, queued: true }
   }
 
@@ -851,13 +875,10 @@ export class SnapshotTransferReceiver {
   #queuedDeltaFailure(
     active: ActiveSnapshotTransfer,
     delta: ReplicatedWorldDeltaMessage,
-    frameBytes: number,
+    frameBytes: PositiveSafeInteger,
   ): SnapshotTransferFailureReason | undefined {
     if (delta.world !== active.start.world) {
       return 'world-mismatch'
-    }
-    if (!isPositiveSafeInteger(frameBytes)) {
-      return 'delta-queue-overflow'
     }
     if (
       active.queuedDeltas.length >= this.#limits.maxQueuedDeltaCount ||
@@ -946,11 +967,16 @@ export class AuthoritativeRevisionTracker {
   }
 }
 
+export const ReplicatedBlockKeySchema: Schema.brand<typeof Schema.String, 'ReplicatedBlockKey'> = Schema.String.pipe(
+  Schema.brand('ReplicatedBlockKey'),
+)
+export type ReplicatedBlockKey = typeof ReplicatedBlockKeySchema.Type
+
 export type AuthoritativeWorldState = Readonly<{
   readonly world: WorldId
   readonly revision: WorldRevision
   readonly owners: ReadonlyMap<ReplicatedOwnerChange['owner'], ReplicatedOwnerChange['state']>
-  readonly blocks: ReadonlyMap<string, WorldBlockRead>
+  readonly blocks: ReadonlyMap<ReplicatedBlockKey, WorldBlockRead>
 }>
 
 export type AuthoritativeClientSnapshot = ReadonlyMap<WorldId, AuthoritativeWorldState>
@@ -972,13 +998,13 @@ export type ClientSyncTransition =
     }
   | {
       readonly accepted: false
-      readonly state: AuthoritativeClientSnapshot
       readonly reason: ClientSyncRejectionReason
       readonly request: AuthoritativeResyncRequest
+      readonly state: AuthoritativeClientSnapshot
     }
 
-const blockAddress = (block: Pick<WorldBlockRead, 'dimension' | 'position'>): string =>
-  JSON.stringify([block.dimension, block.position.x, block.position.y, block.position.z])
+const blockAddress = (block: Pick<WorldBlockRead, 'dimension' | 'position'>): ReplicatedBlockKey =>
+  JSON.stringify([block.dimension, block.position.x, block.position.y, block.position.z]) as ReplicatedBlockKey
 
 type ClientRejectionContext = Readonly<{
   readonly world: WorldId
@@ -1029,7 +1055,7 @@ const addOwnerChanges = (
 }
 
 const addBlockReads = (
-  target: Map<string, WorldBlockRead>,
+  target: Map<ReplicatedBlockKey, WorldBlockRead>,
   blocks: ReadonlyArray<WorldBlockRead>,
 ): boolean => {
   const seen = new Set<string>()
@@ -1045,7 +1071,7 @@ const addBlockReads = (
 }
 
 const addBlockChanges = (
-  target: Map<string, WorldBlockRead>,
+  target: Map<ReplicatedBlockKey, WorldBlockRead>,
   changes: ReadonlyArray<ReplicatedBlockChange>,
 ): boolean => {
   const seen = new Set<string>()
@@ -1078,7 +1104,7 @@ const buildSnapshotWorld = (snapshot: ReplicatedWorldSnapshot): AuthoritativeWor
   if (!addOwnerChanges(owners, snapshot.owners)) {
     return 'duplicate-owner'
   }
-  const blocks = new Map<string, WorldBlockRead>()
+  const blocks = new Map<ReplicatedBlockKey, WorldBlockRead>()
   if (!addBlockReads(blocks, snapshot.blocks)) {
     return 'duplicate-block'
   }

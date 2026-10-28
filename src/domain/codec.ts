@@ -51,11 +51,28 @@ import { ProtocolError } from './errors.js'
  */
 export type WireText = string
 
+const ZERO = 0
+
+export const NonNegativeSafeIntegerSchema: Schema.brand<typeof Schema.Number, 'NonNegativeSafeInteger'> = Schema.Number.pipe(
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
+  Schema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  Schema.brand('NonNegativeSafeInteger'),
+)
+export type NonNegativeSafeInteger = typeof NonNegativeSafeIntegerSchema.Type
+
+export const PositiveSafeIntegerSchema: Schema.brand<typeof Schema.Number, 'PositiveSafeInteger'> = Schema.Number.pipe(
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isGreaterThan(ZERO)),
+  Schema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  Schema.brand('PositiveSafeInteger'),
+)
+export type PositiveSafeInteger = typeof PositiveSafeIntegerSchema.Type
+
 const MAX_FRAME_CODE_UNITS = 1_048_576
 const MAX_FRAME_UTF8_BYTES = 4_194_304
 const MAX_JSON_DEPTH = 13
 const MAX_JSON_COLLECTION_ITEMS = 31_149
-const ZERO = 0
 const ONE = 1
 const TWO = 2
 const THREE = 3
@@ -160,23 +177,39 @@ const isJsonWhitespace = (codeUnit: number): boolean =>
 const ownerRegistryBrand: unique symbol = Symbol('ReplicatedOwnerRegistry')
 export type ReplicatedOwnerRegistry = Readonly<{ [ownerRegistryBrand]: true }>
 
-export type ReplicatedOwnerStateBounds = Readonly<{
-  ownerId: ReplicatedOwnerId
-  maxStateBytes: number
-  maxStateDepth: number
-  maxCollectionItems: number
-}>
+export const ReplicatedOwnerStateBoundsSchema: Schema.Struct<{
+  ownerId: typeof ReplicatedOwnerIdSchema
+  maxStateBytes: typeof PositiveSafeIntegerSchema
+  maxStateDepth: typeof PositiveSafeIntegerSchema
+  maxCollectionItems: typeof PositiveSafeIntegerSchema
+}> = Schema.Struct({
+  ownerId: ReplicatedOwnerIdSchema,
+  maxStateBytes: PositiveSafeIntegerSchema,
+  maxStateDepth: PositiveSafeIntegerSchema,
+  maxCollectionItems: PositiveSafeIntegerSchema,
+})
+export type ReplicatedOwnerStateBounds = typeof ReplicatedOwnerStateBoundsSchema.Type
 
-export type ReplicatedOwnerRegistryLimits = Readonly<{
-  maxRegisteredOwners: number
-  maxDeltaBlockChanges: number
-  maxSnapshotBlockReads: number
-  maxDepth: number
-  maxCollectionItems: number
-  maxDeltaFrameBytes: number
-  maxSnapshotFrameBytes: number
-  ownerStates: ReadonlyArray<ReplicatedOwnerStateBounds>
-}>
+export const ReplicatedOwnerRegistryLimitsSchema: Schema.Struct<{
+  maxRegisteredOwners: typeof NonNegativeSafeIntegerSchema
+  maxDeltaBlockChanges: typeof NonNegativeSafeIntegerSchema
+  maxSnapshotBlockReads: typeof NonNegativeSafeIntegerSchema
+  maxDepth: typeof PositiveSafeIntegerSchema
+  maxCollectionItems: typeof PositiveSafeIntegerSchema
+  maxDeltaFrameBytes: typeof PositiveSafeIntegerSchema
+  maxSnapshotFrameBytes: typeof PositiveSafeIntegerSchema
+  ownerStates: Schema.$Array<typeof ReplicatedOwnerStateBoundsSchema>
+}> = Schema.Struct({
+  maxRegisteredOwners: NonNegativeSafeIntegerSchema,
+  maxDeltaBlockChanges: NonNegativeSafeIntegerSchema,
+  maxSnapshotBlockReads: NonNegativeSafeIntegerSchema,
+  maxDepth: PositiveSafeIntegerSchema,
+  maxCollectionItems: PositiveSafeIntegerSchema,
+  maxDeltaFrameBytes: PositiveSafeIntegerSchema,
+  maxSnapshotFrameBytes: PositiveSafeIntegerSchema,
+  ownerStates: Schema.Array(ReplicatedOwnerStateBoundsSchema),
+})
+export type ReplicatedOwnerRegistryLimits = typeof ReplicatedOwnerRegistryLimitsSchema.Type
 
 type ReplicatedOwnerRegistryEntry = Readonly<{
   schemas: ReadonlyMap<ReplicatedOwnerId, OwnerStateCodec>
@@ -296,16 +329,21 @@ const createOwnerRegistry = (
 /** Build the finite owner-to-state-schema table used by C4 frame codecs. */
 export const createReplicatedOwnerRegistry = (
   registrations: ReadonlyArray<ReplicatedOwnerRegistration>,
-  limits: ReplicatedOwnerRegistryLimits,
+  limits: unknown,
 ): Result.Result<ReplicatedOwnerRegistry, ProtocolError> => {
-  if (!hasValidRegistryLimits(limits, registrations.length)) {
+  const limitsResult = Schema.decodeUnknownResult(ReplicatedOwnerRegistryLimitsSchema)(limits)
+  if (Result.isFailure(limitsResult)) {
     return Result.fail(malformedFrame('replicated owner limits contain an invalid bound'))
   }
-  const bounds = buildOwnerBounds(limits.ownerStates)
+  const validLimits = limitsResult.success
+  if (!hasValidRegistryLimits(validLimits, registrations.length)) {
+    return Result.fail(malformedFrame('replicated owner limits contain an invalid bound'))
+  }
+  const bounds = buildOwnerBounds(validLimits.ownerStates)
   if (bounds === undefined) {
     return Result.fail(malformedFrame('replicated owner state limits contain an invalid or duplicate bound'))
   }
-  return createOwnerRegistry(registrations, limits, bounds)
+  return createOwnerRegistry(registrations, validLimits, bounds)
 }
 
 const utf8ByteLength = (text: string): number => {
@@ -333,7 +371,8 @@ const utf8ByteLength = (text: string): number => {
 }
 
 /** Count UTF-8 bytes, matching the byte accounting used by frame validation. */
-export const wireFrameByteLength = (text: WireText): number => utf8ByteLength(text)
+export const wireFrameByteLength = (text: WireText): NonNegativeSafeInteger =>
+  utf8ByteLength(text) as NonNegativeSafeInteger
 
 type JsonScanContainerBase = {
   root: boolean
@@ -1333,13 +1372,14 @@ export const encodeFrame = (
 export const encodeTransferredSnapshotFrame = (
   message: unknown,
   owners: ReplicatedOwnerRegistry,
-  maxTotalBytes: number,
+  maxTotalBytes: unknown,
 ): Result.Result<WireText, ProtocolError> => {
-  if (!isPositiveSafeInteger(maxTotalBytes)) {
+  const maxTotalBytesResult = Schema.decodeUnknownResult(PositiveSafeIntegerSchema)(maxTotalBytes)
+  if (Result.isFailure(maxTotalBytesResult)) {
     return Result.fail(new ProtocolError({ detail: 'snapshot transfer byte limit is invalid', reason: 'unencodable-message' }))
   }
   const result = encodeFrameAsVersionWithByteLimit({
-    maxFrameBytes: maxTotalBytes,
+    maxFrameBytes: maxTotalBytesResult.success,
     message,
     owners,
     protocolVersion: PROTOCOL_VERSION,
@@ -1401,12 +1441,13 @@ export const decodeFrame = (
 export const decodeTransferredSnapshotFrame = (
   text: WireText,
   owners: ReplicatedOwnerRegistry,
-  maxTotalBytes: number,
+  maxTotalBytes: unknown,
 ): Result.Result<NetworkMessageType, ProtocolError> => {
-  if (!isPositiveSafeInteger(maxTotalBytes)) {
+  const maxTotalBytesResult = Schema.decodeUnknownResult(PositiveSafeIntegerSchema)(maxTotalBytes)
+  if (Result.isFailure(maxTotalBytesResult)) {
     return Result.fail(malformedFrame('snapshot transfer byte limit is invalid'))
   }
-  const result = decodeFrameWithByteLimit(text, owners, maxTotalBytes)
+  const result = decodeFrameWithByteLimit(text, owners, maxTotalBytesResult.success)
   if (Result.isFailure(result)) {
     return result
   }

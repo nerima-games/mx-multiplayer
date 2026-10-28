@@ -11,6 +11,7 @@ import {
   encodeFrameAsVersion,
   encodeTransferredSnapshotFrame,
   inspectReplicatedFrameTag,
+  ReplicatedOwnerRegistryLimitsSchema,
   type ReplicatedOwnerRegistryLimits,
   wireFrameByteLength,
 } from '../src/domain/codec'
@@ -286,7 +287,7 @@ const OWNER_REGISTRATION: ReplicatedOwnerRegistration<typeof OWNER_STATE_SCHEMA>
   schema: OWNER_STATE_SCHEMA,
   initialState: { count: 0 },
 }
-const EMPTY_OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = {
+const EMPTY_OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxRegisteredOwners: 0,
   maxDeltaBlockChanges: 0,
   maxSnapshotBlockReads: 0,
@@ -295,9 +296,9 @@ const EMPTY_OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = {
   maxDeltaFrameBytes: 1_048_576,
   maxSnapshotFrameBytes: 1_048_576,
   ownerStates: [],
-}
+})
 const EMPTY_OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([], EMPTY_OWNER_REGISTRY_LIMITS))
-const OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = {
+const OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxRegisteredOwners: 1,
   maxDeltaBlockChanges: 2,
   maxSnapshotBlockReads: 2,
@@ -311,7 +312,7 @@ const OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = {
     maxStateDepth: 2,
     maxCollectionItems: 1,
   }],
-}
+})
 const OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([OWNER_REGISTRATION], OWNER_REGISTRY_LIMITS))
 const OWNER_DELTA = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
   _tag: 'ReplicatedWorldDelta',
@@ -374,7 +375,7 @@ const MAXIMUM_C4_REGISTRATIONS: ReadonlyArray<ReplicatedOwnerRegistration<typeof
     schema: MAXIMUM_OWNER_STATE_SCHEMA,
     initialState: MAXIMUM_OWNER_STATE,
   }))
-const MAXIMUM_C4_OWNER_BOUNDS: ReplicatedOwnerRegistryLimits['ownerStates'] = MAXIMUM_C4_OWNER_IDS.map((ownerId) => ({
+const MAXIMUM_C4_OWNER_BOUNDS = MAXIMUM_C4_OWNER_IDS.map((ownerId) => ({
   ownerId,
   maxStateBytes: MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES,
   maxStateDepth: Math.ceil(MAXIMUM_C4_PROFILE_OWNER_STATE_DEPTH * 1.25),
@@ -385,7 +386,7 @@ const MAXIMUM_C4_DELTA_BLOCK_LIMIT = Math.ceil(MAXIMUM_C4_PROFILE_DELTA_BLOCK_CO
 const MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT = Math.ceil(MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT * 1.25)
 const MAXIMUM_C4_DEPTH_LIMIT = Math.ceil(MAXIMUM_C4_PROFILE_FRAME_DEPTH * 1.25)
 const MAXIMUM_C4_COLLECTION_LIMIT = MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT
-const MAXIMUM_C4_SIZING_LIMITS: ReplicatedOwnerRegistryLimits = {
+const MAXIMUM_C4_SIZING_LIMITS: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxRegisteredOwners: MAXIMUM_C4_OWNER_COUNT_LIMIT,
   maxDeltaBlockChanges: MAXIMUM_C4_DELTA_BLOCK_LIMIT,
   maxSnapshotBlockReads: MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT,
@@ -394,7 +395,7 @@ const MAXIMUM_C4_SIZING_LIMITS: ReplicatedOwnerRegistryLimits = {
   maxDeltaFrameBytes: GLOBAL_FRAME_UTF8_LIMIT,
   maxSnapshotFrameBytes: 8 * 1_048_576,
   ownerStates: MAXIMUM_C4_OWNER_BOUNDS,
-}
+})
 const MAXIMUM_C4_MEASUREMENT_REGISTRY = Result.getOrThrow(
   createReplicatedOwnerRegistry(MAXIMUM_C4_REGISTRATIONS, MAXIMUM_C4_SIZING_LIMITS),
 )
@@ -473,11 +474,11 @@ const MAXIMUM_C4_SNAPSHOT_FRAME_LIMIT = Math.ceil(Math.max(
   MAXIMUM_C4_SNAPSHOT_FRAME_BYTES,
   MAXIMUM_C4_SNAPSHOT_COUNT_FRAME_BYTES,
 ) * 1.25)
-const MAXIMUM_C4_LIMITS: ReplicatedOwnerRegistryLimits = {
+const MAXIMUM_C4_LIMITS: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   ...MAXIMUM_C4_SIZING_LIMITS,
   maxDeltaFrameBytes: MAXIMUM_C4_DELTA_FRAME_LIMIT,
   maxSnapshotFrameBytes: MAXIMUM_C4_SNAPSHOT_FRAME_LIMIT,
-}
+})
 const MAXIMUM_C4_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry(MAXIMUM_C4_REGISTRATIONS, MAXIMUM_C4_LIMITS))
 const withWorldPaddingAtFrameLimit = <Message extends NetworkMessage & { readonly world: WorldId }>(
   message: Message,

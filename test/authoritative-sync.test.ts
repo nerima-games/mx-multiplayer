@@ -17,6 +17,7 @@ import {
   applyReplicatedWorldDelta,
   decodeUtf8Frame,
   sha256Hex,
+  SnapshotTransferLimitsSchema,
   type CompletedSnapshotTransfer,
   type SnapshotTransferLimits,
 } from '../src/domain/authoritative-sync'
@@ -24,6 +25,8 @@ import {
   createReplicatedOwnerRegistry,
   encodeFrame,
   encodeTransferredSnapshotFrame,
+  PositiveSafeIntegerSchema,
+  ReplicatedOwnerRegistryLimitsSchema,
   type ReplicatedOwnerRegistryLimits,
 } from '../src/domain/codec'
 import {
@@ -162,14 +165,14 @@ const MAXIMUM_AOI_OWNER_REGISTRATIONS = MAXIMUM_AOI_OWNER_IDS.map((registeredOwn
   schema: MAXIMUM_AOI_OWNER_STATE_SCHEMA,
   initialState: MAXIMUM_AOI_OWNER_STATE_SAMPLE,
 }))
-const MAXIMUM_AOI_OWNER_STATE_BOUNDS: ReplicatedOwnerRegistryLimits['ownerStates'] = MAXIMUM_AOI_OWNER_IDS.map((registeredOwnerId) => ({
+const MAXIMUM_AOI_OWNER_STATE_BOUNDS = MAXIMUM_AOI_OWNER_IDS.map((registeredOwnerId) => ({
   ownerId: registeredOwnerId,
   maxStateBytes: MAXIMUM_AOI_OWNER_STATE_LIMIT_BYTES,
   maxStateDepth: 4,
   maxCollectionItems: 3,
 }))
 
-const EMPTY_OWNER_REGISTRY_LIMITS = {
+const EMPTY_OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxRegisteredOwners: 0,
   maxDeltaBlockChanges: 256,
   maxSnapshotBlockReads: MAXIMUM_FRAME_COLLECTION_ITEMS,
@@ -178,7 +181,7 @@ const EMPTY_OWNER_REGISTRY_LIMITS = {
   maxDeltaFrameBytes: 1_048_576,
   maxSnapshotFrameBytes: 8_388_608,
   ownerStates: [],
-} satisfies ReplicatedOwnerRegistryLimits
+})
 
 const makeEmptyOwnerRegistry = () => {
   const result = createReplicatedOwnerRegistry([], EMPTY_OWNER_REGISTRY_LIMITS)
@@ -228,7 +231,7 @@ const transferStart = (
   transfer: string,
   revision: number,
   chunkBytes: number,
-  digest = sha256Hex(bytes),
+  digest = Result.getOrThrow(sha256Hex(bytes)),
 ): ReplicatedWorldSnapshotStart => ({
   _tag: 'ReplicatedWorldSnapshotStart',
   chunkCount: Math.ceil(bytes.length / chunkBytes),
@@ -264,8 +267,8 @@ const transferEnd = (transfer: string): ReplicatedWorldSnapshotEnd => ({
 const transferLimits = (
   bytes: Uint8Array,
   chunkBytes: number,
-  overrides: Partial<SnapshotTransferLimits> = {},
-): SnapshotTransferLimits => ({
+  overrides: Readonly<Partial<Record<keyof SnapshotTransferLimits, unknown>>> = {},
+): SnapshotTransferLimits => Schema.decodeUnknownSync(SnapshotTransferLimitsSchema)({
   maxChunkBytes: chunkBytes,
   maxChunkCount: Math.ceil(bytes.length / chunkBytes),
   maxQueuedDeltaBytes: 1024,
@@ -688,7 +691,7 @@ describe('C4 snapshot transfer receiver', () => {
     Effect.sync(() => {
       const bytes = snapshotFrameBytes(20)
       const limits = transferLimits(bytes, bytes.length)
-      const invalidLimits: Array<SnapshotTransferLimits> = [
+      const invalidLimits: Array<unknown> = [
         { ...limits, maxTotalBytes: 0 },
         { ...limits, maxChunkCount: Number.NaN },
         { ...limits, maxChunkBytes: Number.POSITIVE_INFINITY },
@@ -868,7 +871,7 @@ describe('C4 snapshot transfer receiver', () => {
         const completion: CompletedSnapshotTransfer = {
           frameBytes: bytes,
           lastKnownRevision: replicatedRevision(19),
-          maxTotalBytes: maxBytes,
+          maxTotalBytes: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(maxBytes),
           queuedDeltas: [],
           revision: replicatedRevision(revision),
           world: overworld,
@@ -898,8 +901,8 @@ describe('C4 snapshot transfer receiver', () => {
       const completion: CompletedSnapshotTransfer = {
         frameBytes,
         lastKnownRevision: undefined,
-        maxTotalBytes: frameBytes.length,
-        queuedDeltas: [{ delta: replicatedDelta(21), frameBytes: 1 }],
+        maxTotalBytes: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(frameBytes.length),
+        queuedDeltas: [{ delta: replicatedDelta(21), frameBytes: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(1) }],
         revision: replicatedRevision(20),
         world: nether,
       }
@@ -925,7 +928,7 @@ describe('C4 snapshot transfer receiver', () => {
       const validChunks = transferChunks(bytes, validTransfer, bytes.length)
       const receiver = makeTransferReceiver(transferLimits(bytes, bytes.length))
 
-      expect(sha256Hex(asciiBytes('abc'))).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+      expect(Result.getOrThrow(sha256Hex(asciiBytes('abc')))).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
       expect(receiver.begin(transferStart(bytes, validTransfer, 20, bytes.length), replicatedRevision(19)))
         .toStrictEqual({ accepted: true })
       expect(validChunks).toHaveLength(1)
@@ -942,8 +945,8 @@ describe('C4 snapshot transfer receiver', () => {
       expect(completion.completion.frameBytes).toStrictEqual(bytes)
       expect(completion.completion.revision).toBe(replicatedRevision(20))
 
-      const digest = sha256Hex(bytes)
-      const wrongDigest = `${digest.startsWith('0') ? '1' : '0'}${digest.slice(1)}`
+      const digest = Result.getOrThrow(sha256Hex(bytes))
+      const wrongDigest = Schema.decodeUnknownSync(LowercaseHexSha256Schema)(`${digest.startsWith('0') ? '1' : '0'}${digest.slice(1)}`)
       const invalidTransfer = 'snapshot-bad-digest'
       const invalidReceiver = makeTransferReceiver(transferLimits(bytes, bytes.length))
       expect(invalidReceiver.begin(
@@ -1027,13 +1030,13 @@ describe('C4 snapshot transfer receiver', () => {
       expect(fragmentBound.append(oversizedFragment)).toMatchObject({ accepted: false, reason: 'chunk-too-large' })
 
       const overflowTransfer = 'snapshot-byte-overflow'
-      const overflowLimits: SnapshotTransferLimits = {
+      const overflowLimits: SnapshotTransferLimits = Schema.decodeUnknownSync(SnapshotTransferLimitsSchema)({
         maxChunkBytes: 2,
         maxChunkCount: 1,
         maxQueuedDeltaBytes: 0,
         maxQueuedDeltaCount: 0,
         maxTotalBytes: bytes.length,
-      }
+      })
       const overflowBound = makeTransferReceiver(overflowLimits)
       const shortDeclaration: ReplicatedWorldSnapshotStart = {
         ...transferStart(bytes, overflowTransfer, 20, bytes.length),
@@ -1194,7 +1197,7 @@ describe('C4 snapshot transfer receiver', () => {
       }
       const snapshotShape = measureJsonShape({ message: maximumSnapshot, protocolVersion: 10 })
       const deltaShape = measureJsonShape({ message: maximumDelta, protocolVersion: 10 })
-      const sizingLimits: ReplicatedOwnerRegistryLimits = {
+      const sizingLimits: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
         maxRegisteredOwners: ownerCountLimit,
         maxDeltaBlockChanges: deltaBlockLimit,
         maxSnapshotBlockReads: snapshotBlockLimit,
@@ -1203,7 +1206,7 @@ describe('C4 snapshot transfer receiver', () => {
         maxDeltaFrameBytes: 1_048_576,
         maxSnapshotFrameBytes: 8 * 1024 * 1024,
         ownerStates: MAXIMUM_AOI_OWNER_STATE_BOUNDS,
-      }
+      })
       const sizingOwners = Result.getOrThrow(createReplicatedOwnerRegistry(MAXIMUM_AOI_OWNER_REGISTRATIONS, sizingLimits))
       const sizedSnapshotFrame = Result.getOrThrow(
         encodeTransferredSnapshotFrame(maximumSnapshot, sizingOwners, sizingLimits.maxSnapshotFrameBytes),
@@ -1216,13 +1219,13 @@ describe('C4 snapshot transfer receiver', () => {
       const deltaLimit = Math.ceil(Math.max(...sizedDeltaByteCounts) * 1.25)
       const fixtureShapeDepth = Math.max(snapshotShape.maxDepth, deltaShape.maxDepth)
       const fixtureShapeItems = Math.max(snapshotShape.maxCollectionItems, deltaShape.maxCollectionItems)
-      const ownerLimits: ReplicatedOwnerRegistryLimits = {
+      const ownerLimits: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
         ...sizingLimits,
         maxCollectionItems: Math.ceil(fixtureShapeItems * 1.25),
         maxDepth: Math.ceil(fixtureShapeDepth * 1.25),
         maxDeltaFrameBytes: deltaLimit,
         maxSnapshotFrameBytes: snapshotLimit,
-      }
+      })
       Result.getOrThrow(createReplicatedOwnerRegistry(MAXIMUM_AOI_OWNER_REGISTRATIONS, ownerLimits))
       const snapshotBytes = sizedSnapshotBytes
       const deltaFrameBytes = sizedDeltaByteCounts
@@ -1233,13 +1236,13 @@ describe('C4 snapshot transfer receiver', () => {
 
       const transfer = 'snapshot-maximum-aoi'
       const chunks = transferChunks(snapshotBytes, transfer, fixtureChunkBytes)
-      const maximumTransferLimits: SnapshotTransferLimits = {
+      const maximumTransferLimits: SnapshotTransferLimits = Schema.decodeUnknownSync(SnapshotTransferLimitsSchema)({
         maxTotalBytes: snapshotLimit,
         maxChunkCount: Math.ceil(chunks.length * 1.25),
         maxChunkBytes,
         maxQueuedDeltaCount: Math.ceil(queuedDeltaCount * 1.25),
         maxQueuedDeltaBytes: Math.ceil(queueBurstBytes * 1.25),
-      }
+      })
       expect({
         blockLimit: snapshotBlockLimit,
         ownerCountLimit: sizingLimits.maxRegisteredOwners,
@@ -1284,7 +1287,7 @@ describe('C4 snapshot transfer receiver', () => {
         }
       `)
       const receiver = makeTransferReceiver(maximumTransferLimits)
-      expect(receiver.begin(transferStart(snapshotBytes, transfer, 20, fixtureChunkBytes, '0'.repeat(64)), replicatedRevision(19)))
+      expect(receiver.begin(transferStart(snapshotBytes, transfer, 20, fixtureChunkBytes, Schema.decodeUnknownSync(LowercaseHexSha256Schema)('0'.repeat(64))), replicatedRevision(19)))
         .toStrictEqual({ accepted: true })
       const firstChunk = chunks[0]
       if (firstChunk === undefined) {
