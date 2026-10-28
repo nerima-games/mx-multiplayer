@@ -13,8 +13,14 @@
  *     decorator, dropping queued gameplay messages before encoding them.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Result, Queue, Ref } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
+import { Effect, Result, Queue, Ref, Schema } from 'effect'
+import {
+  createReplicatedOwnerRegistry,
+  decodeFrame,
+  encodeFrame,
+  encodeFrameAsVersion,
+} from '../src/domain/codec'
+import { AuthoritativeClientState, SnapshotTransferReceiver } from '../src/domain/authoritative-sync'
 import { type ConnectionState, canSend } from '../src/domain/connection'
 import {
   DeltaTimeSecs,
@@ -24,6 +30,7 @@ import {
   MonotonicTimeSecs,
   StageId,
   type StageRegistration,
+  WorldRevisionSchema,
 } from '@nerima-games/mc-kernel'
 import {
   BlockPlace,
@@ -49,6 +56,7 @@ import {
   makeMultiplayerStagesForPreview,
   multiplayerModule,
   multiplayerStages,
+  type MultiplayerClientSync,
 } from '../src/stages/registration'
 import {
   EXPERIENCE_MODULE_STAGE_PREFIXES,
@@ -317,6 +325,84 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       // That judgement belongs to whoever owns the block vocabulary. Carried
       // Verbatim is the whole behaviour.
       expect(yield* Ref.get(state.inbound)).toStrictEqual([fromNewerPeer])
+    }),
+  )
+
+  it.effect('a C4 revision gap preserves the last applied view and queues a resync request', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync: MultiplayerClientSync = {
+        owners: Result.getOrThrow(createReplicatedOwnerRegistry([])),
+        state: new AuthoritativeClientState(),
+        transfers: Result.getOrThrow(SnapshotTransferReceiver.make({
+          maxChunkBytes: 4096,
+          maxChunkCount: 64,
+          maxQueuedDeltaBytes: 8192,
+          maxQueuedDeltaCount: 8,
+          maxTotalBytes: 65536,
+        })),
+      }
+      const stages = multiplayerStages(state, local, sync)
+      const baseline = {
+        _tag: 'ReplicatedWorldSnapshot',
+        blocks: [],
+        owners: [],
+        revision: Schema.decodeUnknownSync(WorldRevisionSchema)(3),
+        world: connected.world,
+      } as const
+      const gap = {
+        _tag: 'ReplicatedWorldDelta',
+        blockChanges: [],
+        changes: [],
+        revision: Schema.decodeUnknownSync(WorldRevisionSchema)(5),
+        world: connected.world,
+      } as const
+
+      yield* Ref.set(state.connection, connected)
+      for (const message of [baseline, gap]) {
+        yield* peer.send(Result.getOrThrow(encodeFrame(message, sync.owners)))
+      }
+      yield* runStage(stages[0])
+
+      expect(sync.state.world(connected.world)?.revision).toBe(baseline.revision)
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([baseline])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        lastKnownRevision: baseline.revision,
+        world: connected.world,
+      }])
+      expect((yield* countersOf(state)).resyncRequested).toBe(1)
+    }),
+  )
+
+  it.effect('a malformed C4 payload requests a fresh snapshot for the connected world', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync: MultiplayerClientSync = {
+        owners: Result.getOrThrow(createReplicatedOwnerRegistry([])),
+        state: new AuthoritativeClientState(),
+        transfers: Result.getOrThrow(SnapshotTransferReceiver.make({
+          maxChunkBytes: 4096,
+          maxChunkCount: 64,
+          maxQueuedDeltaBytes: 8192,
+          maxQueuedDeltaCount: 8,
+          maxTotalBytes: 65536,
+        })),
+      }
+      const stages = multiplayerStages(state, local, sync)
+
+      yield* Ref.set(state.connection, connected)
+      yield* peer.send('{"protocolVersion":10,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":1,"changes":[]}}')
+      yield* runStage(stages[0])
+
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        world: connected.world,
+      }])
+      expect(yield* countersOf(state)).toMatchObject({ malformed: 1, resyncRequested: 1 })
     }),
   )
 })

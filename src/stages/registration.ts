@@ -14,16 +14,19 @@
  * ---------------------------------------------------------------------------
  *
  * plan.md §3.14 confines mx-multiplayer to transport and protocol. So these two
- * stages MOVE FRAMES and nothing else:
+ * stages move wire frames and the optional protocol-only C4 client cache:
  *
  *   - `multiplayer:inbound` takes whatever text arrived, decodes it, and puts
- *     the decoded messages where the seam into mc-sim will read them.
+ *     ordinary messages where the seam into mc-sim will read them. With a C4
+ *     client sync context, it validates and applies replicated snapshots and
+ *     deltas, consumes transfer-control messages, and queues resync requests.
  *   - `multiplayer:outbound` takes whatever messages were handed to it, encodes
  *     them, and writes them — if the connection state permits.
  *
- * Neither looks inside a message. A `BlockBreak` is a value that gets carried;
- * what a broken block drops is mx-gameplay's, and which of two players wins a
- * contested pickup is mc-sim's and mx-gameplay's (docs/responsibility.md §4,
+ * The C4 path handles protocol state only; it does not decide game rules. A
+ * `BlockBreak` is a value that gets carried; what a broken block drops is
+ * mx-gameplay's, and which of two players wins a contested pickup is mc-sim's
+ * and mx-gameplay's (docs/responsibility.md §4,
  * DN-9). The reference implementation put first-come claim arbitration in
  * `packages/network/application/server-handlers.ts` and the consequence was that
  * changing an inventory rule meant editing the network layer.
@@ -47,8 +50,23 @@ import { Effect, Layer, Queue, Ref, Result } from 'effect'
 import type { GameModule, StageRegistration } from '@nerima-games/mc-kernel'
 import { MULTIPLAYER_STAGE_IDS, UPSTREAM_STAGE_IDS } from './stage-ids.js'
 import { TransportPort, type TransportService } from '../domain/transport.js'
-import { decodeFrame, encodeFrame } from '../domain/codec.js'
-import type { NetworkMessage } from '../domain/protocol.js'
+import {
+  decodeFrame,
+  encodeFrame,
+  inspectReplicatedFrameTag,
+  wireFrameByteLength,
+  type ReplicatedOwnerRegistry,
+} from '../domain/codec.js'
+import {
+  AuthoritativeClientState,
+  SnapshotTransferReceiver,
+  type ClientSyncTransition,
+  type SnapshotTransferFailure,
+} from '../domain/authoritative-sync.js'
+import type {
+  AuthoritativeResyncRequest,
+  NetworkMessage,
+} from '../domain/protocol.js'
 import type { ProtocolError } from '../domain/errors.js'
 
 /**
@@ -67,7 +85,7 @@ import type { ProtocolError } from '../domain/errors.js'
  * to the answer.
  */
 export type NetworkFrameCounters = {
-  /** Frames decoded and handed to the seam. */
+  /** Frames decoded and handled by the inbound protocol stage. */
   readonly received: number
   /** Frames that were not JSON, or not a known message. Frame dropped. */
   readonly malformed: number
@@ -94,12 +112,15 @@ export type NetworkFrameCounters = {
    * held.
    */
   readonly droppedWhileNotConnected: number
+  /** Valid C4 frames that could not be applied and triggered a snapshot request. */
+  readonly resyncRequested: number
 }
 
 export const NO_NETWORK_FRAMES: NetworkFrameCounters = {
   droppedWhileNotConnected: 0,
   malformed: 0,
   received: 0,
+  resyncRequested: 0,
   sendFailed: 0,
   sent: 0,
   unencodable: 0,
@@ -126,13 +147,165 @@ export type MultiplayerFrameState = {
    */
   readonly outbox: Ref.Ref<ReadonlyArray<NetworkMessage>>
   /**
-   * Messages decoded this frame and not yet applied to the world.
+   * Messages ready for the host/session adapter to apply to the game world.
    *
-   * This is the transport seam. The host/session adapter drains it and applies
-   * game rules through mc-sim and mx-gameplay.
+   * This is the transport seam. With C4 sync enabled, validated replication
+   * messages reach the host only after the protocol cache accepts them; the
+   * host/session adapter still applies game rules through mc-sim and mx-gameplay.
    */
   readonly inbound: Ref.Ref<ReadonlyArray<NetworkMessage>>
   readonly counters: Ref.Ref<NetworkFrameCounters>
+}
+
+/** State and owner schemas needed to apply the C4 client replication stream. */
+export type MultiplayerClientSync = Readonly<{
+  readonly owners: ReplicatedOwnerRegistry
+  readonly state: AuthoritativeClientState
+  readonly transfers: SnapshotTransferReceiver
+}>
+
+const appendInbound = (
+  state: MultiplayerFrameState,
+  messages: ReadonlyArray<NetworkMessage>,
+): Effect.Effect<void> =>
+  messages.length === 0
+    ? Effect.void
+    : Ref.update(state.inbound, (pending) => [...pending, ...messages])
+
+const enqueueResync = (
+  state: MultiplayerFrameState,
+  request: AuthoritativeResyncRequest,
+): Effect.Effect<void> =>
+  Ref.update(state.outbox, (pending) => [...pending, request]).pipe(
+    Effect.andThen(
+      Ref.update(state.counters, (current) => ({
+        ...current,
+        resyncRequested: current.resyncRequested + COUNTER_INCREMENT,
+      })),
+    ),
+  )
+
+const syncRejection = (transition: ClientSyncTransition): AuthoritativeResyncRequest | undefined =>
+  transition.accepted ? undefined : transition.request
+
+const resyncForConnection = (
+  state: MultiplayerFrameState,
+  sync: MultiplayerClientSync,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const connection = yield* Ref.get(state.connection)
+    if (connection._tag !== 'Connected') {
+      return
+    }
+    const revision = sync.state.world(connection.world)?.revision
+    const request: AuthoritativeResyncRequest = revision === undefined
+      ? { _tag: 'AuthoritativeResyncRequest', world: connection.world }
+      : { _tag: 'AuthoritativeResyncRequest', lastKnownRevision: revision, world: connection.world }
+    yield* enqueueResync(state, request)
+  })
+
+const resyncForTransferFailure = (
+  state: MultiplayerFrameState,
+  sync: MultiplayerClientSync,
+  failure: SnapshotTransferFailure,
+): Effect.Effect<void> =>
+  failure.request === undefined
+    ? resyncForConnection(state, sync)
+    : enqueueResync(state, failure.request)
+
+const applyC4Message = (
+  state: MultiplayerFrameState,
+  sync: MultiplayerClientSync,
+  message: NetworkMessage,
+  frame: string,
+): Effect.Effect<void> => {
+  switch (message._tag) {
+    case 'ReplicatedWorldSnapshot': {
+      const transition = sync.state.applySnapshot(message)
+      const request = syncRejection(transition)
+      return request === undefined
+        ? appendInbound(state, [message])
+        : enqueueResync(state, request)
+    }
+    case 'ReplicatedWorldDelta': {
+      if (sync.transfers.isReceiving) {
+        const queued = sync.transfers.queueDelta(message, wireFrameByteLength(frame))
+        if (!queued.accepted) {
+          return resyncForTransferFailure(state, sync, queued)
+        }
+        if (queued.queued === true) {
+          return Effect.void
+        }
+      }
+      const transition = sync.state.applyDelta(message)
+      const request = syncRejection(transition)
+      return request === undefined
+        ? appendInbound(state, [message])
+        : enqueueResync(state, request)
+    }
+    case 'ReplicatedWorldSnapshotStart': {
+      const revision = sync.state.world(message.world)?.revision
+      const result = sync.transfers.begin(message, revision)
+      return result.accepted
+        ? Effect.void
+        : resyncForTransferFailure(state, sync, result)
+    }
+    case 'ReplicatedWorldSnapshotChunk': {
+      const result = sync.transfers.append(message)
+      return result.accepted
+        ? Effect.void
+        : resyncForTransferFailure(state, sync, result)
+    }
+    case 'ReplicatedWorldSnapshotEnd': {
+      const result = sync.transfers.finish(message)
+      if (!result.accepted) {
+        return resyncForTransferFailure(state, sync, result)
+      }
+      const transition = sync.state.applyTransfer(result.completion, sync.owners)
+      return transition.accepted
+        ? appendInbound(state, transition.appliedMessages)
+        : enqueueResync(state, transition.request)
+    }
+    default:
+      return appendInbound(state, [message])
+  }
+}
+
+const handleDecodedFrame = (
+  state: MultiplayerFrameState,
+  sync: MultiplayerClientSync | undefined,
+  frame: string,
+  message: NetworkMessage,
+): Effect.Effect<void> =>
+  Ref.update(state.counters, (current) => ({
+    ...current,
+    received: current.received + COUNTER_INCREMENT,
+  })).pipe(
+    Effect.andThen(
+      sync === undefined
+        ? appendInbound(state, [message])
+        : applyC4Message(state, sync, message, frame),
+    ),
+  )
+
+const resyncMalformedC4Frame = (
+  state: MultiplayerFrameState,
+  sync: MultiplayerClientSync | undefined,
+  frame: string,
+): Effect.Effect<void> => {
+  if (sync === undefined) {
+    return Effect.void
+  }
+  return Result.match(inspectReplicatedFrameTag(frame), {
+    onFailure: () => Effect.void,
+    onSuccess: (tag) => {
+      if (tag === undefined) {
+        return Effect.void
+      }
+      sync.transfers.discard()
+      return resyncForConnection(state, sync)
+    },
+  })
 }
 
 /**
@@ -178,6 +351,7 @@ const countProtocolFailure = (
 export const multiplayerStages = (
   state: MultiplayerFrameState,
   transport: TransportService,
+  sync?: MultiplayerClientSync,
 ): ReadonlyArray<StageRegistration> => [
   {
     id: MULTIPLAYER_STAGE_IDS.inbound,
@@ -200,24 +374,18 @@ export const multiplayerStages = (
         yield* Effect.forEach(
           frames,
           (frame) =>
-            Result.match(decodeFrame(frame), {
+            Result.match(decodeFrame(frame, sync?.owners), {
               // A frame this build cannot read is DROPPED, not retried:
               // `ProtocolError` means the bytes arrived intact and do not mean
               // What this build thinks they mean, so a resend produces the same
               // Bytes (DN-2). What the counter separates is whether the right
               // Response is to drop the frame or the peer (DN-1).
-              onFailure: (error) => countProtocolFailure(state, error),
+              onFailure: (error) => countProtocolFailure(state, error).pipe(
+                Effect.andThen(resyncMalformedC4Frame(state, sync, frame)),
+              ),
               // The transport seam. The host/session adapter drains this queue
               // And applies the message through mc-sim and mx-gameplay.
-              onSuccess: (message) =>
-                Ref.update(state.inbound, (pending) => [...pending, message]).pipe(
-                  Effect.andThen(
-                    Ref.update(state.counters, (current) => ({
-                      ...current,
-                      received: current.received + COUNTER_INCREMENT,
-                    })),
-                  ),
-                ),
+              onSuccess: (message) => handleDecodedFrame(state, sync, frame, message),
             }),
           { discard: true },
         )
@@ -265,7 +433,7 @@ export const multiplayerStages = (
         yield* Effect.forEach(
           pending,
           (message) =>
-            Result.match(encodeFrame(message), {
+              Result.match(encodeFrame(message, sync?.owners), {
               // A message that will not encode is a LOCAL bug — a branded
               // Invariant was violated on this side — so there is nothing to
               // Resend and nobody to blame for it at the far end. Counted apart
@@ -369,6 +537,22 @@ export const makeMultiplayerStagesForPreview: Effect.Effect<
   return { stages: multiplayerStages(state, transport), state }
 })
 
+/** Build preview stages with C4 client application and snapshot-transfer handling enabled. */
+export const makeMultiplayerStagesForClientPreview = (
+  sync: MultiplayerClientSync,
+): Effect.Effect<
+  {
+    readonly state: MultiplayerFrameState
+    readonly stages: ReadonlyArray<StageRegistration>
+  },
+  never,
+  TransportPort
+> => Effect.gen(function* () {
+  const transport = yield* TransportPort
+  const state = yield* makeMultiplayerFrameState
+  return { stages: multiplayerStages(state, transport, sync), state }
+})
+
 /**
  * The capability-limited integration seam for a platform host.
  *
@@ -383,7 +567,7 @@ export type MultiplayerHost = {
   readonly stages: ReadonlyArray<StageRegistration>
   /** A module suitable for hosts that compose modules rather than raw stages. */
   readonly module: GameModule<never, never, never, never>
-  /** Atomically take every message decoded by completed inbound stages. */
+  /** Atomically take every message handed to the host/session adapter. */
   readonly drainInbound: Effect.Effect<ReadonlyArray<NetworkMessage>>
   /** Append one local message for the next outbound stage. */
   readonly enqueueOutbound: (message: NetworkMessage) => Effect.Effect<void>
@@ -404,11 +588,13 @@ export type MultiplayerHost = {
  * returns the already-bound stages instead of rebuilding state or acquiring a
  * second transport, which keeps one socket paired with one inbox and outbox.
  */
-export const makeMultiplayerHost: Effect.Effect<MultiplayerHost, never, TransportPort> =
+const buildMultiplayerHost = (
+  sync?: MultiplayerClientSync,
+): Effect.Effect<MultiplayerHost, never, TransportPort> =>
   Effect.gen(function* () {
     const transport = yield* TransportPort
     const state = yield* makeMultiplayerFrameState
-    const stages = multiplayerStages(state, transport)
+    const stages = multiplayerStages(state, transport, sync)
 
     const drainInbound = Ref.getAndSet(state.inbound, []).pipe(
       Effect.map((messages) => [...messages]),
@@ -436,3 +622,12 @@ export const makeMultiplayerHost: Effect.Effect<MultiplayerHost, never, Transpor
       transitionConnection,
     }
   })
+
+export const makeMultiplayerHost: Effect.Effect<MultiplayerHost, never, TransportPort> =
+  buildMultiplayerHost()
+
+/** Build a host whose frame stages validate and apply the C4 client replication stream. */
+export const makeMultiplayerHostWithClientSync = (
+  sync: MultiplayerClientSync,
+): Effect.Effect<MultiplayerHost, never, TransportPort> =>
+  buildMultiplayerHost(sync)
