@@ -102,6 +102,46 @@ describe('loopback synchronisation', () => {
   )
 })
 
+describe('bounded loopback ingress', () => {
+  it.effect('returns a typed fault instead of accepting a frame past its frame capacity', () =>
+    Effect.gen(function* () {
+      const [sender, receiver] = yield* makeLoopbackPair
+      yield* Effect.forEach(Array.from({ length: 80 }, () => 'frame'), (frame) => sender.send(frame))
+
+      const overflow = yield* sender.send('overflow').pipe(Effect.result)
+
+      expect(overflow._tag).toBe('Failure')
+      if (overflow._tag === 'Failure') {
+        expect(overflow.failure).toMatchObject({
+          _tag: 'InboundQueueOverflow',
+          maxFrames: 80,
+          observedFrames: 81,
+        })
+      }
+      expect(yield* Queue.size(receiver.inbound)).toBe(80)
+    }),
+  )
+
+  it.effect('bounds total queued UTF-8 bytes and accepts the exact byte ceiling', () =>
+    Effect.gen(function* () {
+      const [sender, receiver] = yield* makeLoopbackPair
+      yield* sender.send('x'.repeat(3_486_960))
+
+      const overflow = yield* sender.send('x').pipe(Effect.result)
+
+      expect(overflow._tag).toBe('Failure')
+      if (overflow._tag === 'Failure') {
+        expect(overflow.failure).toMatchObject({
+          _tag: 'InboundQueueOverflow',
+          maxBytes: 3_486_960,
+          observedBytes: 3_486_961,
+        })
+      }
+      expect(yield* Queue.size(receiver.inbound)).toBe(1)
+    }),
+  )
+})
+
 describe('transport failure', () => {
   it.effect('gates each send using the current connection state', () =>
     Effect.gen(function* () {
