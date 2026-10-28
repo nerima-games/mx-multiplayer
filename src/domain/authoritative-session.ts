@@ -60,7 +60,7 @@ type PreparedExecution =
 
 type PreparedIntentExecution =
   | { readonly result: AuthoritativeCommandIntentResult }
-  | { readonly key: string; readonly revisionBefore: number }
+  | { readonly key: string }
 
 const NO_PRIOR_REVISION = 0
 const REVISION_INCREMENT = 1
@@ -205,7 +205,8 @@ export class AuthoritativeSession {
 
   /**
    * Records a validated C2 intent for this command without changing the WCC
-   * revision. Intent construction and enqueueing remain the caller's work.
+   * revision. The intent must match the command and authenticated player.
+   * Intent construction and enqueueing remain the caller's work.
    */
   executeIntent(
     identity: ServerConnectionIdentity,
@@ -213,6 +214,11 @@ export class AuthoritativeSession {
     intent: Intent,
   ): Effect.Effect<AuthoritativeCommandIntentResult> {
     return Effect.suspend(() => {
+      const failure = this.#identityFailure(identity, command) ?? this.#intentMetadataFailure(command, intent)
+      if (failure !== undefined) {
+        return Effect.succeed(failure)
+      }
+
       const prepared = this.#prepareIntent(identity, command)
       if ('result' in prepared) {
         return Effect.succeed(prepared.result)
@@ -278,6 +284,31 @@ export class AuthoritativeSession {
       resyncRequired: false,
       revision: NO_PRIOR_REVISION,
     })
+  }
+
+  #intentMetadataFailure(
+    command: AuthoritativeCommand,
+    intent: Intent,
+  ): AuthoritativeCommandResult | undefined {
+    if (AuthoritativeSession.#intentMatchesCommand(command, intent)) {
+      return undefined
+    }
+    return AuthoritativeSession.#reject({
+      command,
+      reason: 'invalid-command',
+      resyncRequired: false,
+      revision: this.#readRevision(command.world) ?? NO_PRIOR_REVISION,
+    })
+  }
+
+  static #intentMatchesCommand(
+    command: AuthoritativeCommand,
+    intent: Intent,
+  ): boolean {
+    return String(intent.id) === String(command.commandId)
+      && intent.source === 'network'
+      && intent.expectedRevision === command.expectedRevision
+      && String(intent.payload.actor) === String(command.player)
   }
 
   #duplicateFailure(
@@ -411,14 +442,14 @@ export class AuthoritativeSession {
       return { result: revisionFailure }
     }
 
-    return this.#reserveIntent(command, revisionBefore)
+    return this.#reserveIntent(command)
   }
 
-  #reserveIntent(command: AuthoritativeCommand, revisionBefore: number): PreparedIntentExecution {
+  #reserveIntent(command: AuthoritativeCommand): PreparedIntentExecution {
     const key = ledgerKey(command)
     this.#inFlight.add(key)
     this.#inFlightWorlds.add(command.world)
-    return { key, revisionBefore }
+    return { key }
   }
 
   #applyPrepared<Failure>(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
 import { Cause, Effect, Exit, Result, Schema, SchemaAST } from 'effect'
-import { IntentSchema } from '@nerima-games/mc-sim'
+import { IntentSchema, type Intent } from '@nerima-games/mc-sim'
 import {
   AuthoritativeCommand,
   AuthoritativeEntityState,
@@ -43,9 +43,9 @@ const command = (
   world: commandWorld,
 })
 
-const networkIntentFor = (id: string) => Schema.decodeUnknownSync(IntentSchema)({
+const networkIntentFor = (id: string, expectedRevision = 4) => Schema.decodeUnknownSync(IntentSchema)({
   expectedDimensionRevision: 3,
-  expectedRevision: 4,
+  expectedRevision,
   id: CommandId.make(id),
   payload: { _tag: 'UseItem', actor: player, item: 1 },
   source: 'network',
@@ -423,6 +423,82 @@ describe('authoritative command session', () => {
     expect(changedIntent).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'invalid-command', revision: 0 })
     expect(commit).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'invalid-command', revision: 0 })
     expect(invoked).toBe(false)
+  })
+
+  it('rejects intent metadata that does not match the command and leaves its ledger empty', async () => {
+    const mismatches: ReadonlyArray<{
+      readonly field: string
+      readonly change: (intent: Intent) => Intent
+    }> = [
+      {
+        field: 'actor',
+        change: (intent) => ({
+          ...intent,
+          payload: { ...intent.payload, actor: EntityId.make('bob') },
+        }),
+      },
+      {
+        field: 'id',
+        change: (intent) => networkIntentFor(`${intent.id}-other`),
+      },
+      {
+        field: 'expected-revision',
+        change: (intent) => networkIntentFor(intent.id, 5),
+      },
+      {
+        field: 'source',
+        change: (intent) => ({ ...intent, source: 'local' }),
+      },
+    ]
+
+    const outcomes = await Promise.all(mismatches.map(async ({ field, change }) => {
+      const ready = sessionAt(4)
+      const request = command(`mismatched-intent-${field}`)
+      const validIntent = networkIntentFor(request.commandId)
+      const rejected = await Effect.runPromise(
+        ready.subject.executeIntent(ready.identity, request, change(validIntent)),
+      )
+      const accepted = await Effect.runPromise(
+        ready.subject.executeIntent(ready.identity, request, validIntent),
+      )
+      return { accepted, rejected, request, validIntent }
+    }))
+
+    for (const { accepted, rejected, request, validIntent } of outcomes) {
+      expect(rejected).toMatchObject({
+        _tag: 'AuthoritativeCommandRejected',
+        commandId: request.commandId,
+        reason: 'invalid-command',
+      })
+      expect(rejected).not.toHaveProperty('intent')
+      expect(accepted).toMatchObject({
+        _tag: 'AuthoritativeCommandIntentAccepted',
+        commandId: request.commandId,
+        intent: validIntent,
+      })
+    }
+
+    const uninitialized = new AuthoritativeSession(() => undefined)
+    const identity = uninitialized.connect(player, world)
+    const request = command('mismatched-intent-without-revision')
+    const validIntent = networkIntentFor(request.commandId)
+    const rejected = await Effect.runPromise(uninitialized.executeIntent(identity, request, {
+      ...validIntent,
+      payload: { ...validIntent.payload, actor: EntityId.make('bob') },
+    }))
+    const afterRejection = await Effect.runPromise(uninitialized.executeIntent(identity, request, validIntent))
+
+    expect(rejected).toMatchObject({
+      _tag: 'AuthoritativeCommandRejected',
+      commandId: request.commandId,
+      reason: 'invalid-command',
+      revision: 0,
+    })
+    expect(afterRejection).toMatchObject({
+      _tag: 'AuthoritativeCommandRejected',
+      commandId: request.commandId,
+      reason: 'snapshot-required',
+    })
   })
 
   it('rechecks WCC revision during intent preparation before reserving the command', async () => {

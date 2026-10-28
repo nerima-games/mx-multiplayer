@@ -58,8 +58,6 @@ function command(
 
 const makeHarness = () => {
   const revision = 0
-  const state = { value: 17 }
-  const deltas: Array<unknown> = []
   let lookups = 0
   let mutations = 0
   const unexpectedMutation = () => {
@@ -100,11 +98,6 @@ const makeHarness = () => {
     session,
     identity,
     services,
-    state,
-    deltas,
-    get revision() {
-      return revision
-    },
     get lookups() {
       return lookups
     },
@@ -115,7 +108,7 @@ const makeHarness = () => {
 }
 
 describe('applyAuthoritativeCommand', () => {
-  it('returns canonical C2 intents for every exactly representable command without changing owner revision', async () => {
+  it('returns canonical C2 intents for every exactly representable command without using simulation services', async () => {
     const harness = makeHarness()
     const commands: ReadonlyArray<{ readonly command: AuthoritativeCommand; readonly payload: unknown }> = [
       {
@@ -175,9 +168,6 @@ describe('applyAuthoritativeCommand', () => {
       })
     }
 
-    expect(harness.state).toStrictEqual({ value: 17 })
-    expect(harness.revision).toBe(0)
-    expect(harness.deltas).toHaveLength(0)
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })
@@ -195,7 +185,6 @@ describe('applyAuthoritativeCommand', () => {
     expect(replay).toMatchObject({ _tag: 'AuthoritativeCommandIntentReplayed', commandId: received.commandId })
     expect(replay).not.toHaveProperty('intent')
     expect(conflict).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'invalid-command' })
-    expect(harness.revision).toBe(0)
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })
@@ -297,7 +286,6 @@ describe('applyAuthoritativeCommand', () => {
       })
     }
 
-    expect(harness.revision).toBe(0)
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })
@@ -315,15 +303,12 @@ describe('applyAuthoritativeCommand', () => {
     if (Exit.isFailure(result)) {
       expect(Schema.isSchemaError(Cause.squash(result.cause))).toBe(true)
     }
-    expect(harness.revision).toBe(0)
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })
 
-  it('rejects stale revisions before any service lookup and leaves state, revision, and deltas unchanged', async () => {
+  it('rejects stale revisions before any service lookup', async () => {
     const harness = makeHarness()
-    const beforeState = { ...harness.state }
-    const beforeDeltas = [...harness.deltas]
     const result = await Effect.runPromise(
       applyAuthoritativeCommand(harness.session, harness.services, intentContext(harness.identity))(
         command('PlayerInventoryCommand', 'stale', alice, 1),
@@ -336,9 +321,6 @@ describe('applyAuthoritativeCommand', () => {
       resyncRequired: true,
       revision: 0,
     })
-    expect(harness.state).toStrictEqual(beforeState)
-    expect(harness.revision).toBe(0)
-    expect(harness.deltas).toStrictEqual(beforeDeltas)
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })
@@ -359,9 +341,6 @@ describe('applyAuthoritativeCommand', () => {
 
     expect(wrongPlayer).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
     expect(unissued).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
-    expect(harness.state).toStrictEqual({ value: 17 })
-    expect(harness.revision).toBe(0)
-    expect(harness.deltas).toHaveLength(0)
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })
@@ -396,9 +375,6 @@ describe('applyAuthoritativeCommand', () => {
     if (Exit.isFailure(result)) {
       expect(Schema.isSchemaError(Cause.squash(result.cause))).toBe(true)
     }
-    expect(harness.state).toStrictEqual({ value: 17 })
-    expect(harness.revision).toBe(0)
-    expect(harness.deltas).toHaveLength(0)
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })
