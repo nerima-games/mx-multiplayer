@@ -1,157 +1,234 @@
 /* eslint-disable max-statements, no-magic-numbers, no-underscore-dangle, sort-imports, sort-keys */
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
+import {
+  BlockIdSchema,
+  DimensionIdSchema,
+  DimensionRevisionSchema,
+  SimulationTickSchema,
+} from '@nerima-games/mc-kernel'
+import { Schema } from 'effect'
 import { PlayerId } from '../src/domain/protocol.js'
 import { SurvivalAuthority, type SurvivalCommand } from '../src/domain/survival-authority.js'
 
 const alice = PlayerId.make('alice')
 const bob = PlayerId.make('bob')
-const header = (requestId: string, expectedRevision = 7, clientTick = 10) => ({
+const TARGET_TICK = Schema.decodeUnknownSync(SimulationTickSchema)(10)
+const dimension = (value: 'overworld' | 'nether' | 'end') => Schema.decodeUnknownSync(DimensionIdSchema)(value)
+const dimensionRevision = (value: number) => Schema.decodeUnknownSync(DimensionRevisionSchema)(value)
+const blockId = (value: number) => Schema.decodeUnknownSync(BlockIdSchema)(value)
+const header = (requestId: string, expectedRevision = 7, expectedDimensionRevision = dimensionRevision(4)) => ({
   actor: alice,
   session: 'session-one',
   requestId,
   expectedRevision,
-  clientTick,
+  expectedDimensionRevision,
 })
+const unsupported = (requestId: string) => ({
+  accepted: false,
+  reason: 'authority-boundary-unsupported',
+  requestId,
+})
+const invalid = (requestId: string) => ({ accepted: false, reason: 'invalid-command', requestId })
+const blockIntent = (
+  command: Extract<SurvivalCommand, { _tag: 'BreakBlock' }>,
+  targetTick = TARGET_TICK,
+) => ({
+  accepted: true,
+  intent: {
+    id: command.requestId,
+    targetTick,
+    source: 'network',
+    payload: {
+      _tag: 'BreakBlock',
+      actor: alice,
+      address: { dimension: command.dimension, position: command.at },
+    },
+    expectedRevision: command.expectedRevision,
+    expectedDimensionRevision: command.expectedDimensionRevision,
+  },
+  requestId: command.requestId,
+})
+
 describe('survival authority boundary', () => {
-  it('returns valid commands as intents without a local revision or delta', () => {
-    const commands: ReadonlyArray<SurvivalCommand> = [
-      { ...header('place'), _tag: 'PlaceBlock', at: { x: 1, y: 64, z: 1 }, slot: 0, block: 'stone' },
-      { ...header('break'), _tag: 'BreakBlock', at: { x: 2, y: 64, z: 0 } },
-      { ...header('attack'), _tag: 'Attack', target: bob },
-      { ...header('respawn'), _tag: 'Respawn' },
-      { ...header('sleep'), _tag: 'EnterSleep', bed: { x: 0, y: 64, z: 1 } },
-      { ...header('wake'), _tag: 'LeaveSleep' },
-    ]
+  it('returns supported commands as mc-sim C2 network intents', () => {
+    const place: SurvivalCommand = {
+      ...header('place'),
+      _tag: 'PlaceBlock',
+      dimension: dimension('overworld'),
+      at: { x: 1, y: 64, z: 1 },
+      block: blockId(100),
+    }
+    const breakBlock: SurvivalCommand = {
+      ...header('break'),
+      _tag: 'BreakBlock',
+      dimension: dimension('nether'),
+      at: { x: 2, y: 64, z: 0 },
+    }
+    const leaveSleep: SurvivalCommand = { ...header('wake'), _tag: 'LeaveSleep' }
     const authority = new SurvivalAuthority()
 
     expect('snapshot' in authority).toBe(false)
-    for (const command of commands) {
-      const inputBefore = { ...command }
-      const result = authority.execute(command)
-      expect(result).toStrictEqual({
-        accepted: true,
-        intent: command,
-        requestId: command.requestId,
-      })
-      expect(command).toStrictEqual(inputBefore)
-      expect(command.expectedRevision).toBe(7)
-      expect(result).not.toHaveProperty('revision')
-      expect(result).not.toHaveProperty('events')
-      expect(result).not.toHaveProperty('delta')
-    }
+    expect(authority.execute(place, TARGET_TICK)).toStrictEqual({
+      accepted: true,
+      intent: {
+        id: 'place',
+        targetTick: TARGET_TICK,
+        source: 'network',
+        payload: {
+          _tag: 'PlaceBlock',
+          actor: alice,
+          address: { dimension: dimension('overworld'), position: place.at },
+          block: blockId(100),
+        },
+        expectedRevision: 7,
+        expectedDimensionRevision: 4,
+      },
+      requestId: 'place',
+    })
+    expect(authority.execute(breakBlock, TARGET_TICK)).toStrictEqual(blockIntent(breakBlock))
+    expect(authority.execute(leaveSleep, TARGET_TICK)).toStrictEqual({
+      accepted: true,
+      intent: {
+        id: 'wake',
+        targetTick: TARGET_TICK,
+        source: 'network',
+        payload: { _tag: 'LeaveSleep', actor: alice },
+        expectedRevision: 7,
+        expectedDimensionRevision: 4,
+      },
+      requestId: 'wake',
+    })
+    expect(place.expectedRevision).toBe(7)
+    expect(breakBlock.expectedDimensionRevision).toBe(4)
   })
 
-  it('returns replayed commands as intents without advancing a local revision', () => {
+  it('returns repeated supported commands as the same intent without local mutation', () => {
     const authority = new SurvivalAuthority()
-    const command = { ...header('replayed'), _tag: 'BreakBlock', at: { x: 2, y: 64, z: 0 } } as const
-    const expected = { accepted: true, intent: command, requestId: command.requestId }
+    const command: SurvivalCommand = {
+      ...header('replayed'),
+      _tag: 'BreakBlock',
+      dimension: dimension('overworld'),
+      at: { x: 2, y: 64, z: 0 },
+    }
 
-    expect(authority.execute(command)).toStrictEqual(expected)
-    expect(authority.execute(command)).toStrictEqual(expected)
+    expect(authority.execute(command, TARGET_TICK)).toStrictEqual(blockIntent(command))
+    expect(authority.execute(command, TARGET_TICK)).toStrictEqual(blockIntent(command))
     expect(command.expectedRevision).toBe(7)
   })
 
-  it('rejects malformed headers and command payloads before returning the boundary failure', () => {
-    const authority = new SurvivalAuthority()
+  it('rejects valid tags whose payloads are not represented by C2', () => {
+    const commands: ReadonlyArray<SurvivalCommand> = [
+      { ...header('attack'), _tag: 'Attack', target: bob },
+      { ...header('respawn'), _tag: 'Respawn' },
+      { ...header('sleep'), _tag: 'EnterSleep', bed: { x: 0, y: 64, z: 1 } },
+    ]
+
+    for (const command of commands) {
+      expect(new SurvivalAuthority().execute(command, TARGET_TICK)).toStrictEqual(unsupported(command.requestId))
+    }
+  })
+
+  it('rejects malformed headers and command payloads before mapping to C2', () => {
     const malformed: ReadonlyArray<SurvivalCommand> = [
       { ...header(''), _tag: 'Respawn' },
       { ...header('blank-session'), session: '', _tag: 'Respawn' },
       { ...header('negative-revision', -1), _tag: 'Respawn' },
-      { ...header('negative-tick', 7, -1), _tag: 'Respawn' },
-      { ...header('fractional-position'), _tag: 'BreakBlock', at: { x: 1.5, y: 64, z: 0 } },
-      { ...header('negative-slot'), _tag: 'PlaceBlock', at: { x: 1, y: 64, z: 1 }, slot: -1, block: 'stone' },
-      { ...header('empty-block'), _tag: 'PlaceBlock', at: { x: 1, y: 64, z: 1 }, slot: 0, block: '' },
+      { ...header('fractional-position'), _tag: 'BreakBlock', dimension: dimension('overworld'), at: { x: 1.5, y: 64, z: 0 } },
+      { ...header('fractional-bed'), _tag: 'EnterSleep', bed: { x: 0, y: 64.5, z: 1 } },
     ]
 
     for (const command of malformed) {
       const inputBefore = { ...command }
-      const result = authority.execute(command)
-      expect(result).toStrictEqual({
-        accepted: false,
-        requestId: command.requestId,
-        reason: 'invalid-command',
-      })
+      expect(new SurvivalAuthority().execute(command, TARGET_TICK)).toStrictEqual(invalid(command.requestId))
       expect(command).toStrictEqual(inputBefore)
-      expect(command.expectedRevision).toBe(inputBefore.expectedRevision)
-      expect(result).not.toHaveProperty('revision')
-      expect(result).not.toHaveProperty('events')
-      expect(result).not.toHaveProperty('delta')
     }
+
+    const authority = new SurvivalAuthority()
+    const invalidBlock = {
+      ...header('invalid-block'),
+      _tag: 'PlaceBlock',
+      dimension: dimension('overworld'),
+      at: { x: 1, y: 64, z: 1 },
+      block: Number.NaN,
+    }
+    expect(Reflect.apply(authority.execute, authority, [{ ...header('blank-target'), _tag: 'Attack', target: '' }, TARGET_TICK]))
+      .toStrictEqual(invalid('blank-target'))
+    expect(Reflect.apply(authority.execute, authority, [invalidBlock, TARGET_TICK])).toStrictEqual(invalid('invalid-block'))
+  })
+
+  it('rejects invalid target ticks and C2 schema failures', () => {
+    const authority = new SurvivalAuthority()
+    const command: SurvivalCommand = {
+      ...header('target'),
+      _tag: 'BreakBlock',
+      dimension: dimension('overworld'),
+      at: { x: 1, y: 64, z: 0 },
+    }
+    const badDimension: SurvivalCommand = {
+      ...header('bad-dimension'),
+      _tag: 'BreakBlock',
+      dimension: dimension('overworld'),
+      at: { x: 1, y: 64, z: 0 },
+    }
+    const invalidDimension = { ...badDimension, dimension: 'moon' }
+    const badTargetTick = Reflect.apply(authority.execute, authority, [command, -1])
+    const fractionalTargetTick = Reflect.apply(authority.execute, authority, [command, 1.5])
+    const badDimensionResult = Reflect.apply(authority.execute, authority, [invalidDimension, TARGET_TICK])
+
+    expect(badTargetTick).toStrictEqual(invalid(command.requestId))
+    expect(fractionalTargetTick).toStrictEqual(invalid(command.requestId))
+    expect(badDimensionResult).toStrictEqual(invalid(badDimension.requestId))
   })
 
   it('rejects unknown runtime tags from untyped callers', () => {
-    const authority = new SurvivalAuthority()
     const malformed = { ...header('unknown-tag'), _tag: 'UnknownCommand' }
 
-    expect(Reflect.apply(authority.execute, authority, [malformed])).toStrictEqual({
-      accepted: false,
-      requestId: 'unknown-tag',
-      reason: 'invalid-command',
-    })
+    expect(Reflect.apply(new SurvivalAuthority().execute, new SurvivalAuthority(), [malformed, TARGET_TICK])).toStrictEqual(
+      invalid('unknown-tag'),
+    )
   })
 
-  it('returns the fixed valid command as an intent', () => {
-    const command: SurvivalCommand = {
-      ...header('boundary', 0, 0),
-      _tag: 'PlaceBlock',
-      at: { x: -1, y: 0, z: 0 },
-      slot: 0,
-      block: 'stone',
-    }
-
-    expect(new SurvivalAuthority().execute(command)).toStrictEqual({
-      accepted: true,
-      intent: command,
-      requestId: command.requestId,
-    })
-    expect(command.expectedRevision).toBe(0)
-    expect(command.clientTick).toBe(0)
-  })
-
-  it('returns generated valid commands as intents', () => {
+  it('returns generated valid break commands as C2 intents', () => {
     fc.assert(fc.property(
       fc.nat({ max: 1_000_000 }),
-      fc.nat({ max: 1_000_000 }),
       fc.integer({ min: -1_000, max: 1_000 }),
       fc.integer({ min: -1_000, max: 1_000 }),
       fc.integer({ min: -1_000, max: 1_000 }),
-      (revision, clientTick, x, y, z) => {
-        const requestId = `integer-${revision}-${clientTick}-${x}-${y}-${z}`
+      (revision, x, y, z) => {
+        const requestId = `break-${revision}-${x}-${y}-${z}`
         const command: SurvivalCommand = {
-          ...header(requestId, revision, clientTick),
-          _tag: 'PlaceBlock',
+          ...header(requestId, revision),
+          _tag: 'BreakBlock',
+          dimension: dimension('overworld'),
           at: { x, y, z },
-          slot: 0,
-          block: 'stone',
         }
 
-        expect(new SurvivalAuthority().execute(command)).toStrictEqual({
-          accepted: true,
-          intent: command,
-          requestId,
-        })
+        expect(new SurvivalAuthority().execute(command, TARGET_TICK)).toStrictEqual(blockIntent(command))
       },
     ))
   })
 
-  it('rejects generated negative revisions, negative ticks, and fractional coordinates', () => {
+  it('rejects generated negative revisions and fractional coordinates', () => {
     fc.assert(fc.property(fc.integer({ min: 1, max: 1_000_000 }), (offset) => {
-      expect(new SurvivalAuthority().execute({
-        ...header(`revision-${offset}`, -offset),
+      const negativeRevision: SurvivalCommand = { ...header(`revision-${offset}`, -offset), _tag: 'Respawn' }
+      const negativeDimensionRevision = {
+        ...header(`dimension-revision-${offset}`),
+        expectedDimensionRevision: -offset,
         _tag: 'Respawn',
-      })).toMatchObject({ accepted: false, reason: 'invalid-command' })
-      expect(new SurvivalAuthority().execute({
-        ...header(`tick-${offset}`, 7, -offset),
-        _tag: 'Respawn',
-      })).toMatchObject({ accepted: false, reason: 'invalid-command' })
+      }
+      expect(new SurvivalAuthority().execute(negativeRevision, TARGET_TICK)).toStrictEqual(invalid(negativeRevision.requestId))
+      expect(Reflect.apply(new SurvivalAuthority().execute, new SurvivalAuthority(), [negativeDimensionRevision, TARGET_TICK]))
+        .toStrictEqual(invalid(negativeDimensionRevision.requestId))
     }))
     fc.assert(fc.property(fc.integer({ min: -1_000, max: 1_000 }), (x) => {
-      expect(new SurvivalAuthority().execute({
+      const command: SurvivalCommand = {
         ...header(`fractional-${x}`),
         _tag: 'BreakBlock',
+        dimension: dimension('overworld'),
         at: { x: x + 0.5, y: 64, z: 0 },
-      })).toMatchObject({ accepted: false, reason: 'invalid-command' })
+      }
+      expect(new SurvivalAuthority().execute(command, TARGET_TICK)).toStrictEqual(invalid(command.requestId))
     }))
   })
 

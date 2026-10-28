@@ -72,7 +72,7 @@
     "text": "number"
   },
   {
-    "count": 5,
+    "count": 4,
     "file": "src/domain/hunger-authority.ts",
     "ruleId": "no-raw-exported-type-field",
     "text": "string"
@@ -84,13 +84,13 @@
     "text": "number"
   },
   {
-    "count": 24,
+    "count": 23,
     "file": "src/domain/survival-authority.ts",
     "ruleId": "no-raw-exported-type-field",
     "text": "number"
   },
   {
-    "count": 13,
+    "count": 12,
     "file": "src/domain/survival-authority.ts",
     "ruleId": "no-raw-exported-type-field",
     "text": "string"

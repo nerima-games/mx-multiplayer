@@ -1,4 +1,8 @@
+import type { BlockId, DimensionRevision, SimulationTick } from '@nerima-games/mc-kernel'
 import type { PlayerId, WorldId } from './protocol.js'
+import type { DimensionId } from '@nerima-games/mc-kernel/domain/shared-vocabulary'
+import type { Intent } from '@nerima-games/mc-sim'
+import { decodeC2Intent } from './c2-intent.js'
 
 export type SurvivalGameMode = 'survival' | 'creative' | 'spectator'
 export type SurvivalPosition = { readonly x: number; readonly y: number; readonly z: number }
@@ -28,19 +32,17 @@ type CommandHeader = {
   readonly session: string
   readonly requestId: string
   readonly expectedRevision: number
-  readonly clientTick: number
+  readonly expectedDimensionRevision: DimensionRevision
 }
 export type SurvivalCommand = CommandHeader & (
-  | { readonly _tag: 'PlaceBlock'; readonly at: SurvivalPosition; readonly slot: number; readonly block: string }
-  | { readonly _tag: 'BreakBlock'; readonly at: SurvivalPosition }
+  | { readonly _tag: 'PlaceBlock'; readonly dimension: DimensionId; readonly at: SurvivalPosition; readonly block: BlockId }
+  | { readonly _tag: 'BreakBlock'; readonly dimension: DimensionId; readonly at: SurvivalPosition }
   | { readonly _tag: 'Attack'; readonly target: PlayerId }
   | { readonly _tag: 'Respawn' }
   | { readonly _tag: 'EnterSleep'; readonly bed: SurvivalPosition }
   | { readonly _tag: 'LeaveSleep' }
 )
 
-/** Validated gameplay command for downstream C2 processing; it does not commit owner state. */
-export type SurvivalIntent = SurvivalCommand
 export type SurvivalEvent =
   | { readonly _tag: 'InventoryChanged'; readonly actor: PlayerId; readonly slot: number; readonly stack: SurvivalItemStack | null }
   | { readonly _tag: 'BlockChanged'; readonly at: SurvivalPosition; readonly block: string | null }
@@ -87,7 +89,7 @@ export type SurvivalSleepValidationInput = {
 export type SurvivalAuthorityResult = { readonly accepted: false; readonly reason: SurvivalRejectionReason }
 export type SurvivalCommandResult =
   | (SurvivalAuthorityResult & { readonly requestId: string })
-  | { readonly accepted: true; readonly intent: SurvivalIntent; readonly requestId: string }
+  | { readonly accepted: true; readonly intent: Intent; readonly requestId: string }
 export type SurvivalAuthorityOptions = {
   readonly reach?: number
   readonly attackReach?: number
@@ -100,8 +102,6 @@ export type SurvivalAuthorityOptions = {
 }
 
 const MINIMUM_EXPECTED_REVISION = 0
-const MINIMUM_CLIENT_TICK = 0
-const MINIMUM_SLOT = 0
 const MINIMUM_NON_EMPTY_LENGTH = 0
 
 const validPosition = (position: SurvivalPosition): boolean =>
@@ -112,18 +112,13 @@ const validHeader = (command: SurvivalCommand): boolean =>
   command.requestId.length > MINIMUM_NON_EMPTY_LENGTH &&
   Number.isSafeInteger(command.expectedRevision) &&
   command.expectedRevision >= MINIMUM_EXPECTED_REVISION &&
-  Number.isSafeInteger(command.clientTick) &&
-  command.clientTick >= MINIMUM_CLIENT_TICK
+  Number.isSafeInteger(command.expectedDimensionRevision) &&
+  command.expectedDimensionRevision >= MINIMUM_EXPECTED_REVISION
 
 const validCommandPayload = (command: SurvivalCommand): boolean => {
   switch (command._tag) {
     case 'PlaceBlock':
-      return (
-        validPosition(command.at) &&
-        Number.isSafeInteger(command.slot) &&
-        command.slot >= MINIMUM_SLOT &&
-        command.block.length > MINIMUM_NON_EMPTY_LENGTH
-      )
+      return validPosition(command.at) && Number.isSafeInteger(command.block)
     case 'BreakBlock':
       return validPosition(command.at)
     case 'Attack':
@@ -154,7 +149,7 @@ export class SurvivalAuthority {
   ) => SurvivalAuthorityResult
   readonly disconnect: (actor: PlayerId) => SurvivalAuthorityResult
   readonly reconcileSleep: () => SurvivalAuthorityResult
-  readonly execute: (command: SurvivalCommand) => SurvivalCommandResult
+  readonly execute: (command: SurvivalCommand, targetTick: SimulationTick) => SurvivalCommandResult
 
   constructor() {
     this.rejoin = (_actor, previousSession, nextSession) => {
@@ -168,12 +163,48 @@ export class SurvivalAuthority {
     }
     this.disconnect = (_actor) => ({ accepted: false, reason: 'authority-boundary-unsupported' })
     this.reconcileSleep = () => ({ accepted: false, reason: 'authority-boundary-unsupported' })
-    this.execute = (command) => {
-      if (!validCommand(command)) {
+    this.execute = (command, targetTick) => {
+      if (!validCommand(command) || !Number.isSafeInteger(targetTick) || targetTick < MINIMUM_EXPECTED_REVISION) {
         return commandFailure(command.requestId, 'invalid-command')
       }
 
-      return { accepted: true, intent: command, requestId: command.requestId }
+      let payload: unknown = undefined
+      switch (command._tag) {
+        case 'BreakBlock':
+          payload = {
+            _tag: 'BreakBlock',
+            actor: command.actor,
+            address: { dimension: command.dimension, position: command.at },
+          }
+          break
+        case 'PlaceBlock':
+          payload = {
+              _tag: 'PlaceBlock',
+              actor: command.actor,
+              address: { dimension: command.dimension, position: command.at },
+              block: command.block,
+            }
+          break
+        case 'LeaveSleep':
+          payload = { _tag: 'LeaveSleep', actor: command.actor }
+          break
+        default:
+          return commandFailure(command.requestId, 'authority-boundary-unsupported')
+      }
+
+      const intent = decodeC2Intent({
+        expectedDimensionRevision: command.expectedDimensionRevision,
+        expectedRevision: command.expectedRevision,
+        id: command.requestId,
+        payload,
+        source: 'network',
+        targetTick,
+      })
+
+      if (intent === undefined) {
+        return commandFailure(command.requestId, 'invalid-command')
+      }
+      return { accepted: true, intent, requestId: command.requestId }
     }
   }
 }

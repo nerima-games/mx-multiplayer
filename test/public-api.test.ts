@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { expectTypeOf } from 'vitest'
 import { Effect } from 'effect'
+import type { Intent } from '@nerima-games/mc-sim'
 import * as multiplayer from '../src/index'
 import { decodeFrame, encodeFrame } from '../src/domain/codec'
 import { MESSAGE_TAGS, PROTOCOL_VERSION } from '../src/domain/protocol'
@@ -25,8 +26,8 @@ import type {
   DeltaProjectionOutcome,
   DeltaProjectionRecipient,
   FrameTag,
-  HungerIntent,
   HungerRejectionReason,
+  HungerResult,
   InboundFrameInspection,
   NonNegativeSafeInteger,
   PositiveSafeInteger,
@@ -36,7 +37,6 @@ import type {
   ServerConnectionIdentity,
   SurvivalAuthorityResult,
   SurvivalCommandResult,
-  SurvivalIntent,
   TransportService,
   WireText,
 } from '../src/index'
@@ -55,8 +55,9 @@ type NewPublicTypes = {
   commandDecision: CommandDecision
   commandNotWritable: CommandNotWritable
   connectionIdentity: ServerConnectionIdentity
-  hungerIntent: HungerIntent
+  hungerIntent: Intent
   hungerRejectionReason: HungerRejectionReason
+  hungerResult: HungerResult
   frameTag: FrameTag
   inboundFrameInspection: InboundFrameInspection
   limitConfig: ConnectionRateLimitConfig
@@ -73,7 +74,7 @@ type NewPublicTypes = {
   rateInputErrorReason: RateLimitInputErrorReason
   survivalAuthorityResult: SurvivalAuthorityResult
   survivalCommandResult: SurvivalCommandResult
-  survivalIntent: SurvivalIntent
+  survivalIntent: Intent
   transportService: TransportService
   wireText: WireText
 }
@@ -247,6 +248,8 @@ describe('public API surface', () => {
   it.effect('keeps the public type surface concrete', () =>
     Effect.sync(() => {
       expectTypeOf<NewPublicTypes>().toBeObject()
+      expectTypeOf<Extract<HungerResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
+      expectTypeOf<Extract<SurvivalCommandResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
     }),
   )
 })
