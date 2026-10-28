@@ -158,7 +158,7 @@ const serializeHashes = (hashes: ReadonlyMap<string, ReconnectTokenHashes>): str
   `${JSON.stringify({ format: PERSISTED_FORMAT, players: Object.fromEntries(hashes) })}\n`
 
 /** A decoded, format-validated reconnect token, or `undefined` if `token` is not one this module could have issued. */
-export const ReconnectToken: Schema.filter<typeof Schema.String> = Schema.String.pipe(Schema.pattern(RECONNECT_TOKEN_PATTERN))
+export const ReconnectToken: typeof Schema.String = Schema.String.pipe(Schema.check(Schema.isPattern(RECONNECT_TOKEN_PATTERN)))
 export type ReconnectToken = typeof ReconnectToken.Type
 
 const isWellFormedToken = (token: string): token is ReconnectToken => RECONNECT_TOKEN_PATTERN.test(token)

@@ -47,9 +47,9 @@ export type TransportService = {
 
 // `isolatedDeclarations` (TS 7) rejects a class expression directly in an
 // `extends` clause (TS9021); naming the base with its own explicit
-// `Context.TagClass` type is the same pattern mc-kernel uses for `ClockPort`.
-const TransportPortBase: Context.TagClass<TransportPort, '@nerima-games/mx-multiplayer/TransportPort', TransportService> =
-  Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<TransportPort, TransportService>()
+// `Context.ServiceClass` type is the same pattern mc-kernel uses for `ClockPort`.
+const TransportPortBase: Context.ServiceClass<TransportPort, '@nerima-games/mx-multiplayer/TransportPort', TransportService> =
+  Context.Service<TransportPort, TransportService>()('@nerima-games/mx-multiplayer/TransportPort')
 
 export class TransportPort extends TransportPortBase {}
 
@@ -86,7 +86,7 @@ export const sendMessage = (
 ): Effect.Effect<void, ProtocolError | TransportError, TransportPort> =>
   Effect.gen(function* () {
     const transport = yield* TransportPort
-    const frame = yield* encodeFrame(message)
+    const frame = yield* Effect.fromResult(encodeFrame(message))
     yield* transport.send(frame)
   })
 
@@ -95,7 +95,7 @@ export const receiveMessage: Effect.Effect<NetworkMessage, ProtocolError, Transp
   Effect.gen(function* () {
     const transport = yield* TransportPort
     const frame = yield* Queue.take(transport.inbound)
-    return yield* decodeFrame(frame)
+    return yield* Effect.fromResult(decodeFrame(frame))
   })
 
 /**
@@ -124,11 +124,11 @@ export const makeLoopbackPair: Effect.Effect<
         Effect.asVoid,
         // Verified empirically: offering to a queue after `Queue.shutdown`
         // Fails the fiber through interruption, not a defect — there is no
-        // Legitimate use of `Queue`'s public API that reaches `catchAllDefect`
+        // Legitimate use of `Queue`'s public API that reaches `catchDefect`
         // Here. This guards a failure mode internal to Effect's `Queue`
         // Implementation, not one this repository's callers can construct.
         /* v8 ignore next 3 -- @preserve */
-        Effect.catchAllDefect((defect) =>
+        Effect.catchDefect((defect) =>
           Effect.fail(new TransportError({ detail: String(defect), reason: 'send-failed' })),
         ),
       ),

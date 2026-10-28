@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Either, Option, Schema } from 'effect'
+import { Effect, Result, Option, Schema } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
 import type { ProtocolError } from '../src/domain/errors'
 import {
@@ -217,11 +217,11 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', revision: 13, state: { timeOfDay: 7000, weather: 'rain' }, world: overworld },
 }
 
-const encoded = (message: NetworkMessage): string => Either.getOrThrow(encodeFrame(message))
+const encoded = (message: NetworkMessage): string => Result.getOrThrow(encodeFrame(message))
 
 /** The ProtocolError a decode produced, or undefined if it succeeded. */
-const failure = (result: Either.Either<unknown, ProtocolError>): ProtocolError | undefined =>
-  Option.getOrUndefined(Either.getLeft(result))
+const failure = (result: Result.Result<unknown, ProtocolError>): ProtocolError | undefined =>
+  Option.getOrUndefined(Result.getFailure(result))
 
 describe('frame round trip', () => {
   // REGRESSION: "every message survives encode -> text -> decode unchanged".
@@ -232,8 +232,8 @@ describe('frame round trip', () => {
       for (const tag of MESSAGE_TAGS) {
         const original = SAMPLES[tag]
         const result = decodeFrame(encoded(original))
-        expect(Either.isRight(result), `${tag} failed to decode`).toBe(true)
-        expect(Either.getOrThrow(result)).toStrictEqual(original)
+        expect(Result.isSuccess(result), `${tag} failed to decode`).toBe(true)
+        expect(Result.getOrThrow(result)).toStrictEqual(original)
       }
     }),
   )
@@ -265,7 +265,7 @@ describe('frame round trip', () => {
   it.effect('preserves fractional coordinates exactly rather than snapping them to the grid', () =>
     Effect.sync(() => {
       const moved = decodeFrame(encoded(SAMPLES.PlayerMove))
-      expect(Either.getOrThrow(moved)).toStrictEqual(SAMPLES.PlayerMove)
+      expect(Result.getOrThrow(moved)).toStrictEqual(SAMPLES.PlayerMove)
     }),
   )
 
@@ -278,7 +278,7 @@ describe('frame round trip', () => {
       ]
 
       for (const message of messages) {
-        expect(Either.getOrThrow(decodeFrame(encoded(message)))).toStrictEqual(message)
+        expect(Result.getOrThrow(decodeFrame(encoded(message)))).toStrictEqual(message)
       }
     }),
   )
@@ -301,7 +301,7 @@ describe('frame round trip', () => {
         protocolVersion: PROTOCOL_VERSION,
       })
 
-      expect(Either.isRight(decodeFrame(legacySnapshot))).toBe(true)
+      expect(Result.isSuccess(decodeFrame(legacySnapshot))).toBe(true)
     }),
   )
 
@@ -325,7 +325,7 @@ describe('frame round trip', () => {
       ]
 
       for (const original of commands) {
-        expect(Either.getOrThrow(decodeFrame(encoded(original)))).toStrictEqual(original)
+        expect(Result.getOrThrow(decodeFrame(encoded(original)))).toStrictEqual(original)
       }
     }),
   )
@@ -333,7 +333,7 @@ describe('frame round trip', () => {
   it.effect('preserves non-ASCII chat text', () =>
     Effect.sync(() => {
       const chat = decodeFrame(encoded(SAMPLES.Chat))
-      expect(Either.getOrThrow(chat)).toStrictEqual(SAMPLES.Chat)
+      expect(Result.getOrThrow(chat)).toStrictEqual(SAMPLES.Chat)
     }),
   )
 })
@@ -344,10 +344,10 @@ describe('protocol version', () => {
   // Build produced decode failures indistinguishable from a damaged frame.
   it.effect('rejects a frame from a version this build does not speak, and says so specifically', () =>
     Effect.sync(() => {
-      const fromTheFuture = Either.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, SAMPLES.Ping))
+      const fromTheFuture = Result.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, SAMPLES.Ping))
       const result = decodeFrame(fromTheFuture)
 
-      expect(Either.isLeft(result)).toBe(true)
+      expect(Result.isFailure(result)).toBe(true)
       const error = failure(result)
       expect(error?._tag).toBe('ProtocolError')
       expect(error?.reason).toBe('unsupported-protocol-version')
@@ -357,7 +357,7 @@ describe('protocol version', () => {
 
   it.effect('reports a version mismatch as a version problem, never as a malformed frame', () =>
     Effect.sync(() => {
-      const older = Either.getOrThrow(encodeFrameAsVersion(0, SAMPLES.PlayerLeave))
+      const older = Result.getOrThrow(encodeFrameAsVersion(0, SAMPLES.PlayerLeave))
       expect(failure(decodeFrame(older))?.reason).not.toBe('malformed-frame')
     }),
   )
@@ -904,7 +904,7 @@ describe('malformed input', () => {
         message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium', player: 'alice' },
         protocolVersion: PROTOCOL_VERSION,
       })
-      expect(Either.isRight(decodeFrame(text))).toBe(true)
+      expect(Result.isSuccess(decodeFrame(text))).toBe(true)
     }),
   )
 })

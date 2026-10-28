@@ -95,21 +95,26 @@ const isSettled: (state) => boolean
 
 ```typescript
 type TransportService = {
-  readonly send: (frame: WireText) => Effect<void, TransportError>
+  readonly send: (frame: WireText) => Effect.Effect<void, TransportError>
   readonly inbound: Queue.Dequeue<WireText>
 }
-class TransportPort extends Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<...>
+const TransportPortBase: Context.ServiceClass<
+  TransportPort,
+  '@nerima-games/mx-multiplayer/TransportPort',
+  TransportService
+> = Context.Service<TransportPort, TransportService>()('@nerima-games/mx-multiplayer/TransportPort')
+class TransportPort extends TransportPortBase {}
 
 const connectionGatedTransport: (
-  state: Effect<ConnectionState>,
+  state: Effect.Effect<ConnectionState>,
   transport: TransportService,
 ) => TransportService
 
-const sendMessage: (message: NetworkMessage) => Effect<void, ProtocolError | TransportError, TransportPort>
-const receiveMessage: Effect<NetworkMessage, ProtocolError, TransportPort>
+const sendMessage: (message: NetworkMessage) => Effect.Effect<void, ProtocolError | TransportError, TransportPort>
+const receiveMessage: Effect.Effect<NetworkMessage, ProtocolError, TransportPort>
 
-const makeLoopbackPair: Effect<readonly [TransportService, TransportService]>
-const LoopbackTransportLayer: (service: TransportService) => Layer<TransportPort>
+const makeLoopbackPair: Effect.Effect<readonly [TransportService, TransportService]>
+const LoopbackTransportLayer: (service: TransportService) => Layer.Layer<TransportPort>
 const disconnectedTransport: Effect<TransportService>
 ```
 

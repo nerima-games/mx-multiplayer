@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import {
+  DamageAmount,
+  DamageCause,
   EntityKind,
   InventoryService,
   makeEntityManager,
@@ -17,7 +19,13 @@ import {
   type VehicleServiceApi,
   type VitalsServiceApi,
 } from '@nerima-games/mc-sim'
-import { position } from '@nerima-games/mc-kernel'
+import {
+  AngleRadians,
+  EntityHealthPoints,
+  PositionAxis,
+  VehicleVelocityComponent,
+  position,
+} from '@nerima-games/mc-kernel'
 import {
   applyAuthoritativeCommand,
   AuthoritativeSession,
@@ -51,8 +59,8 @@ type NoBehaviour = { readonly _tag: 'None' }
 
 const zombie = (feetX: number): SpawnRequest<NoBehaviour> => ({
   behaviour: { _tag: 'None' },
-  feetPosition: position(feetX, 64, 0),
-  healthPoints: 20,
+  feetPosition: position(PositionAxis(feetX), PositionAxis(64), PositionAxis(0)),
+  healthPoints: EntityHealthPoints(20),
   kind: EntityKind('zombie'),
 })
 
@@ -246,10 +254,14 @@ const emptyBoat = (id: string): Vehicle => ({
   dimension: 'overworld',
   id: VehicleId(id),
   occupant: undefined,
-  position: position(0, 64, 0),
+  position: position(PositionAxis(0), PositionAxis(64), PositionAxis(0)),
   type: 'boat',
-  velocity: { x: 0, y: 0, z: 0 },
-  yawRadians: 0,
+  velocity: {
+    x: VehicleVelocityComponent(0),
+    y: VehicleVelocityComponent(0),
+    z: VehicleVelocityComponent(0),
+  },
+  yawRadians: AngleRadians(0),
 })
 
 const occupiedBoat = (id: string, occupant: string): Vehicle => ({
@@ -482,7 +494,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
     it.effect('respawn is naturally idempotent: applying it twice leaves vitals identical to applying it once', () =>
       Effect.gen(function* () {
         const vitals = yield* makeVitalsService()
-        yield* vitals.damage({ amount: 15, cause: 'test' })
+        yield* vitals.damage({ amount: DamageAmount(15), cause: DamageCause('test') })
         const session = new AuthoritativeSession()
         session.restore(baseSnapshot)
         const apply = applyAuthoritativeCommand(session, withAlice(vitals))
@@ -502,7 +514,7 @@ describe('applyAuthoritativeCommand — writing through to mc-sim', () => {
     it.effect('respawn calls VitalsServiceApi.respawn exactly once, even on replay', () =>
       Effect.gen(function* () {
         const vitals = yield* makeVitalsService()
-        yield* vitals.damage({ amount: 15, cause: 'test' })
+        yield* vitals.damage({ amount: DamageAmount(15), cause: DamageCause('test') })
         const calls: Array<string> = []
         const session = new AuthoritativeSession()
         session.restore(baseSnapshot)

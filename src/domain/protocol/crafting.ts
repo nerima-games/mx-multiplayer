@@ -20,15 +20,15 @@ const POCKET_GRID_SIZE = 2
 const TABLE_GRID_SIZE = 3
 
 /** An opaque item-type name; see the file header for why this is not kernel's `ItemType` literal union. */
-export const CraftingItemName: Schema.filter<typeof Schema.String> = Schema.String.pipe(
-  Schema.minLength(MIN_ITEM_NAME_LENGTH),
+export const CraftingItemName: typeof Schema.String = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(MIN_ITEM_NAME_LENGTH)),
 )
 export type CraftingItemName = typeof CraftingItemName.Type
 
-export const CraftingGridSize: Schema.Literal<[typeof POCKET_GRID_SIZE, typeof TABLE_GRID_SIZE]> = Schema.Literal(
+export const CraftingGridSize: Schema.Literals<readonly [typeof POCKET_GRID_SIZE, typeof TABLE_GRID_SIZE]> = Schema.Literals([
   POCKET_GRID_SIZE,
   TABLE_GRID_SIZE,
-)
+])
 export type CraftingGridSize = typeof CraftingGridSize.Type
 
 const strictGrid = { parseOptions: { onExcessProperty: 'error' as const } }
@@ -40,15 +40,13 @@ const strictGrid = { parseOptions: { onExcessProperty: 'error' as const } }
  * as `malformed-frame` at the codec boundary, the same as any other invalid
  * frame, rather than reaching a consumer that must re-derive the invariant.
  */
-export const CraftingGrid: Schema.filter<
-  Schema.Struct<{ cells: Schema.Array$<Schema.NullOr<typeof CraftingItemName>>; height: typeof CraftingGridSize; width: typeof CraftingGridSize }>
-> = Schema.Struct({
+export const CraftingGrid: Schema.Struct<{ cells: Schema.$Array<Schema.NullOr<typeof CraftingItemName>>; height: typeof CraftingGridSize; width: typeof CraftingGridSize }> = Schema.Struct({
   cells: Schema.Array(Schema.NullOr(CraftingItemName)),
   height: CraftingGridSize,
   width: CraftingGridSize,
 }).pipe(
-  Schema.filter((grid) => grid.cells.length === grid.width * grid.height || 'cells.length must equal width * height'),
-  Schema.annotations(strictGrid),
+  Schema.check(Schema.makeFilter((grid) => grid.cells.length === grid.width * grid.height || 'cells.length must equal width * height')),
+  Schema.annotate(strictGrid),
 )
 export type CraftingGrid = typeof CraftingGrid.Type
 
@@ -64,9 +62,9 @@ export const CraftingCommand: Schema.TaggedStruct<
 })
 export type CraftingCommand = typeof CraftingCommand.Type
 
-export const CraftingRejectionReason: Schema.Literal<
-  ['stale-revision', 'unauthorized-player', 'wrong-world', 'invalid-command', 'no-match', 'missing-ingredients', 'no-room']
-> = Schema.Literal(
+export const CraftingRejectionReason: Schema.Literals<
+  readonly ['stale-revision', 'unauthorized-player', 'wrong-world', 'invalid-command', 'no-match', 'missing-ingredients', 'no-room']
+> = Schema.Literals([
   'stale-revision',
   'unauthorized-player',
   'wrong-world',
@@ -74,7 +72,7 @@ export const CraftingRejectionReason: Schema.Literal<
   'no-match',
   'missing-ingredients',
   'no-room',
-)
+])
 export type CraftingRejectionReason = typeof CraftingRejectionReason.Type
 
 export const CraftingCommandAccepted: Schema.TaggedStruct<
@@ -96,12 +94,12 @@ export const CraftingCommandRejected: Schema.TaggedStruct<
 })
 export type CraftingCommandRejected = typeof CraftingCommandRejected.Type
 
-export const CraftingCommandResult: Schema.Union<[typeof CraftingCommandAccepted, typeof CraftingCommandRejected]> =
-  Schema.Union(CraftingCommandAccepted, CraftingCommandRejected)
+export const CraftingCommandResult: Schema.Union<readonly [typeof CraftingCommandAccepted, typeof CraftingCommandRejected]> =
+  Schema.Union([CraftingCommandAccepted, CraftingCommandRejected])
 export type CraftingCommandResult = typeof CraftingCommandResult.Type
 
 /** Every message this module contributes to the shared `NetworkMessage` union. */
 export const CraftingMessage: Schema.Union<
-  [typeof CraftingCommand, typeof CraftingCommandAccepted, typeof CraftingCommandRejected]
-> = Schema.Union(CraftingCommand, CraftingCommandAccepted, CraftingCommandRejected)
+  readonly [typeof CraftingCommand, typeof CraftingCommandAccepted, typeof CraftingCommandRejected]
+> = Schema.Union([CraftingCommand, CraftingCommandAccepted, CraftingCommandRejected])
 export type CraftingMessage = typeof CraftingMessage.Type

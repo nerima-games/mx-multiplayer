@@ -60,9 +60,9 @@ const unbracketed = (host: string): string => {
 export const isLoopbackHost = (host: string): boolean => LOOPBACK_HOSTNAMES.has(unbracketed(host))
 
 /** A TransportSecurityError reason: which invariant an allowed-origins entry, or the set as a whole, violated. */
-export const TransportSecurityErrorReason: Schema.Literal<
-  ['empty-origin', 'invalid-origin', 'missing-tls-cert', 'missing-tls-key', 'no-allowed-origins']
-> = Schema.Literal('empty-origin', 'invalid-origin', 'missing-tls-cert', 'missing-tls-key', 'no-allowed-origins')
+export const TransportSecurityErrorReason: Schema.Literals<
+  readonly ['empty-origin', 'invalid-origin', 'missing-tls-cert', 'missing-tls-key', 'no-allowed-origins']
+> = Schema.Literals(['empty-origin', 'invalid-origin', 'missing-tls-cert', 'missing-tls-key', 'no-allowed-origins'])
 export type TransportSecurityErrorReason = typeof TransportSecurityErrorReason.Type
 
 export class TransportSecurityError extends Error {

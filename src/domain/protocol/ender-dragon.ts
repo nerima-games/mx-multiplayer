@@ -26,26 +26,26 @@ const ENDER_DRAGON_MAX_HEALTH = 200
 const strictShape = { parseOptions: { onExcessProperty: 'error' as const } }
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `EnderDragonPhaseSchema`. Not imported — see the file header. */
-export const EnderDragonPhase: Schema.Literal<['circling', 'perching', 'charging', 'dead']> = Schema.Literal(
+export const EnderDragonPhase: Schema.Literals<readonly ['circling', 'perching', 'charging', 'dead']> = Schema.Literals([
   'circling',
   'perching',
   'charging',
   'dead',
-)
+])
 export type EnderDragonPhase = typeof EnderDragonPhase.Type
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `EnderDragonEncounterSnapshotSchema`. Not imported — see the file header. */
 export const EnderDragonEncounterSnapshot: Schema.Struct<{
-  health: Schema.filter<Schema.filter<typeof Schema.Number>>
+  health: typeof Schema.Number
   phase: typeof EnderDragonPhase
-  phaseTimerSecs: Schema.filter<typeof Schema.Number>
+  phaseTimerSecs: typeof Schema.Number
   rewardEmitted: typeof Schema.Boolean
 }> = Schema.Struct({
-  health: Schema.Number.pipe(Schema.finite(), Schema.nonNegative(), Schema.lessThanOrEqualTo(ENDER_DRAGON_MAX_HEALTH)),
+  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0)), Schema.check(Schema.isLessThanOrEqualTo(ENDER_DRAGON_MAX_HEALTH))),
   phase: EnderDragonPhase,
-  phaseTimerSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  phaseTimerSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   rewardEmitted: Schema.Boolean,
-}).annotations(strictShape)
+}).pipe(Schema.annotate(strictShape))
 export type EnderDragonEncounterSnapshot = typeof EnderDragonEncounterSnapshot.Type
 
 export const DamageEnderDragonCommand: Schema.TaggedStruct<
@@ -58,10 +58,10 @@ export const DamageEnderDragonCommand: Schema.TaggedStruct<
 })
 export type DamageEnderDragonCommand = typeof DamageEnderDragonCommand.Type
 
-export const EnderDragonRejectionReason: Schema.Literal<['stale-revision', 'invalid-command']> = Schema.Literal(
+export const EnderDragonRejectionReason: Schema.Literals<readonly ['stale-revision', 'invalid-command']> = Schema.Literals([
   'stale-revision',
   'invalid-command',
-)
+])
 export type EnderDragonRejectionReason = typeof EnderDragonRejectionReason.Type
 
 export const DamageEnderDragonCommandAccepted: Schema.TaggedStruct<
@@ -84,8 +84,8 @@ export const DamageEnderDragonCommandRejected: Schema.TaggedStruct<
 export type DamageEnderDragonCommandRejected = typeof DamageEnderDragonCommandRejected.Type
 
 export const DamageEnderDragonCommandResult: Schema.Union<
-  [typeof DamageEnderDragonCommandAccepted, typeof DamageEnderDragonCommandRejected]
-> = Schema.Union(DamageEnderDragonCommandAccepted, DamageEnderDragonCommandRejected)
+  readonly [typeof DamageEnderDragonCommandAccepted, typeof DamageEnderDragonCommandRejected]
+> = Schema.Union([DamageEnderDragonCommandAccepted, DamageEnderDragonCommandRejected])
 export type DamageEnderDragonCommandResult = typeof DamageEnderDragonCommandResult.Type
 
 export const EnderDragonSnapshotDelta: Schema.TaggedStruct<
@@ -99,16 +99,16 @@ export type EnderDragonSnapshotDelta = typeof EnderDragonSnapshotDelta.Type
 
 /** Every message this module contributes to the shared `NetworkMessage` union. */
 export const EnderDragonMessage: Schema.Union<
-  [
+  readonly [
     typeof DamageEnderDragonCommand,
     typeof DamageEnderDragonCommandAccepted,
     typeof DamageEnderDragonCommandRejected,
     typeof EnderDragonSnapshotDelta,
   ]
-> = Schema.Union(
+> = Schema.Union([
   DamageEnderDragonCommand,
   DamageEnderDragonCommandAccepted,
   DamageEnderDragonCommandRejected,
   EnderDragonSnapshotDelta,
-)
+])
 export type EnderDragonMessage = typeof EnderDragonMessage.Type

@@ -13,7 +13,7 @@
  *     decorator, dropping queued gameplay messages before encoding them.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Either, Queue, Ref } from 'effect'
+import { Effect, Result, Queue, Ref } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
 import { type ConnectionState, canSend } from '../src/domain/connection'
 import {
@@ -109,7 +109,7 @@ const runStage = (stage: StageRegistration | undefined, dt = ONE_FRAME): Effect.
   (stage?.run(dt) ?? Effect.void).pipe(Effect.provide(TEST_CLOCK))
 
 const drainPeer = (peer: TransportService): Effect.Effect<ReadonlyArray<string>> =>
-  Effect.map(Queue.takeAll(peer.inbound), (frames) => Array.from(frames))
+  Effect.map(Queue.clear(peer.inbound), (frames) => Array.from(frames))
 
 const countersOf = (state: MultiplayerFrameState) => Ref.get(state.counters)
 
@@ -226,9 +226,9 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       const { state, peer, inbound } = yield* registered
 
       for (const message of [chat, move]) {
-        yield* Either.match(encodeFrame(message), {
-          onLeft: () => Effect.void,
-          onRight: (frame) => peer.send(frame),
+        yield* Result.match(encodeFrame(message), {
+          onFailure: () => Effect.void,
+          onSuccess: (frame) => peer.send(frame),
         })
       }
 
@@ -242,7 +242,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
     }),
   )
 
-  it.effect('REGRESSION: `takeAll`, not `take` — an empty queue must not block the frame', () =>
+  it.effect('REGRESSION: `clear`, not `take` — an empty queue must not block the frame', () =>
     Effect.gen(function* () {
       const { state, inbound } = yield* registered
 
@@ -261,9 +261,9 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       const { state, peer, inbound } = yield* registered
 
       yield* peer.send('{not json')
-      yield* Either.match(encodeFrame(chat), {
-        onLeft: () => Effect.void,
-        onRight: (frame) => peer.send(frame),
+      yield* Result.match(encodeFrame(chat), {
+        onFailure: () => Effect.void,
+        onSuccess: (frame) => peer.send(frame),
       })
 
       yield* runStage(inbound)
@@ -279,9 +279,9 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
     Effect.gen(function* () {
       const { state, peer, inbound } = yield* registered
 
-      yield* Either.match(encodeFrameAsVersion(PROTOCOL_VERSION + 1, chat), {
-        onLeft: () => Effect.void,
-        onRight: (frame) => peer.send(frame),
+      yield* Result.match(encodeFrameAsVersion(PROTOCOL_VERSION + 1, chat), {
+        onFailure: () => Effect.void,
+        onSuccess: (frame) => peer.send(frame),
       })
 
       yield* runStage(inbound)
@@ -306,9 +306,9 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
         player: alice,
       })
 
-      yield* Either.match(encodeFrame(fromNewerPeer), {
-        onLeft: () => Effect.void,
-        onRight: (frame) => peer.send(frame),
+      yield* Result.match(encodeFrame(fromNewerPeer), {
+        onFailure: () => Effect.void,
+        onSuccess: (frame) => peer.send(frame),
       })
       yield* runStage(inbound)
 
@@ -333,8 +333,8 @@ describe('multiplayer:outbound — queue-level connection gate', () => {
       const onTheWire = yield* drainPeer(peer)
       expect(onTheWire).toHaveLength(2)
       expect(onTheWire.map((frame) => decodeFrame(frame))).toStrictEqual([
-        Either.right(chat),
-        Either.right(move),
+        Result.succeed(chat),
+        Result.succeed(move),
       ])
       expect((yield* countersOf(state)).sent).toBe(2)
       expect(yield* Ref.get(state.outbox)).toStrictEqual([])
@@ -479,9 +479,9 @@ describe('the stages are re-entrant and hold nothing globally', () => {
         Effect.provideService(TransportPort, left),
       )
 
-      yield* Either.match(encodeFrame(chat), {
-        onLeft: () => Effect.void,
-        onRight: (frame) => peer.send(frame),
+      yield* Result.match(encodeFrame(chat), {
+        onFailure: () => Effect.void,
+        onSuccess: (frame) => peer.send(frame),
       })
       yield* runStage(first.stages[0])
 
@@ -502,7 +502,7 @@ describe('production host integration seam', () => {
     const host = Effect.runSync(makeMultiplayerHost.pipe(
       Effect.provideService(TransportPort, left),
     ))
-    const frame = Either.getOrThrow(encodeFrame(chat))
+    const frame = Result.getOrThrow(encodeFrame(chat))
 
     Effect.runSync(peer.send(frame))
     expect(Effect.runSync(host.drainInbound)).toStrictEqual([])
@@ -521,9 +521,9 @@ describe('production host integration seam', () => {
         Effect.provideService(TransportPort, left),
       )
 
-      yield* Either.match(encodeFrame(chat), {
-        onLeft: () => Effect.void,
-        onRight: (frame) => peer.send(frame),
+      yield* Result.match(encodeFrame(chat), {
+        onFailure: () => Effect.void,
+        onSuccess: (frame) => peer.send(frame),
       })
       expect(yield* host.drainInbound).toStrictEqual([])
 
@@ -561,7 +561,7 @@ describe('production host integration seam', () => {
       const outbound = host.stages.find((stage) => stage.id === MULTIPLAYER_STAGE_IDS.outbound)
       yield* runStage(outbound)
       expect((yield* drainPeer(peer)).map((frame) => decodeFrame(frame))).toStrictEqual([
-        Either.right(chat),
+        Result.succeed(chat),
       ])
       expect((yield* host.countersSnapshot).sent).toBe(1)
     }),

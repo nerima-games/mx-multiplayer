@@ -110,10 +110,10 @@ describe('transport failure', () => {
       const gated = connectionGatedTransport(Ref.get(state), client)
       const layer = LoopbackTransportLayer(gated)
 
-      const refused = yield* sendMessage(join).pipe(Effect.provide(layer), Effect.either)
-      expect(refused._tag).toBe('Left')
-      if (refused._tag === 'Left') {
-        expect(refused.left).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
+      const refused = yield* sendMessage(join).pipe(Effect.provide(layer), Effect.result)
+      expect(refused._tag).toBe('Failure')
+      if (refused._tag === 'Failure') {
+        expect(refused.failure).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
       }
       expect(yield* Queue.size(server.inbound)).toBe(0)
 
@@ -126,8 +126,8 @@ describe('transport failure', () => {
       expect(yield* Queue.size(server.inbound)).toBe(1)
 
       yield* Ref.set(state, { _tag: 'Closed', reason: 'closed' })
-      const closed = yield* sendMessage(move).pipe(Effect.provide(layer), Effect.either)
-      expect(closed._tag).toBe('Left')
+      const closed = yield* sendMessage(move).pipe(Effect.provide(layer), Effect.result)
+      expect(closed._tag).toBe('Failure')
       expect(yield* Queue.size(server.inbound)).toBe(1)
     }),
   )
@@ -138,12 +138,12 @@ describe('transport failure', () => {
 
       const result = yield* sendMessage(join).pipe(
         Effect.provide(LoopbackTransportLayer(transport)),
-        Effect.either,
+        Effect.result,
       )
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left._tag).toBe('TransportError')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure._tag).toBe('TransportError')
       }
     }),
   )
@@ -158,13 +158,13 @@ describe('transport failure', () => {
       yield* client.send('not a frame at all')
       const result = yield* receiveMessage.pipe(
         Effect.provide(LoopbackTransportLayer(server)),
-        Effect.either,
+        Effect.result,
       )
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left._tag).toBe('ProtocolError')
-        expect(result.left.reason).toBe('malformed-frame')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure._tag).toBe('ProtocolError')
+        expect(result.failure.reason).toBe('malformed-frame')
       }
     }),
   )

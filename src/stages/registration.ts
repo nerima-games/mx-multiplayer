@@ -36,7 +36,7 @@
  * That adapter owns the projection to mc-sim and mx-gameplay; these `Ref`s keep
  * the transport boundary explicit for the preview and its contract tests.
  */
-import { Chunk, Effect, Either, Layer, Queue, Ref } from 'effect'
+import { Effect, Layer, Queue, Ref, Result } from 'effect'
 import {
   type ConnectionEvent,
   type ConnectionState,
@@ -186,7 +186,7 @@ export const multiplayerStages = (
     // Situation exactly, and `render:input` declares no `after` either.
     run: () =>
       Effect.gen(function* () {
-        // `takeAll`, not `take`: `take` blocks until a frame arrives, and a
+        // `clear`, not `takeAll`: `takeAll` blocks until a frame arrives, and a
         // Stage that blocks stops the frame. Draining whatever is there is also
         // What makes the queue's back-pressure meaningful — the consumer keeps
         // Up by definition, once per frame.
@@ -195,23 +195,23 @@ export const multiplayerStages = (
         // In this frame. A frame that lands mid-drain is taken next frame, which
         // Is the same "belongs to the frame that saw it" rule mc-render's
         // `render:input` applies to input edges.
-        const frames = yield* Queue.takeAll(transport.inbound)
+        const frames = yield* Queue.clear(transport.inbound)
 
         yield* Effect.forEach(
-          Chunk.toReadonlyArray(frames),
+          frames,
           (frame) =>
-            Either.match(decodeFrame(frame), {
+            Result.match(decodeFrame(frame), {
               // A frame this build cannot read is DROPPED, not retried:
               // `ProtocolError` means the bytes arrived intact and do not mean
               // What this build thinks they mean, so a resend produces the same
               // Bytes (DN-2). What the counter separates is whether the right
               // Response is to drop the frame or the peer (DN-1).
-              onLeft: (error) => countProtocolFailure(state, error),
+              onFailure: (error) => countProtocolFailure(state, error),
               // The transport seam. The host/session adapter drains this queue
               // And applies the message through mc-sim and mx-gameplay.
-              onRight: (message) =>
+              onSuccess: (message) =>
                 Ref.update(state.inbound, (pending) => [...pending, message]).pipe(
-                  Effect.zipRight(
+                  Effect.andThen(
                     Ref.update(state.counters, (current) => ({
                       ...current,
                       received: current.received + COUNTER_INCREMENT,
@@ -265,17 +265,17 @@ export const multiplayerStages = (
         yield* Effect.forEach(
           pending,
           (message) =>
-            Either.match(encodeFrame(message), {
+            Result.match(encodeFrame(message), {
               // A message that will not encode is a LOCAL bug — a branded
               // Invariant was violated on this side — so there is nothing to
               // Resend and nobody to blame for it at the far end. Counted apart
               // From `sendFailed` for that reason.
-              onLeft: () =>
+              onFailure: () =>
                 Ref.update(state.counters, (current) => ({
                   ...current,
                   unencodable: current.unencodable + COUNTER_INCREMENT,
                 })),
-              onRight: (frame) =>
+              onSuccess: (frame) =>
                 transport.send(frame).pipe(
                   Effect.matchEffect({
                     // `TransportError`: the bytes did not get through and the

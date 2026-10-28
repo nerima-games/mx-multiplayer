@@ -58,14 +58,17 @@ import {
   type EntityManagerApi,
   type HotbarServiceApi,
   type InventoryServiceApi,
+  type ItemStackFailure,
+  type PlayerStorageFailure,
   type Vehicle,
   type VehicleServiceApi,
   type VitalsServiceApi,
   EntityId as toSimEntityId,
+  ExhaustionAmount as toSimExhaustionAmount,
   OccupantId as toSimOccupantId,
   VehicleId as toSimVehicleId,
 } from '@nerima-games/mc-sim'
-import { Effect } from 'effect'
+import { Brand, Effect, Schema } from 'effect'
 
 /**
  * What a host must supply for the four command families this file writes
@@ -106,6 +109,8 @@ export type CommandNotWritable = {
 }
 
 export type CommandApplicationOutcome = AuthoritativeCommandResult | CommandNotWritable
+
+type CommandApplicationFailure = ItemStackFailure | PlayerStorageFailure | Schema.SchemaError | Brand.BrandError
 
 type EntityPickupCommand = Extract<AuthoritativeCommand, { readonly _tag: 'EntityPickupCommand' }>
 type PlayerInventoryCommand = Extract<AuthoritativeCommand, { readonly _tag: 'PlayerInventoryCommand' }>
@@ -184,7 +189,7 @@ const inventoryActionUnavailableReason = (
 const writeInventoryAction = (
   inventory: Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'>,
   action: WritableInventoryAction,
-): Effect.Effect<unknown> => {
+): Effect.Effect<unknown, ItemStackFailure | PlayerStorageFailure> => {
   if (action._tag === 'swap-items') {
     return inventory.moveStack(action.source, action.destination)
   }
@@ -208,7 +213,7 @@ const writeInventoryAction = (
  */
 const applySelectSlot =
   (session: AuthoritativeSession, hotbarFor: (player: PlayerId) => Pick<HotbarServiceApi, 'setSelectedSlot'> | undefined) =>
-  (command: PlayerInventoryCommand, action: SelectSlotAction): Effect.Effect<CommandApplicationOutcome> => {
+  (command: PlayerInventoryCommand, action: SelectSlotAction): Effect.Effect<CommandApplicationOutcome, Schema.SchemaError> => {
     const hotbar = hotbarFor(command.player)
     if (hotbar === undefined) {
       return Effect.succeed(session.execute(command, () => ({ accepted: false, reason: 'unauthorized-player' })))
@@ -251,7 +256,7 @@ const applyPlayerInventory =
     ) => Pick<InventoryServiceApi, 'equipFromInventory' | 'moveStack' | 'unequipToInventory'> | undefined,
     hotbarFor: (player: PlayerId) => Pick<HotbarServiceApi, 'setSelectedSlot'> | undefined,
   ) =>
-  (command: PlayerInventoryCommand): Effect.Effect<CommandApplicationOutcome> => {
+  (command: PlayerInventoryCommand): Effect.Effect<CommandApplicationOutcome, CommandApplicationFailure> => {
     const { action } = command
     if (action._tag === 'select-slot') {
       return applySelectSlot(session, hotbarFor)(command, action)
@@ -294,7 +299,7 @@ const EAT_UNAVAILABLE_REASON =
  */
 const applyPlayerVitals =
   (session: AuthoritativeSession, vitalsFor: (player: PlayerId) => VitalsServiceApi | undefined) =>
-  (command: PlayerVitalsCommand): Effect.Effect<CommandApplicationOutcome> => {
+  (command: PlayerVitalsCommand): Effect.Effect<CommandApplicationOutcome, CommandApplicationFailure> => {
     const { action } = command
     if (action !== 'respawn' && action._tag === 'eat') {
       return Effect.succeed({
@@ -321,7 +326,7 @@ const applyPlayerVitals =
         if (action === 'respawn') {
           yield* vitals.respawn
         } else {
-          yield* vitals.addExhaustion(action.amount)
+          yield* vitals.addExhaustion(yield* Effect.fromResult(toSimExhaustionAmount.result(action.amount)))
         }
       }
       return result
@@ -464,7 +469,7 @@ const UNAVAILABLE_REASONS: Record<
  */
 export const applyAuthoritativeCommand =
   <Behaviour>(session: AuthoritativeSession, services: WorldWriteServices<Behaviour>) =>
-  (command: AuthoritativeCommand): Effect.Effect<CommandApplicationOutcome> => {
+  (command: AuthoritativeCommand): Effect.Effect<CommandApplicationOutcome, CommandApplicationFailure> => {
     switch (command._tag) {
       case 'EntityPickupCommand':
         return applyEntityPickup(session, services.entities)(command)

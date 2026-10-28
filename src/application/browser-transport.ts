@@ -420,7 +420,7 @@ const receiveSocketMessage = (
     receiveResumeHandshake(ctx, reconnectAuth, resumeCandidate)
     return
   }
-  Queue.unsafeOffer(ctx.inbound, event.data)
+  Queue.offerUnsafe(ctx.inbound, event.data)
 }
 
 const closeCodeLabel = (event: WebSocketCloseEventLike): string => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Either, Schema, SchemaAST } from 'effect'
+import { Result, Schema, SchemaAST } from 'effect'
 import {
   AuthoritativeCommand,
   AuthoritativeEntityState,
@@ -51,7 +51,7 @@ describe('authoritative protocol schemas', () => {
   })
 
   it('decodes complete reconnect snapshots and every command domain', () => {
-    expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeSnapshot)(snapshot))).toBe(true)
+    expect(Result.isSuccess(Schema.decodeUnknownResult(AuthoritativeSnapshot)(snapshot))).toBe(true)
 
     const commands: ReadonlyArray<AuthoritativeCommand> = [
       command('inventory'),
@@ -73,7 +73,7 @@ describe('authoritative protocol schemas', () => {
       },
     ]
     for (const value of commands) {
-      expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeCommand)(value))).toBe(true)
+      expect(Result.isSuccess(Schema.decodeUnknownResult(AuthoritativeCommand)(value))).toBe(true)
     }
   })
 
@@ -95,18 +95,18 @@ describe('authoritative protocol schemas', () => {
         tamed: true,
       },
     }
-    expect(Either.isRight(Schema.decodeUnknownEither(AuthoritativeEntityState)(entity))).toBe(true)
+    expect(Result.isSuccess(Schema.decodeUnknownResult(AuthoritativeEntityState)(entity))).toBe(true)
   })
 
   it('rejects malformed authoritative values', () => {
     expect(
-      Either.isLeft(
-        Schema.decodeUnknownEither(AuthoritativeSnapshot)({ ...snapshot, revision: -1 }),
+      Result.isFailure(
+        Schema.decodeUnknownResult(AuthoritativeSnapshot)({ ...snapshot, revision: -1 }),
       ),
     ).toBe(true)
     expect(
-      Either.isLeft(
-        Schema.decodeUnknownEither(AuthoritativeCommand)({ ...command('valid'), commandId: '' }),
+      Result.isFailure(
+        Schema.decodeUnknownResult(AuthoritativeCommand)({ ...command('valid'), commandId: '' }),
       ),
     ).toBe(true)
 
@@ -128,7 +128,7 @@ describe('authoritative protocol schemas', () => {
       },
     ]
     for (const value of invalidCommands) {
-      expect(Either.isLeft(Schema.decodeUnknownEither(AuthoritativeCommand)(value))).toBe(true)
+      expect(Result.isFailure(Schema.decodeUnknownResult(AuthoritativeCommand)(value))).toBe(true)
     }
   })
 })

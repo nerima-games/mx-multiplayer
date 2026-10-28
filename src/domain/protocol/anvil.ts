@@ -18,16 +18,16 @@ import { Schema } from 'effect'
 const ANVIL_SLOT_COUNT = 36
 const ANVIL_MAX_NAME_LENGTH = 50
 
-export const AnvilSlotIndex: Schema.filter<Schema.filter<typeof Schema.Number>> = Schema.Number.pipe(
-  Schema.int(),
-  Schema.nonNegative(),
-  Schema.lessThan(ANVIL_SLOT_COUNT),
+export const AnvilSlotIndex: typeof Schema.Number = Schema.Number.pipe(
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isGreaterThanOrEqualTo(0)),
+  Schema.check(Schema.isLessThan(ANVIL_SLOT_COUNT)),
 )
 export type AnvilSlotIndex = typeof AnvilSlotIndex.Type
 
 /** Empty is a legal rename target (clearing a custom name back to the item's default). */
-export const AnvilItemName: Schema.filter<typeof Schema.String> = Schema.String.pipe(
-  Schema.maxLength(ANVIL_MAX_NAME_LENGTH),
+export const AnvilItemName: typeof Schema.String = Schema.String.pipe(
+  Schema.check(Schema.isMaxLength(ANVIL_MAX_NAME_LENGTH)),
 )
 export type AnvilItemName = typeof AnvilItemName.Type
 
@@ -51,8 +51,8 @@ export const AnvilCommand: Schema.TaggedStruct<
 })
 export type AnvilCommand = typeof AnvilCommand.Type
 
-export const AnvilRejectionReason: Schema.Literal<
-  [
+export const AnvilRejectionReason: Schema.Literals<
+  readonly [
     'stale-revision',
     'unauthorized-player',
     'wrong-world',
@@ -62,7 +62,7 @@ export const AnvilRejectionReason: Schema.Literal<
     'missing-iron',
     'insufficient-experience',
   ]
-> = Schema.Literal(
+> = Schema.Literals([
   'stale-revision',
   'unauthorized-player',
   'wrong-world',
@@ -71,7 +71,7 @@ export const AnvilRejectionReason: Schema.Literal<
   'no-change',
   'missing-iron',
   'insufficient-experience',
-)
+])
 export type AnvilRejectionReason = typeof AnvilRejectionReason.Type
 
 export const AnvilCommandAccepted: Schema.TaggedStruct<
@@ -93,10 +93,10 @@ export const AnvilCommandRejected: Schema.TaggedStruct<
 })
 export type AnvilCommandRejected = typeof AnvilCommandRejected.Type
 
-export const AnvilCommandResult: Schema.Union<[typeof AnvilCommandAccepted, typeof AnvilCommandRejected]> = Schema.Union(
+export const AnvilCommandResult: Schema.Union<readonly [typeof AnvilCommandAccepted, typeof AnvilCommandRejected]> = Schema.Union([
   AnvilCommandAccepted,
   AnvilCommandRejected,
-)
+])
 export type AnvilCommandResult = typeof AnvilCommandResult.Type
 
 const AnvilNameEntry: Schema.Struct<{ name: typeof AnvilItemName; slot: typeof AnvilSlotIndex }> = Schema.Struct({
@@ -111,7 +111,7 @@ const AnvilNameEntry: Schema.Struct<{ name: typeof AnvilItemName; slot: typeof A
  */
 export const PlayerAnvilNamesDelta: Schema.TaggedStruct<
   'PlayerAnvilNamesDelta',
-  { names: Schema.Array$<typeof AnvilNameEntry>; player: typeof PlayerId; revision: typeof Revision; world: typeof WorldId }
+  { names: Schema.$Array<typeof AnvilNameEntry>; player: typeof PlayerId; revision: typeof Revision; world: typeof WorldId }
 > = Schema.TaggedStruct('PlayerAnvilNamesDelta', {
   names: Schema.Array(AnvilNameEntry),
   player: PlayerId,
@@ -122,6 +122,6 @@ export type PlayerAnvilNamesDelta = typeof PlayerAnvilNamesDelta.Type
 
 /** Every message this module contributes to the shared `NetworkMessage` union. */
 export const AnvilMessage: Schema.Union<
-  [typeof AnvilCommand, typeof AnvilCommandAccepted, typeof AnvilCommandRejected, typeof PlayerAnvilNamesDelta]
-> = Schema.Union(AnvilCommand, AnvilCommandAccepted, AnvilCommandRejected, PlayerAnvilNamesDelta)
+  readonly [typeof AnvilCommand, typeof AnvilCommandAccepted, typeof AnvilCommandRejected, typeof PlayerAnvilNamesDelta]
+> = Schema.Union([AnvilCommand, AnvilCommandAccepted, AnvilCommandRejected, PlayerAnvilNamesDelta])
 export type AnvilMessage = typeof AnvilMessage.Type

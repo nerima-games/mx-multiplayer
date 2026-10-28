@@ -113,7 +113,7 @@ $ pnpm preview --once --ascii --script --fault future-message --fault-at 1 --vie
 合格したまま残しているチェックも 6 つある（DN-2 / DN-3 / DN-5 / DN-6 / DN-7 とラウンドトリップ）。
 合格したら消すチェックは、コードを 1 回しか検査しない。
 そのうち 3 つはテストにも落としてあり、**うち 2 つはこれまで assertion が無かった**:
-「不正値は**送信側**で落ちる」（DN-5 の主張は `Schema.encodeEither` の性質であって、
+「不正値は**送信側**で落ちる」（DN-5 の主張は `Schema.encodeUnknownResult` の性質であって、
 スキーマの性質ではない）と「知らないフィールドは**無視される**」（DN-6 の前方互換の半分。
 今は `Schema` の既定動作であって決定ではない）。
 

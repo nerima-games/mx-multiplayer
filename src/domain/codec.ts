@@ -31,7 +31,7 @@
  * `NaN` and `Infinity` into `null`, so an unconstrained number would break the
  * round trip at the far end, where the frame is no longer available to debug.
  */
-import { Either, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 import { Frame, NetworkMessage, type NetworkMessage as NetworkMessageType, PROTOCOL_VERSION } from './protocol.js'
 import { ProtocolError } from './errors.js'
 
@@ -42,20 +42,20 @@ import { ProtocolError } from './errors.js'
 export type WireText = string
 
 /** `Frame` viewed through JSON: decoding takes text, encoding produces text. */
-const WireFrame = Schema.parseJson(Frame)
+const WireFrame = Schema.fromJsonString(Frame)
 
 /** The stable envelope decoded before inspecting a version-specific message. */
-const WireEnvelope = Schema.parseJson(
+const WireEnvelope = Schema.fromJsonString(
   // eslint-disable-next-line new-cap
   Schema.Struct({
     message: Schema.Unknown,
-    protocolVersion: Schema.Number.pipe(Schema.int()),
+    protocolVersion: Schema.Number.pipe(Schema.check(Schema.isInt())),
   }),
 )
 
-const decodeWireEnvelope = Schema.decodeUnknownEither(WireEnvelope)
-const decodeNetworkMessage = Schema.decodeUnknownEither(NetworkMessage)
-const encodeWireFrame = Schema.encodeUnknownEither(WireFrame)
+const decodeWireEnvelope = Schema.decodeUnknownResult(WireEnvelope)
+const decodeNetworkMessage = Schema.decodeUnknownResult(NetworkMessage)
+const encodeWireFrame = Schema.encodeUnknownResult(WireFrame)
 
 /**
  * Encode a message at an explicit protocol version.
@@ -67,8 +67,8 @@ const encodeWireFrame = Schema.encodeUnknownEither(WireFrame)
 export const encodeFrameAsVersion = (
   protocolVersion: number,
   message: unknown,
-): Either.Either<WireText, ProtocolError> =>
-  Either.mapLeft(
+): Result.Result<WireText, ProtocolError> =>
+  Result.mapError(
     encodeWireFrame({ message, protocolVersion }),
     (error) =>
       new ProtocolError({
@@ -78,7 +78,7 @@ export const encodeFrameAsVersion = (
   )
 
 /** Encode a runtime value into a frame at this build's protocol version. */
-export const encodeFrame = (message: unknown): Either.Either<WireText, ProtocolError> =>
+export const encodeFrame = (message: unknown): Result.Result<WireText, ProtocolError> =>
   encodeFrameAsVersion(PROTOCOL_VERSION, message)
 
 /**
@@ -96,9 +96,9 @@ export const encodeFrame = (message: unknown): Either.Either<WireText, ProtocolE
  * that version's message schema. Only a supported version reaches the
  * `NetworkMessage` decoder.
  */
-export const decodeFrame = (text: WireText): Either.Either<NetworkMessageType, ProtocolError> =>
-  Either.flatMap(
-    Either.mapLeft(
+export const decodeFrame = (text: WireText): Result.Result<NetworkMessageType, ProtocolError> =>
+  Result.flatMap(
+    Result.mapError(
       decodeWireEnvelope(text),
       (error) =>
         new ProtocolError({
@@ -108,7 +108,7 @@ export const decodeFrame = (text: WireText): Either.Either<NetworkMessageType, P
     ),
     (envelope) => {
       if (envelope.protocolVersion !== PROTOCOL_VERSION) {
-        return Either.left(
+        return Result.fail(
           new ProtocolError({
             detail:
               `peer speaks protocol version ${String(envelope.protocolVersion)}, ` +
@@ -118,7 +118,7 @@ export const decodeFrame = (text: WireText): Either.Either<NetworkMessageType, P
         )
       }
 
-      return Either.mapLeft(
+      return Result.mapError(
         decodeNetworkMessage(envelope.message),
         (error) =>
           new ProtocolError({
