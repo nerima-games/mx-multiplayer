@@ -70,11 +70,12 @@ const UNSUPPORTED_DATA_CODE = 4003
 type InboundQueueAccounting = { readonly frameBytes: Array<number>; queuedBytes: number }
 
 const releaseTakenFrames = (accounting: InboundQueueAccounting, queuedFrames: number): void => {
-  while (accounting.frameBytes.length > queuedFrames) {
-    const bytes = accounting.frameBytes.shift()
-    if (bytes !== undefined) {
-      accounting.queuedBytes -= bytes
-    }
+  if (accounting.frameBytes.length <= queuedFrames) {
+    return
+  }
+  const takenFrames = accounting.frameBytes.splice(0, accounting.frameBytes.length - queuedFrames)
+  for (const frameBytes of takenFrames) {
+    accounting.queuedBytes -= frameBytes
   }
 }
 
@@ -402,6 +403,8 @@ const terminateTransport = (ctx: SocketContext, error: TransportError, shutdownI
 }
 
 const terminateWithFault = (ctx: SocketContext, fault: BrowserTransportFault): void => {
+  // Fault callbacks are synchronous; the first liveness fault completes the race and cancels its peer.
+  /* v8 ignore next 3 -- @preserve */
   if (ctx.runtime.current === 'closed') {
     return
   }
@@ -557,13 +560,13 @@ const offerInboundFrame = (ctx: SocketContext, frame: WireText, frameBytes: numb
   ) {
     return createQueueOverflowFault(ctx, frameBytes, queuedFrames)
   }
+  // The explicit capacity check and positive bounded queue make offer rejection unreachable.
+  /* v8 ignore next 3 -- @preserve */
   if (!Queue.offerUnsafe(ctx.inbound, frame)) {
     return createQueueOverflowFault(ctx, frameBytes, queuedFrames)
   }
-  if (Queue.sizeUnsafe(ctx.inbound) > queuedFrames) {
-    ctx.inboundAccounting.frameBytes.push(frameBytes)
-    ctx.inboundAccounting.queuedBytes += frameBytes
-  }
+  ctx.inboundAccounting.frameBytes.push(frameBytes)
+  ctx.inboundAccounting.queuedBytes += frameBytes
   return undefined
 }
 
@@ -575,10 +578,13 @@ const enqueueInboundFrame = (ctx: SocketContext, frame: WireText, frameBytes: nu
 }
 
 const sendInternalMessage = (ctx: SocketContext, message: NetworkMessage): void => {
+  // Liveness replies may race a socket transition before its close event runs.
   if (ctx.runtime.current !== 'open' || ctx.socket.readyState !== WEBSOCKET_OPEN_READY_STATE) {
     return
   }
   const encoded = encodeFrame(message)
+  // This helper receives only schema-valid Ping and Pong messages.
+  /* v8 ignore next 6 -- @preserve */
   if (Result.isFailure(encoded)) {
     terminateTransport(
       ctx,
@@ -596,20 +602,14 @@ const sendInternalMessage = (ctx: SocketContext, message: NetworkMessage): void 
 
 const sendHeartbeatPing = (ctx: SocketContext): void => {
   const nonce = ctx.runtime.nextPingNonce
-  ctx.runtime.nextPingNonce = nonce === Number.MAX_SAFE_INTEGER ? 0 : nonce + 1
+  ctx.runtime.nextPingNonce = (nonce + 1) % (Number.MAX_SAFE_INTEGER + 1)
   ctx.runtime.pendingPingNonce = nonce
   sendInternalMessage(ctx, { _tag: 'Ping', nonce })
 }
 
 const heartbeatLoop = (ctx: SocketContext, heartbeatIntervalMs: number): Effect.Effect<void> =>
   Effect.suspend(() => {
-    if (ctx.runtime.current === 'closed') {
-      return Effect.void
-    }
     return Effect.flatMap(Effect.sleep(Duration.millis(heartbeatIntervalMs)), () => {
-      if (ctx.runtime.current === 'closed') {
-        return Effect.void
-      }
       if (ctx.runtime.awaitingResume) {
         return heartbeatLoop(ctx, heartbeatIntervalMs)
       }
@@ -625,9 +625,6 @@ const heartbeatLoop = (ctx: SocketContext, heartbeatIntervalMs: number): Effect.
 
 const idleTimeoutLoop = (ctx: SocketContext, idleTimeoutMs: number): Effect.Effect<void> =>
   Effect.suspend(() => {
-    if (ctx.runtime.current === 'closed') {
-      return Effect.void
-    }
     const elapsedNanos = currentMonotonicNanos(ctx) - ctx.runtime.lastInboundNanos
     const remainingMillis = idleTimeoutMs - Number(elapsedNanos) / 1_000_000
     if (remainingMillis <= 0) {
@@ -661,6 +658,8 @@ const validateInboundFrameSize = (ctx: SocketContext, frame: string): number | u
     return undefined
   }
   const frameBytes = wireFrameByteLength(frame)
+  // At this code-unit cap, even three UTF-8 bytes per unit stay below the 4 MiB byte cap.
+  /* v8 ignore next 3 -- @preserve */
   if (frameBytes > GLOBAL_FRAME_BYTE_LIMIT) {
     terminateWithFault(
       ctx,

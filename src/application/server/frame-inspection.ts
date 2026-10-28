@@ -66,7 +66,7 @@ export type InboundFrameInspection =
       readonly byteLength: number | undefined
       readonly error: ProtocolError
       readonly reason: ProtocolError['reason'] | 'missing-message-tag' | 'unknown-message-tag'
-      readonly stage: 'predecode-limit' | 'protocol' | 'tag-after-decode' | 'decode'
+      readonly stage: 'predecode-limit' | 'protocol' | 'tag-predecode' | 'decode'
       readonly tag: string | undefined
     }
 
@@ -108,28 +108,12 @@ const rejectedFrame = ({ byteLength, error, reason = error.reason, stage, tag }:
   tag,
 })
 
-const rejectReplicatedTagFailure = (
-  frame: WireText,
-  byteLength: number,
-  error: ProtocolError,
-): RejectedFrameInspection => {
-  const tag = parseEnvelopeTag(frame)
-  const stage = error.reason === 'unsupported-protocol-version' ? 'protocol' : 'decode'
-  return rejectedFrame({ byteLength, error, stage, tag: tag?._tag === 'Tag' ? tag.tag : undefined })
-}
-
 const rejectDecodeFailure = (
   frame: WireText,
   byteLength: number,
   error: ProtocolError,
 ): RejectedFrameInspection => {
   const parsedTag = parseEnvelopeTag(frame)
-  if (parsedTag?._tag === 'MissingTag') {
-    return rejectedFrame({ byteLength, error, reason: 'missing-message-tag', stage: 'tag-after-decode', tag: undefined })
-  }
-  if (parsedTag?._tag === 'Tag' && !knownMessageTags.has(parsedTag.tag)) {
-    return rejectedFrame({ byteLength, error, reason: 'unknown-message-tag', stage: 'tag-after-decode', tag: parsedTag.tag })
-  }
   return rejectedFrame({ byteLength, error, stage: 'decode', tag: parsedTag?._tag === 'Tag' ? parsedTag.tag : undefined })
 }
 
@@ -148,51 +132,104 @@ const rejectOversizedCodeUnitFrame = (frame: WireText): RejectedFrameInspection 
   })
 }
 
-const rejectDecodedFrameFailure = (
-  frame: WireText,
-  byteLength: number,
-  error: ProtocolError,
-): RejectedFrameInspection => {
+type DecodeFailureOptions = Readonly<{
+  byteLength: number
+  error: ProtocolError
+  frame: WireText
+  replicatedTag: ReplicatedFrameTag | undefined
+}>
+
+const rejectDecodedFrameFailure = ({ frame, byteLength, error, replicatedTag }: DecodeFailureOptions): RejectedFrameInspection => {
   if (error.reason === 'frame-too-large') {
     return rejectedFrame({ byteLength, error, stage: 'predecode-limit', tag: undefined })
   }
-  const inspectedTag = inspectReplicatedFrameTag(frame)
-  if (Result.isFailure(inspectedTag)) {
-    return rejectReplicatedTagFailure(frame, byteLength, inspectedTag.failure)
+  if (replicatedTag !== undefined) {
+    return rejectedFrame({ byteLength, error, stage: 'decode', tag: replicatedTag })
   }
   return rejectDecodeFailure(frame, byteLength, error)
 }
 
-const inspectDecodedFrame = (
-  frame: WireText,
-  owners: ReplicatedOwnerRegistry | undefined,
-  byteLength: number,
-): InboundFrameInspection => {
+type InspectDecodedFrameOptions = Readonly<{
+  byteLength: number
+  frame: WireText
+  owners: ReplicatedOwnerRegistry | undefined
+  replicatedTag: ReplicatedFrameTag | undefined
+}>
+
+const inspectDecodedFrame = ({ frame, owners, byteLength, replicatedTag }: InspectDecodedFrameOptions): InboundFrameInspection => {
   const decoded = decodeFrame(frame, owners)
   if (Result.isFailure(decoded)) {
-    return rejectDecodedFrameFailure(frame, byteLength, decoded.failure)
-  }
-  const inspectedTag = inspectReplicatedFrameTag(frame)
-  if (Result.isFailure(inspectedTag)) {
-    return rejectReplicatedTagFailure(frame, byteLength, inspectedTag.failure)
+    return rejectDecodedFrameFailure({ frame, byteLength, error: decoded.failure, replicatedTag })
   }
   return {
     _tag: 'Accepted',
     byteLength,
     message: decoded.success,
-    replicatedTag: inspectedTag.success,
+    replicatedTag,
     tag: decoded.success._tag,
   }
+}
+
+type PreflightFailureOptions = Readonly<{
+  byteLength: number
+  error: ProtocolError
+  frame: WireText
+}>
+
+const rejectPreflightFailure = ({ frame, byteLength, error }: PreflightFailureOptions): RejectedFrameInspection => {
+  const stage = error.reason === 'unsupported-protocol-version'
+    ? 'protocol'
+    : error.reason === 'frame-too-large'
+      ? 'predecode-limit'
+      : 'decode'
+  const parsedTag = error.reason === 'frame-too-large' ? undefined : parseEnvelopeTag(frame)
+  return rejectedFrame({
+    byteLength,
+    error,
+    stage,
+    tag: parsedTag?._tag === 'Tag' ? parsedTag.tag : undefined,
+  })
+}
+
+const rejectInvalidEnvelopeTag = (
+  parsedTag: ParsedEnvelopeTag | undefined,
+  byteLength: number,
+): RejectedFrameInspection | undefined => {
+  if (parsedTag?._tag === 'MissingTag') {
+    const error = new ProtocolError({ detail: 'message is missing a string _tag', reason: 'malformed-frame' })
+    return rejectedFrame({ byteLength, error, reason: 'missing-message-tag', stage: 'tag-predecode', tag: undefined })
+  }
+  if (parsedTag?._tag === 'Tag' && !knownMessageTags.has(parsedTag.tag)) {
+    const error = new ProtocolError({ detail: `unknown message tag: ${parsedTag.tag}`, reason: 'malformed-frame' })
+    return rejectedFrame({
+      byteLength,
+      error,
+      reason: 'unknown-message-tag',
+      stage: 'tag-predecode',
+      tag: parsedTag.tag,
+    })
+  }
+  return undefined
+}
+
+const inspectBoundedFrame = (
+  frame: WireText,
+  owners?: ReplicatedOwnerRegistry,
+): InboundFrameInspection => {
+  const byteLength = wireFrameByteLength(frame)
+  const preflight = inspectReplicatedFrameTag(frame)
+  if (Result.isFailure(preflight)) {
+    return rejectPreflightFailure({ frame, byteLength, error: preflight.failure })
+  }
+
+  const invalidTag = rejectInvalidEnvelopeTag(parseEnvelopeTag(frame), byteLength)
+  if (invalidTag !== undefined) {
+    return invalidTag
+  }
+  return inspectDecodedFrame({ frame, owners, byteLength, replicatedTag: preflight.success })
 }
 
 export const inspectInboundFrame = (
   frame: WireText,
   owners?: ReplicatedOwnerRegistry,
-): InboundFrameInspection => {
-  const codeUnitFailure = rejectOversizedCodeUnitFrame(frame)
-  if (codeUnitFailure !== undefined) {
-    return codeUnitFailure
-  }
-  const byteLength = wireFrameByteLength(frame)
-  return inspectDecodedFrame(frame, owners, byteLength)
-}
+): InboundFrameInspection => rejectOversizedCodeUnitFrame(frame) ?? inspectBoundedFrame(frame, owners)
