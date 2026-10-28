@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Queue } from 'effect'
+import { Duration, Effect, Queue, Result } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import {
   type BrowserWebSocketTransport,
   type BrowserWebSocketTransportOptions,
@@ -10,6 +11,7 @@ import {
   validateMultiplayerUrl,
 } from '../src/application/browser-transport'
 import type { TransportError } from '../src/domain/errors'
+import { decodeFrame, encodeFrame } from '../src/domain/codec'
 
 // ---------------------------------------------------------------------------
 // Test doubles for the platform surface this file structurally describes.
@@ -40,6 +42,8 @@ type FakeMessageEvent = { readonly data: unknown }
 const READY_STATE_CONNECTING = 0
 const READY_STATE_OPEN = 1
 const READY_STATE_CLOSED = 3
+const TEST_HEARTBEAT_INTERVAL_MS = 30_000
+const TEST_IDLE_TIMEOUT_MS = 120_000
 
 /**
  * Shaped exactly like `WebSocketLike`'s own (private) event map, so
@@ -145,6 +149,8 @@ const openTransport = (
   Effect.gen(function* () {
     const socket = new FakeSocket()
     const transport = yield* makeBrowserWebSocketTransport({
+      heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
+      idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
       socketFactory: () => socket,
       url: 'ws://localhost:9000',
       ...overrides,
@@ -223,7 +229,13 @@ describe('makeBrowserWebSocketTransport construction', () => {
   it.effect('fails when inboundCapacity is not a positive integer (non-integer)', () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        makeBrowserWebSocketTransport({ inboundCapacity: 1.5, socketFactory: () => new FakeSocket(), url: 'ws://localhost' }),
+        makeBrowserWebSocketTransport({
+          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
+          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          inboundCapacity: 1.5,
+          socketFactory: () => new FakeSocket(),
+          url: 'ws://localhost',
+        }),
       )
       expect(exit._tag).toBe('Failure')
     }),
@@ -232,9 +244,53 @@ describe('makeBrowserWebSocketTransport construction', () => {
   it.effect('fails when inboundCapacity is zero', () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        makeBrowserWebSocketTransport({ inboundCapacity: 0, socketFactory: () => new FakeSocket(), url: 'ws://localhost' }),
+        makeBrowserWebSocketTransport({
+          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
+          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          inboundCapacity: 0,
+          socketFactory: () => new FakeSocket(),
+          url: 'ws://localhost',
+        }),
       )
       expect(exit._tag).toBe('Failure')
+    }),
+  )
+
+  it.effect('fails when inboundCapacity exceeds the negotiated maximum', () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        makeBrowserWebSocketTransport({
+          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
+          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          inboundCapacity: 81,
+          socketFactory: () => new FakeSocket(),
+          url: 'ws://localhost',
+        }),
+      )
+      expect(exit._tag).toBe('Failure')
+    }),
+  )
+
+  it.effect('requires positive integer heartbeat and idle intervals', () =>
+    Effect.gen(function* () {
+      const invalidHeartbeat = yield* Effect.exit(
+        makeBrowserWebSocketTransport({
+          heartbeatIntervalMs: 0,
+          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          socketFactory: () => new FakeSocket(),
+          url: 'ws://localhost',
+        }),
+      )
+      const invalidIdleTimeout = yield* Effect.exit(
+        makeBrowserWebSocketTransport({
+          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
+          idleTimeoutMs: 1.5,
+          socketFactory: () => new FakeSocket(),
+          url: 'ws://localhost',
+        }),
+      )
+      expect(invalidHeartbeat._tag).toBe('Failure')
+      expect(invalidIdleTimeout._tag).toBe('Failure')
     }),
   )
 
@@ -249,6 +305,8 @@ describe('makeBrowserWebSocketTransport construction', () => {
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         makeBrowserWebSocketTransport({
+          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
+          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
           socketFactory: () => {
             throw new Error('no socket available')
           },
@@ -256,6 +314,213 @@ describe('makeBrowserWebSocketTransport construction', () => {
         }),
       )
       expect(exit._tag).toBe('Failure')
+    }),
+  )
+})
+
+describe('browser transport ingress safety and liveness', () => {
+  it.effect('closes with a typed queue overflow fault instead of dropping a frame', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport({ inboundCapacity: 1 })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      socket.emitMessage({ data: 'first' })
+      socket.emitMessage({ data: 'second' })
+      expect(transport.fault()).toMatchObject({ _tag: 'InboundQueueOverflow', maxFrames: 1, observedFrames: 2 })
+      expect(transport.state()).toBe('closed')
+      expect(socket.closes.length).toBe(1)
+    }),
+  )
+
+  it.effect('rejects text over the codec code-unit ceiling before scanning UTF-8 bytes', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      socket.emitMessage({ data: 'x'.repeat(1_048_577) })
+      expect(transport.fault()).toMatchObject({ _tag: 'ProtocolError', reason: 'frame-too-large' })
+      expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('closes with a typed frame-rate fault at the burst boundary', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      for (let frame = 0; frame < 81; frame += 1) {
+        socket.emitMessage({ data: `bounded-frame-${frame}` })
+        if (frame < 80) {
+          yield* Queue.take(transport.inbound)
+        }
+      }
+      expect(transport.fault()).toMatchObject({ _tag: 'FrameRateExceeded', burstFrames: 80, observedFrames: 81 })
+      expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('accounts malformed but codec-bounded frames against the UTF-8 byte burst', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      for (let frame = 0; frame < 3; frame += 1) {
+        socket.emitMessage({ data: 'x'.repeat(900_000) })
+        yield* Queue.take(transport.inbound)
+      }
+      socket.emitMessage({ data: 'x'.repeat(786_960) })
+      yield* Queue.take(transport.inbound)
+      socket.emitMessage({ data: 'x' })
+      expect(transport.fault()).toMatchObject({ _tag: 'ByteRateExceeded', burstBytes: 3_486_960 })
+      expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('closes on queued-byte overflow when accepted frames are not drained', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      for (let frame = 0; frame < 4; frame += 1) {
+        if (frame > 0) {
+          yield* TestClock.adjust(Duration.millis(1_000))
+        }
+        socket.emitMessage({ data: 'x'.repeat(900_000) })
+        if (frame < 3) {
+          expect(yield* Queue.size(transport.inbound)).toBe(frame + 1)
+        }
+      }
+      expect(transport.fault()).toMatchObject({
+        _tag: 'InboundQueueOverflow',
+        maxBytes: 3_486_960,
+        observedBytes: 3_600_000,
+        observedFrames: 4,
+      })
+      expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('refills the frame bucket at 25 frames per second', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      for (let frame = 0; frame < 80; frame += 1) {
+        socket.emitMessage({ data: `frame-${frame}` })
+        yield* Queue.take(transport.inbound)
+      }
+      yield* TestClock.adjust(Duration.millis(40))
+      socket.emitMessage({ data: 'one-refilled-frame' })
+      expect(yield* Queue.take(transport.inbound)).toBe('one-refilled-frame')
+      socket.emitMessage({ data: 'next-frame-is-over-rate' })
+      expect(transport.fault()).toMatchObject({ _tag: 'FrameRateExceeded', maxFramesPerSecond: 25 })
+    }),
+  )
+
+  it.effect('answers Ping with a protocol-encoded Pong and consumes liveness messages', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      const ping = encodeFrame({ _tag: 'Ping', nonce: 713 })
+      expect(Result.isSuccess(ping)).toBe(true)
+      if (Result.isFailure(ping)) {
+        return
+      }
+      socket.emitMessage({ data: ping.success })
+      expect(socket.sent).toHaveLength(1)
+      const pong = decodeFrame(socket.sent[0] ?? '')
+      expect(Result.isSuccess(pong)).toBe(true)
+      if (Result.isSuccess(pong)) {
+        expect(pong.success).toStrictEqual({ _tag: 'Pong', nonce: 713 })
+      }
+      expect(yield* Queue.size(transport.inbound)).toBe(0)
+    }),
+  )
+
+  it.effect('sends heartbeat Ping and reports an unanswered Ping at the next interval', () =>
+    Effect.gen(function* () {
+      const intervalMs = 25
+      const { socket, transport } = yield* openTransport({ heartbeatIntervalMs: intervalMs, idleTimeoutMs: 2_000 })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      const heartbeat = decodeFrame(socket.sent[0] ?? '')
+      expect(Result.isSuccess(heartbeat)).toBe(true)
+      if (Result.isFailure(heartbeat)) {
+        return
+      }
+      expect(heartbeat.success._tag).toBe('Ping')
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      expect(transport.fault()).toMatchObject({ _tag: 'HeartbeatTimeout', nonce: 0 })
+      expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('a matching Pong clears the pending heartbeat before the next interval', () =>
+    Effect.gen(function* () {
+      const intervalMs = 25
+      const { socket, transport } = yield* openTransport({ heartbeatIntervalMs: intervalMs, idleTimeoutMs: 2_000 })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      const firstPing = decodeFrame(socket.sent[0] ?? '')
+      expect(Result.isSuccess(firstPing)).toBe(true)
+      if (Result.isFailure(firstPing)) {
+        return
+      }
+      expect(firstPing.success._tag).toBe('Ping')
+      if (firstPing.success._tag !== 'Ping') {
+        return
+      }
+      const pong = encodeFrame({ _tag: 'Pong', nonce: firstPing.success.nonce })
+      expect(Result.isSuccess(pong)).toBe(true)
+      if (Result.isFailure(pong)) {
+        return
+      }
+      socket.emitMessage({ data: pong.success })
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      expect(transport.fault()).toBeUndefined()
+      expect(transport.state()).toBe('open')
+      expect(socket.sent).toHaveLength(2)
+      const secondPing = decodeFrame(socket.sent[1] ?? '')
+      expect(Result.isSuccess(secondPing)).toBe(true)
+      if (Result.isSuccess(secondPing)) {
+        expect(secondPing.success).toMatchObject({ _tag: 'Ping', nonce: 1 })
+      }
+    }),
+  )
+
+  it.effect('closes an idle connection using TestClock time', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport({ heartbeatIntervalMs: 10_000, idleTimeoutMs: 100 })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      yield* TestClock.adjust(Duration.millis(100))
+      expect(transport.fault()).toMatchObject({ _tag: 'IdleTimeout', idleTimeoutMs: 100 })
+      expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('valid inbound activity restarts the idle deadline', () =>
+    Effect.gen(function* () {
+      const idleTimeoutMs = 100
+      const { socket, transport } = yield* openTransport({ heartbeatIntervalMs: 10_000, idleTimeoutMs })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      yield* TestClock.adjust(Duration.millis(75))
+      const ping = encodeFrame({ _tag: 'Ping', nonce: 99 })
+      expect(Result.isSuccess(ping)).toBe(true)
+      if (Result.isFailure(ping)) {
+        return
+      }
+      socket.emitMessage({ data: ping.success })
+      yield* TestClock.adjust(Duration.millis(75))
+      expect(transport.fault()).toBeUndefined()
+      expect(transport.state()).toBe('open')
+      yield* TestClock.adjust(Duration.millis(25))
+      expect(transport.fault()).toMatchObject({ _tag: 'IdleTimeout', idleTimeoutMs })
+      expect(transport.state()).toBe('closed')
     }),
   )
 })
@@ -370,14 +635,15 @@ describe('connection lifecycle (no reconnectAuth)', () => {
     }),
   )
 
-  it.effect('a message whose data is not a string is dropped', () =>
+  it.effect('a non-text message closes with a typed unsupported-data fault', () =>
     Effect.gen(function* () {
       const { socket, transport } = yield* openTransport()
       socket.readyState = READY_STATE_OPEN
       socket.emitOpen()
       socket.emitMessage({ data: 42 })
-      const size = yield* Queue.size(transport.inbound)
-      expect(size).toBe(0)
+      expect(transport.fault()).toStrictEqual({ _tag: 'NonTextFrame' })
+      expect(transport.state()).toBe('closed')
+      expect(socket.closes).toStrictEqual([{ code: 4003, reason: 'NonTextFrame' }])
     }),
   )
 

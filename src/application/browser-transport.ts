@@ -6,8 +6,9 @@
  * lifecycle judgment moved here; the per-message wire formats that the
  * composing app's `multiplayer-shared/*-network.ts` files hand-rolled around
  * this transport belong to `domain/protocol/*.ts` and the shared
- * `NetworkMessage` codec (`domain/codec.ts`), not to this file — a transport
- * Port does not get to know a message tag.
+ * `NetworkMessage` codec (`domain/codec.ts`). This adapter recognizes only
+ * codec-valid Ping/Pong frames for transport liveness; other messages remain
+ * raw `WireText` for the application consumer.
  *
  * ---------------------------------------------------------------------------
  * No `"DOM"` in `lib`, on purpose
@@ -34,11 +35,12 @@
  * What this file is not
  * ---------------------------------------------------------------------------
  *
- * It does not know a single `NetworkMessage` tag. `TransportService` moves
- * `WireText`; `sendMessage` / `receiveMessage` in `domain/transport.ts` own
- * the codec boundary. This file's only judgment is: how to represent a
- * WebSocket connection's states as `TransportError`s to that Port, and when a
- * resume handshake must complete before ordinary traffic may send. The resume
+ * `TransportService` moves `WireText`; `sendMessage` / `receiveMessage` in
+ * `domain/transport.ts` own application decoding. The adapter decodes bounded
+ * ingress once to enforce codec preflight and consume Ping/Pong, then preserves
+ * raw text so the consumer can receive typed protocol failures. Its other
+ * judgments are how to represent WebSocket lifecycle faults and when a resume
+ * handshake must complete before ordinary traffic may send. The resume
  * handshake's `PlayerResume` / `PlayerResumeAccepted` envelope is deliberately
  * NOT a `NetworkMessage` — it authenticates the connection the protocol will
  * run over, so it has to be decodable before a peer has proven which protocol
@@ -46,10 +48,35 @@
  * issuance replaces `multiplayer-server/reconnect-auth.ts`; this file only
  * consumes it.
  */
-import { Effect, Queue } from 'effect'
-import { TransportError } from '../domain/errors.js'
+import { Clock, Deferred, Duration, Effect, Queue, Result } from 'effect'
+import { ProtocolError, TransportError } from '../domain/errors.js'
 import type { TransportService } from '../domain/transport.js'
-import type { WireText } from '../domain/codec.js'
+import { type WireText, decodeFrame, encodeFrame, wireFrameByteLength } from '../domain/codec.js'
+import type { NetworkMessage } from '../domain/protocol.js'
+
+const MAX_INBOUND_CAPACITY = 80
+const DEFAULT_INBOUND_CAPACITY = MAX_INBOUND_CAPACITY
+const INBOUND_BYTE_CAPACITY = 3_486_960
+const FRAME_RATE_PER_SECOND = 25
+const FRAME_RATE_BURST = 80
+const BYTE_RATE_PER_SECOND = 1_089_775
+const BYTE_RATE_BURST = 3_486_960
+const MAX_FRAME_CODE_UNITS = 1_048_576
+const GLOBAL_FRAME_BYTE_LIMIT = 4_194_304
+const POLICY_VIOLATION_CODE = 4008
+const FRAME_TOO_LARGE_CODE = 4009
+const UNSUPPORTED_DATA_CODE = 4003
+
+type InboundQueueAccounting = { readonly frameBytes: Array<number>; queuedBytes: number }
+
+const releaseTakenFrames = (accounting: InboundQueueAccounting, queuedFrames: number): void => {
+  while (accounting.frameBytes.length > queuedFrames) {
+    const bytes = accounting.frameBytes.shift()
+    if (bytes !== undefined) {
+      accounting.queuedBytes -= bytes
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The structural browser surface
@@ -235,6 +262,31 @@ const decodePlayerResumeAccepted = (candidate: Record<string, unknown>): PlayerR
 
 export type WebSocketTransportState = 'closed' | 'connecting' | 'open'
 
+export type BrowserTransportFault =
+  | {
+      readonly _tag: 'InboundQueueOverflow'
+      readonly maxBytes: number
+      readonly maxFrames: number
+      readonly observedBytes: number
+      readonly observedFrames: number
+    }
+  | {
+      readonly _tag: 'FrameRateExceeded'
+      readonly burstFrames: number
+      readonly maxFramesPerSecond: number
+      readonly observedFrames: number
+    }
+  | {
+      readonly _tag: 'ByteRateExceeded'
+      readonly burstBytes: number
+      readonly maxBytesPerSecond: number
+      readonly observedBytes: number
+    }
+  | { readonly _tag: 'IdleTimeout'; readonly idleTimeoutMs: number }
+  | { readonly _tag: 'HeartbeatTimeout'; readonly nonce: number }
+  | { readonly _tag: 'NonTextFrame' }
+  | ProtocolError
+
 export type ReconnectAuthOptions = {
   readonly clearRegistrationToken?: () => void
   readonly loadRegistrationToken?: () => string | undefined
@@ -244,6 +296,10 @@ export type ReconnectAuthOptions = {
 }
 
 export type BrowserWebSocketTransportOptions = {
+  /** Required positive integer interval for transport Ping frames and response deadlines. */
+  readonly heartbeatIntervalMs: number
+  /** Required positive integer receive-idle deadline. */
+  readonly idleTimeoutMs: number
   readonly inboundCapacity?: number
   readonly reconnectAuth?: ReconnectAuthOptions
   /** The caller's real `WebSocket` constructor — see the file header for why this is not read from `globalThis`. */
@@ -253,6 +309,8 @@ export type BrowserWebSocketTransportOptions = {
 
 export type BrowserWebSocketTransport = TransportService & {
   readonly close: Effect.Effect<void>
+  /** The first terminal ingress or liveness fault, if the transport closed for one. */
+  readonly fault: () => BrowserTransportFault | undefined
   readonly isAuthenticated: () => boolean
   readonly state: () => WebSocketTransportState
 }
@@ -269,6 +327,14 @@ type RuntimeState = {
   awaitingResume: boolean
   current: WebSocketTransportState
   disposed: boolean
+  fault: BrowserTransportFault | undefined
+  frameTokens: number
+  byteTokens: number
+  lastRateUpdateNanos: bigint
+  lastInboundNanos: bigint
+  nextPingNonce: number
+  pendingPingNonce: number | undefined
+  livenessStarted: boolean
   handlers?: SocketHandlers
   sentRegistrationToken: boolean
   terminalError: TransportError
@@ -276,16 +342,28 @@ type RuntimeState = {
 
 /** Everything a connection-lifecycle helper needs, bundled so no function here takes more than three parameters. */
 type SocketContext = {
+  readonly clock: Clock.Clock
+  readonly completed: Deferred.Deferred<void>
+  readonly inboundAccounting: InboundQueueAccounting
+  readonly inboundCapacity: number
   readonly inbound: Queue.Queue<WireText>
   readonly runtime: RuntimeState
   readonly socket: WebSocketLike
 }
 
-const createRuntimeState = (reconnectAuth: ReconnectAuthOptions | undefined): RuntimeState => ({
+const createRuntimeState = (reconnectAuth: ReconnectAuthOptions | undefined, nowNanos: bigint): RuntimeState => ({
   authenticated: false,
   awaitingResume: reconnectAuth !== undefined,
   current: 'connecting',
   disposed: false,
+  fault: undefined,
+  frameTokens: FRAME_RATE_BURST,
+  byteTokens: BYTE_RATE_BURST,
+  lastRateUpdateNanos: nowNanos,
+  lastInboundNanos: nowNanos,
+  nextPingNonce: 0,
+  pendingPingNonce: undefined,
+  livenessStarted: false,
   sentRegistrationToken: false,
   terminalError: new TransportError({ detail: 'websocket transport is closed', reason: 'closed' }),
 })
@@ -317,8 +395,30 @@ const terminateTransport = (ctx: SocketContext, error: TransportError, shutdownI
   ctx.runtime.authenticated = false
   ctx.runtime.terminalError = error
   detachSocketListeners(ctx)
+  Effect.runSync(Deferred.succeed(ctx.completed, undefined))
   if (shutdownInbound) {
     Effect.runSync(Queue.shutdown(ctx.inbound))
+  }
+}
+
+const terminateWithFault = (ctx: SocketContext, fault: BrowserTransportFault): void => {
+  if (ctx.runtime.current === 'closed') {
+    return
+  }
+  ctx.runtime.fault = fault
+  const isOversizedFrame = fault._tag === 'ProtocolError' && fault.reason === 'frame-too-large'
+  const isNonTextFrame = fault._tag === 'NonTextFrame'
+  const detail = fault._tag === 'ProtocolError' ? fault.detail : `websocket transport fault: ${fault._tag}`
+  terminateTransport(ctx, new TransportError({ detail, reason: 'closed' }), true)
+  try {
+    const closeCode = isOversizedFrame
+      ? FRAME_TOO_LARGE_CODE
+      : isNonTextFrame
+        ? UNSUPPORTED_DATA_CODE
+        : POLICY_VIOLATION_CODE
+    ctx.socket.close(closeCode, fault._tag)
+  } catch {
+    // The typed fault remains observable even if the peer has already closed the socket.
   }
 }
 
@@ -407,20 +507,272 @@ const resolveResumeCandidate = (
   return parseResumeCandidate(frame)
 }
 
+const currentMonotonicNanos = (ctx: SocketContext): bigint => ctx.clock.monotonicTimeNanosUnsafe()
+
+const refillRateBuckets = (ctx: SocketContext, nowNanos: bigint): void => {
+  const elapsedNanos = nowNanos > ctx.runtime.lastRateUpdateNanos ? nowNanos - ctx.runtime.lastRateUpdateNanos : 0n
+  const elapsedSeconds = Number(elapsedNanos) / 1_000_000_000
+  ctx.runtime.frameTokens = Math.min(FRAME_RATE_BURST, ctx.runtime.frameTokens + elapsedSeconds * FRAME_RATE_PER_SECOND)
+  ctx.runtime.byteTokens = Math.min(BYTE_RATE_BURST, ctx.runtime.byteTokens + elapsedSeconds * BYTE_RATE_PER_SECOND)
+  ctx.runtime.lastRateUpdateNanos = nowNanos
+}
+
+const consumeRateBudget = (ctx: SocketContext, frameBytes: number, nowNanos: bigint): BrowserTransportFault | undefined => {
+  refillRateBuckets(ctx, nowNanos)
+  if (ctx.runtime.frameTokens < 1) {
+    return {
+      _tag: 'FrameRateExceeded',
+      burstFrames: FRAME_RATE_BURST,
+      maxFramesPerSecond: FRAME_RATE_PER_SECOND,
+      observedFrames: Math.ceil(FRAME_RATE_BURST - ctx.runtime.frameTokens + 1),
+    }
+  }
+  if (ctx.runtime.byteTokens < frameBytes) {
+    return {
+      _tag: 'ByteRateExceeded',
+      burstBytes: BYTE_RATE_BURST,
+      maxBytesPerSecond: BYTE_RATE_PER_SECOND,
+      observedBytes: Math.ceil(BYTE_RATE_BURST - ctx.runtime.byteTokens + frameBytes),
+    }
+  }
+  ctx.runtime.frameTokens -= 1
+  ctx.runtime.byteTokens -= frameBytes
+  return undefined
+}
+
+const createQueueOverflowFault = (ctx: SocketContext, frameBytes: number, queuedFrames: number): BrowserTransportFault => ({
+  _tag: 'InboundQueueOverflow',
+  maxBytes: INBOUND_BYTE_CAPACITY,
+  maxFrames: ctx.inboundCapacity,
+  observedBytes: ctx.inboundAccounting.queuedBytes + frameBytes,
+  observedFrames: queuedFrames + 1,
+})
+
+const offerInboundFrame = (ctx: SocketContext, frame: WireText, frameBytes: number): BrowserTransportFault | undefined => {
+  const queuedFrames = Queue.sizeUnsafe(ctx.inbound)
+  releaseTakenFrames(ctx.inboundAccounting, queuedFrames)
+  if (
+    queuedFrames >= ctx.inboundCapacity ||
+    ctx.inboundAccounting.queuedBytes + frameBytes > INBOUND_BYTE_CAPACITY
+  ) {
+    return createQueueOverflowFault(ctx, frameBytes, queuedFrames)
+  }
+  if (!Queue.offerUnsafe(ctx.inbound, frame)) {
+    return createQueueOverflowFault(ctx, frameBytes, queuedFrames)
+  }
+  if (Queue.sizeUnsafe(ctx.inbound) > queuedFrames) {
+    ctx.inboundAccounting.frameBytes.push(frameBytes)
+    ctx.inboundAccounting.queuedBytes += frameBytes
+  }
+  return undefined
+}
+
+const enqueueInboundFrame = (ctx: SocketContext, frame: WireText, frameBytes: number): void => {
+  const overflow = offerInboundFrame(ctx, frame, frameBytes)
+  if (overflow !== undefined) {
+    terminateWithFault(ctx, overflow)
+  }
+}
+
+const sendInternalMessage = (ctx: SocketContext, message: NetworkMessage): void => {
+  if (ctx.runtime.current !== 'open' || ctx.socket.readyState !== WEBSOCKET_OPEN_READY_STATE) {
+    return
+  }
+  const encoded = encodeFrame(message)
+  if (Result.isFailure(encoded)) {
+    terminateTransport(
+      ctx,
+      new TransportError({ detail: `websocket internal message could not be encoded: ${encoded.failure.detail}`, reason: 'send-failed' }),
+      false,
+    )
+    return
+  }
+  try {
+    ctx.socket.send(encoded.success)
+  } catch (cause) {
+    terminateTransport(ctx, new TransportError({ detail: `websocket send failed: ${String(cause)}`, reason: 'send-failed' }), false)
+  }
+}
+
+const sendHeartbeatPing = (ctx: SocketContext): void => {
+  const nonce = ctx.runtime.nextPingNonce
+  ctx.runtime.nextPingNonce = nonce === Number.MAX_SAFE_INTEGER ? 0 : nonce + 1
+  ctx.runtime.pendingPingNonce = nonce
+  sendInternalMessage(ctx, { _tag: 'Ping', nonce })
+}
+
+const heartbeatLoop = (ctx: SocketContext, heartbeatIntervalMs: number): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    if (ctx.runtime.current === 'closed') {
+      return Effect.void
+    }
+    return Effect.flatMap(Effect.sleep(Duration.millis(heartbeatIntervalMs)), () => {
+      if (ctx.runtime.current === 'closed') {
+        return Effect.void
+      }
+      if (ctx.runtime.awaitingResume) {
+        return heartbeatLoop(ctx, heartbeatIntervalMs)
+      }
+      const pendingNonce = ctx.runtime.pendingPingNonce
+      if (pendingNonce !== undefined) {
+        terminateWithFault(ctx, { _tag: 'HeartbeatTimeout', nonce: pendingNonce })
+        return Effect.void
+      }
+      sendHeartbeatPing(ctx)
+      return heartbeatLoop(ctx, heartbeatIntervalMs)
+    })
+  })
+
+const idleTimeoutLoop = (ctx: SocketContext, idleTimeoutMs: number): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    if (ctx.runtime.current === 'closed') {
+      return Effect.void
+    }
+    const elapsedNanos = currentMonotonicNanos(ctx) - ctx.runtime.lastInboundNanos
+    const remainingMillis = idleTimeoutMs - Number(elapsedNanos) / 1_000_000
+    if (remainingMillis <= 0) {
+      terminateWithFault(ctx, { _tag: 'IdleTimeout', idleTimeoutMs })
+      return Effect.void
+    }
+    const sleepMillis = Math.max(1, Math.ceil(remainingMillis))
+    return Effect.flatMap(Effect.sleep(Duration.millis(sleepMillis)), () => idleTimeoutLoop(ctx, idleTimeoutMs))
+  })
+
+const startLiveness = (ctx: SocketContext, options: BrowserWebSocketTransportOptions): void => {
+  if (ctx.runtime.livenessStarted) {
+    return
+  }
+  ctx.runtime.livenessStarted = true
+  const heartbeat = Effect.raceFirst(heartbeatLoop(ctx, options.heartbeatIntervalMs), Deferred.await(ctx.completed))
+  const idleTimeout = Effect.raceFirst(idleTimeoutLoop(ctx, options.idleTimeoutMs), Deferred.await(ctx.completed))
+  Effect.runFork(Effect.provideService(heartbeat, Clock.Clock, ctx.clock))
+  Effect.runFork(Effect.provideService(idleTimeout, Clock.Clock, ctx.clock))
+}
+
+const validateInboundFrameSize = (ctx: SocketContext, frame: string): number | undefined => {
+  if (frame.length > MAX_FRAME_CODE_UNITS) {
+    terminateWithFault(
+      ctx,
+      new ProtocolError({
+        detail: `frame exceeds the ${MAX_FRAME_CODE_UNITS}-code-unit transport ceiling`,
+        reason: 'frame-too-large',
+      }),
+    )
+    return undefined
+  }
+  const frameBytes = wireFrameByteLength(frame)
+  if (frameBytes > GLOBAL_FRAME_BYTE_LIMIT) {
+    terminateWithFault(
+      ctx,
+      new ProtocolError({ detail: `frame exceeds the ${GLOBAL_FRAME_BYTE_LIMIT}-byte transport ceiling`, reason: 'frame-too-large' }),
+    )
+    return undefined
+  }
+  return frameBytes
+}
+
+const acceptRateBudget = (ctx: SocketContext, frameBytes: number): boolean => {
+  const rateFault = consumeRateBudget(ctx, frameBytes, currentMonotonicNanos(ctx))
+  if (rateFault === undefined) {
+    return true
+  }
+  terminateWithFault(ctx, rateFault)
+  return false
+}
+
+type PreparedInboundFrame = { readonly frame: string; readonly frameBytes: number }
+
+const prepareInboundFrame = (event: WebSocketMessageEventLike, ctx: SocketContext): PreparedInboundFrame | undefined => {
+  if (ctx.runtime.current !== 'open') {
+    return undefined
+  }
+  if (typeof event.data !== 'string') {
+    terminateWithFault(ctx, { _tag: 'NonTextFrame' })
+    return undefined
+  }
+  const frameBytes = validateInboundFrameSize(ctx, event.data)
+  if (frameBytes === undefined || !acceptRateBudget(ctx, frameBytes)) {
+    return undefined
+  }
+  return { frame: event.data, frameBytes }
+}
+
+const consumeResumeCandidate = (
+  ctx: SocketContext,
+  reconnectAuth: ReconnectAuthOptions | undefined,
+  frame: string,
+): boolean => {
+  const candidate = resolveResumeCandidate(reconnectAuth, frame)
+  if (candidate === undefined || reconnectAuth === undefined) {
+    return false
+  }
+  const accepted = decodePlayerResumeAccepted(candidate)
+  receiveResumeHandshake(ctx, reconnectAuth, candidate)
+  if (accepted !== undefined && accepted.player === reconnectAuth.playerId && ctx.runtime.current === 'open' && ctx.runtime.authenticated) {
+    ctx.runtime.lastInboundNanos = currentMonotonicNanos(ctx)
+  }
+  return true
+}
+
+const clearPendingHeartbeat = (ctx: SocketContext, nonce: number): void => {
+  if (ctx.runtime.pendingPingNonce === nonce) {
+    ctx.runtime.pendingPingNonce = undefined
+  }
+}
+
+const consumeLivenessMessage = (ctx: SocketContext, decoded: ReturnType<typeof decodeFrame>): boolean => {
+  if (Result.isFailure(decoded)) {
+    return false
+  }
+  ctx.runtime.lastInboundNanos = currentMonotonicNanos(ctx)
+  if (decoded.success._tag === 'Ping') {
+    sendInternalMessage(ctx, { _tag: 'Pong', nonce: decoded.success.nonce })
+    return true
+  }
+  if (decoded.success._tag === 'Pong') {
+    clearPendingHeartbeat(ctx, decoded.success.nonce)
+    return true
+  }
+  return false
+}
+
+const decodeInboundFrame = (ctx: SocketContext, frame: string): ReturnType<typeof decodeFrame> | undefined => {
+  const decoded = decodeFrame(frame)
+  if (Result.isFailure(decoded) && decoded.failure.reason === 'frame-too-large') {
+    terminateWithFault(ctx, decoded.failure)
+    return undefined
+  }
+  return decoded
+}
+
+const handlePreparedInboundFrame = (
+  ctx: SocketContext,
+  reconnectAuth: ReconnectAuthOptions | undefined,
+  prepared: PreparedInboundFrame,
+): void => {
+  const decoded = decodeInboundFrame(ctx, prepared.frame)
+  if (decoded === undefined) {
+    return
+  }
+  if (consumeResumeCandidate(ctx, reconnectAuth, prepared.frame)) {
+    return
+  }
+  if (consumeLivenessMessage(ctx, decoded)) {
+    return
+  }
+  enqueueInboundFrame(ctx, prepared.frame, prepared.frameBytes)
+}
+
 const receiveSocketMessage = (
   event: WebSocketMessageEventLike,
   ctx: SocketContext,
   reconnectAuth: ReconnectAuthOptions | undefined,
 ): void => {
-  if (ctx.runtime.current !== 'open' || typeof event.data !== 'string') {
+  const prepared = prepareInboundFrame(event, ctx)
+  if (prepared === undefined) {
     return
   }
-  const resumeCandidate = resolveResumeCandidate(reconnectAuth, event.data)
-  if (resumeCandidate !== undefined && reconnectAuth !== undefined) {
-    receiveResumeHandshake(ctx, reconnectAuth, resumeCandidate)
-    return
-  }
-  Queue.offerUnsafe(ctx.inbound, event.data)
+  handlePreparedInboundFrame(ctx, reconnectAuth, prepared)
 }
 
 const closeCodeLabel = (event: WebSocketCloseEventLike): string => {
@@ -441,7 +793,13 @@ const closeDetail = (event: WebSocketCloseEventLike): string =>
   `websocket closed (${closeCodeLabel(event)}: ${closeReasonLabel(event)})`
 
 const createSocketHandlers = (ctx: SocketContext, options: BrowserWebSocketTransportOptions): SocketHandlers => {
-  const handleOpen = (): void => beginConnection(ctx, options.reconnectAuth)
+  const handleOpen = (): void => {
+    beginConnection(ctx, options.reconnectAuth)
+    if (ctx.runtime.current === 'open') {
+      ctx.runtime.lastInboundNanos = currentMonotonicNanos(ctx)
+      startLiveness(ctx, options)
+    }
+  }
   const handleMessage = (event: WebSocketMessageEventLike): void =>
     receiveSocketMessage(event, ctx, options.reconnectAuth)
   const handleClose = (event: WebSocketCloseEventLike): void =>
@@ -511,17 +869,19 @@ const makeClose = (ctx: SocketContext): Effect.Effect<void> =>
     }
   })
 
-/** A positive `inboundCapacity` floor: zero would make every inbound frame block forever. */
-const MIN_INBOUND_CAPACITY = 1
-/** The original compose adapter's default queue depth, kept for behavioural parity. */
-const DEFAULT_INBOUND_CAPACITY = 256
+const validatePositiveConfig = (name: string, value: number): TransportError | undefined => {
+  if (Number.isSafeInteger(value) && value > 0) {
+    return undefined
+  }
+  return new TransportError({ detail: `${name} must be a positive safe integer, received ${String(value)}`, reason: 'not-connected' })
+}
 
 const validateInboundCapacity = (capacity: number): TransportError | undefined => {
-  if (Number.isInteger(capacity) && capacity >= MIN_INBOUND_CAPACITY) {
+  if (Number.isSafeInteger(capacity) && capacity > 0 && capacity <= MAX_INBOUND_CAPACITY) {
     return undefined
   }
   return new TransportError({
-    detail: `inboundCapacity must be a positive integer, received ${String(capacity)}`,
+    detail: `inboundCapacity must be a positive integer no greater than ${MAX_INBOUND_CAPACITY}, received ${String(capacity)}`,
     reason: 'not-connected',
   })
 }
@@ -537,6 +897,7 @@ const startTransport = (ctx: SocketContext, options: BrowserWebSocketTransportOp
   attachSocketListeners(ctx.socket, handlers)
   return {
     close: makeClose(ctx),
+    fault: () => ctx.runtime.fault,
     inbound: ctx.inbound,
     isAuthenticated: () => ctx.runtime.authenticated,
     send: makeSend(ctx),
@@ -544,25 +905,46 @@ const startTransport = (ctx: SocketContext, options: BrowserWebSocketTransportOp
   }
 }
 
+const validateBrowserTransportConfig = (options: BrowserWebSocketTransportOptions): Effect.Effect<number, TransportError> =>
+  Effect.gen(function* () {
+    const capacity = options.inboundCapacity ?? DEFAULT_INBOUND_CAPACITY
+    const errors = [
+      validateInboundCapacity(capacity),
+      validatePositiveConfig('heartbeatIntervalMs', options.heartbeatIntervalMs),
+      validatePositiveConfig('idleTimeoutMs', options.idleTimeoutMs),
+    ]
+    const firstError = errors.find((error) => error !== undefined)
+    if (firstError !== undefined) {
+      return yield* Effect.fail(firstError)
+    }
+    return capacity
+  })
+
 /**
  * A `TransportPort` implementation over a real WebSocket.
  *
- * `inbound` carries `WireText` only — no message ever bypasses
- * `domain/codec.ts`. A `reconnectAuth` option gates ordinary sends behind a
- * `PlayerResume` / `PlayerResumeAccepted` handshake completing first, so a
- * frame cannot leak onto an unauthenticated connection.
+ * `inbound` carries raw `WireText` after bounded codec preflight. Ping/Pong are
+ * consumed for transport liveness; other protocol failures remain visible to
+ * `receiveMessage`. A `reconnectAuth` option gates ordinary sends behind a
+ * `PlayerResume` / `PlayerResumeAccepted` handshake completing first.
  */
 export const makeBrowserWebSocketTransport = (
   options: BrowserWebSocketTransportOptions,
 ): Effect.Effect<BrowserWebSocketTransport, TransportError> =>
   Effect.gen(function* () {
-    const capacity = options.inboundCapacity ?? DEFAULT_INBOUND_CAPACITY
-    const capacityError = validateInboundCapacity(capacity)
-    if (capacityError !== undefined) {
-      return yield* Effect.fail(capacityError)
-    }
-    const inbound = yield* Queue.unbounded<WireText>()
+    const capacity = yield* validateBrowserTransportConfig(options)
+    const inbound = yield* Queue.bounded<WireText>(capacity)
+    const completed = yield* Deferred.make<void>()
+    const clock = yield* Clock.Clock
     const socket = yield* openSocket(options)
-    const ctx: SocketContext = { inbound, runtime: createRuntimeState(options.reconnectAuth), socket }
+    const ctx: SocketContext = {
+      clock,
+      completed,
+      inboundAccounting: { frameBytes: [], queuedBytes: 0 },
+      inboundCapacity: capacity,
+      inbound,
+      runtime: createRuntimeState(options.reconnectAuth, clock.monotonicTimeNanosUnsafe()),
+      socket,
+    }
     return startTransport(ctx, options)
   })
