@@ -1,6 +1,16 @@
 import { describe, expect, it } from '@effect/vitest'
+import * as fc from 'fast-check'
+import { WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { makeReplicatedOwnerId, type ReplicatedOwnerRegistration } from '@nerima-games/mc-sim'
 import { Effect, Result, Option, Schema } from 'effect'
-import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
+import {
+  createReplicatedOwnerRegistry,
+  decodeFrame,
+  encodeFrame,
+  encodeFrameAsVersion,
+  inspectReplicatedFrameTag,
+  wireFrameByteLength,
+} from '../src/domain/codec'
 import type { ProtocolError } from '../src/domain/errors'
 import {
   CommandId,
@@ -8,11 +18,16 @@ import {
   EntityId,
   MESSAGE_TAGS,
   NetherPortalUseCommand,
-  type NetworkMessage,
+  NetworkMessage,
   PROTOCOL_VERSION,
   PlayerId,
   PlayerName,
   RealmTransferSnapshot,
+  ReplicatedWorldDeltaMessage,
+  ReplicatedWorldSnapshot,
+  ReplicatedWorldSnapshotChunk,
+  ReplicatedWorldSnapshotEnd,
+  ReplicatedWorldSnapshotStart,
   WorldId,
   WorldTimeWeatherAction,
 } from '../src/domain/protocol'
@@ -36,18 +51,57 @@ const living = {
 const itemDrop = { _tag: 'item-drop' as const, ageTicks: 1, at: { x: 2, y: 64, z: 1 }, entityId: EntityId.make('drop-1'), stack: item }
 const arrow = { _tag: 'arrow' as const, ageTicks: 2, at: { x: 2, y: 65, z: 1 }, damage: 4, entityId: EntityId.make('arrow-1'), owner: alice, velocity: { x: 0, y: 0.1, z: 1 } }
 const primedTnt = { _tag: 'primed-tnt' as const, at: { x: 3, y: 64, z: 1 }, burnedSecs: 1.5, entityId: EntityId.make('tnt-1'), owner: alice }
+const replicatedWorldRevision = Result.getOrThrow(Schema.decodeUnknownResult(WorldRevisionSchema)(13))
+const emptyWorldDelta = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
+  _tag: 'ReplicatedWorldDelta',
+  world: overworld,
+  revision: replicatedWorldRevision,
+  changes: [],
+  blockChanges: [],
+}))
+const emptyWorldSnapshot = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshot)({
+  _tag: 'ReplicatedWorldSnapshot',
+  world: overworld,
+  revision: replicatedWorldRevision,
+  owners: [],
+  blocks: [],
+}))
+const snapshotStart = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshotStart)({
+  _tag: 'ReplicatedWorldSnapshotStart',
+  transferId: 'transfer-1',
+  world: overworld,
+  revision: replicatedWorldRevision,
+  totalBytes: 1,
+  chunkCount: 1,
+  sha256: '0'.repeat(64),
+}))
+const snapshotChunk = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshotChunk)({
+  _tag: 'ReplicatedWorldSnapshotChunk',
+  transferId: 'transfer-1',
+  index: 0,
+  data: 'AQ==',
+}))
+const snapshotEnd = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshotEnd)({
+  _tag: 'ReplicatedWorldSnapshotEnd',
+  transferId: 'transfer-1',
+}))
 
 /**
  * One sample per message tag. `SAMPLES` is keyed by tag so that the
  * exhaustiveness test below can prove no message escapes the round-trip check.
  */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
+  ReplicatedWorldDelta: emptyWorldDelta,
+  ReplicatedWorldSnapshot: emptyWorldSnapshot,
+  ReplicatedWorldSnapshotStart: snapshotStart,
+  ReplicatedWorldSnapshotChunk: snapshotChunk,
+  ReplicatedWorldSnapshotEnd: snapshotEnd,
   AnvilCommand: { _tag: 'AnvilCommand', ...commandHeader, name: 'Excalibur', slot: 0 },
   AnvilCommandAccepted: { _tag: 'AnvilCommandAccepted', commandId, revision: 13 },
   AnvilCommandRejected: { _tag: 'AnvilCommandRejected', commandId, reason: 'missing-iron', revision: 12 },
   AuthoritativeCommandAccepted: { _tag: 'AuthoritativeCommandAccepted', commandId, revision: 13, world: overworld },
   AuthoritativeCommandRejected: { _tag: 'AuthoritativeCommandRejected', commandId, reason: 'stale-revision', resyncRequired: true, revision: 12, world: overworld },
-  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', lastKnownRevision: 12, world: overworld },
+  AuthoritativeResyncRequest: { _tag: 'AuthoritativeResyncRequest', lastKnownRevision: replicatedWorldRevision, world: overworld },
   AuthoritativeSnapshot: {
     _tag: 'AuthoritativeSnapshot', containers: [], entities: [living, itemDrop, arrow, primedTnt], furnaces: [], inventories: [{ player: alice, state: { slots: [item], selectedSlot: 0 } }], revision: 12, timeWeather: { timeOfDay: 6000, weather: 'clear' }, villagerTrades: [], vitals: [{ player: alice, state: { health: 20, hunger: 20, experience: 1 } }], world: overworld,
   },
@@ -217,7 +271,24 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', revision: 13, state: { timeOfDay: 7000, weather: 'rain' }, world: overworld },
 }
 
-const encoded = (message: NetworkMessage): string => Result.getOrThrow(encodeFrame(message))
+const EMPTY_OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([]))
+const OWNER_STATE_SCHEMA = Schema.Struct({ count: Schema.Number.pipe(Schema.check(Schema.isInt())) })
+const OWNER_ID = makeReplicatedOwnerId('codec-owner')
+const OWNER_REGISTRATION: ReplicatedOwnerRegistration<typeof OWNER_STATE_SCHEMA> = {
+  ownerId: OWNER_ID,
+  schema: OWNER_STATE_SCHEMA,
+  initialState: { count: 0 },
+}
+const OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([OWNER_REGISTRATION]))
+const OWNER_DELTA = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
+  _tag: 'ReplicatedWorldDelta',
+  world: overworld,
+  revision: replicatedWorldRevision,
+  changes: [{ owner: OWNER_ID, state: { count: 1 } }],
+  blockChanges: [],
+}))
+const OWNER_SNAPSHOT = { ...emptyWorldSnapshot, owners: [{ owner: OWNER_ID, state: { count: 1 } }] }
+const encoded = (message: NetworkMessage): string => Result.getOrThrow(encodeFrame(message, EMPTY_OWNER_REGISTRY))
 
 /** The ProtocolError a decode produced, or undefined if it succeeded. */
 const failure = (result: Result.Result<unknown, ProtocolError>): ProtocolError | undefined =>
@@ -232,7 +303,7 @@ describe('frame round trip', () => {
     Effect.sync(() => {
       for (const tag of MESSAGE_TAGS) {
         const original = SAMPLES[tag]
-        const result = decodeFrame(encoded(original))
+        const result = decodeFrame(encoded(original), EMPTY_OWNER_REGISTRY)
         expect(Result.isSuccess(result), `${tag} failed to decode`).toBe(true)
         expect(Result.getOrThrow(result)).toStrictEqual(original)
       }
@@ -335,6 +406,224 @@ describe('frame round trip', () => {
     Effect.sync(() => {
       const chat = decodeFrame(encoded(SAMPLES.Chat))
       expect(Result.getOrThrow(chat)).toStrictEqual(SAMPLES.Chat)
+    }),
+  )
+})
+
+describe('registered C4 owner messages', () => {
+  it.effect('round-trips registered states and accepts an empty owner registry for empty groups', () =>
+    Effect.sync(() => {
+      const encodedOwner = Result.getOrThrow(encodeFrame(OWNER_DELTA, OWNER_REGISTRY))
+      expect(Result.getOrThrow(decodeFrame(encodedOwner, OWNER_REGISTRY))).toStrictEqual(OWNER_DELTA)
+      const encodedSnapshot = Result.getOrThrow(encodeFrame(OWNER_SNAPSHOT, OWNER_REGISTRY))
+      expect(Result.getOrThrow(decodeFrame(encodedSnapshot, OWNER_REGISTRY))).toStrictEqual(OWNER_SNAPSHOT)
+      expect(Result.getOrThrow(decodeFrame(encoded(emptyWorldDelta), EMPTY_OWNER_REGISTRY))).toStrictEqual(emptyWorldDelta)
+    }),
+  )
+
+  it.effect('requires a registry for C4 messages even when their owner list is empty', () =>
+    Effect.sync(() => {
+      expect(failure(decodeFrame(encoded(emptyWorldDelta)))?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it.effect('rejects duplicate registrations, unknown owners, duplicate changes, and invalid owner state', () =>
+    Effect.sync(() => {
+      const duplicateRegistry = createReplicatedOwnerRegistry([OWNER_REGISTRATION, OWNER_REGISTRATION])
+      expect(failure(duplicateRegistry)?.reason).toBe('malformed-frame')
+
+      const unknownOwner = {
+        ...OWNER_DELTA,
+        changes: [{ owner: makeReplicatedOwnerId('unknown-owner'), state: { count: 2 } }],
+      }
+      const duplicateChanges = {
+        ...OWNER_DELTA,
+        changes: [
+          { owner: OWNER_ID, state: { count: 2 } },
+          { owner: OWNER_ID, state: { count: 3 } },
+        ],
+      }
+      const invalidState = {
+        ...OWNER_DELTA,
+        changes: [{ owner: OWNER_ID, state: { count: 2, extra: true } }],
+      }
+      const frameFor = (message: unknown) => JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+
+      expect(failure(decodeFrame(frameFor(unknownOwner), OWNER_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(decodeFrame(frameFor(duplicateChanges), OWNER_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(decodeFrame(frameFor(invalidState), OWNER_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(encodeFrame(invalidState, OWNER_REGISTRY))?.reason).toBe('unencodable-message')
+    }),
+  )
+
+  it.effect('rejects extra fields in v10 C4 messages and the version envelope', () =>
+    Effect.sync(() => {
+      const c4ExtraField = JSON.stringify({
+        message: { ...emptyWorldDelta, future: true },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      const envelopeExtraField = JSON.stringify({
+        message: { _tag: 'Ping', nonce: 1 },
+        protocolVersion: PROTOCOL_VERSION,
+        future: true,
+      })
+
+      expect(failure(decodeFrame(c4ExtraField, EMPTY_OWNER_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(decodeFrame(envelopeExtraField))?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it.effect('identifies a supported C4 envelope before rejecting its invalid message body', () =>
+    Effect.sync(() => {
+      const malformedDelta = JSON.stringify({
+        message: { _tag: 'ReplicatedWorldDelta', revision: 'wrong' },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+
+      const tag = inspectReplicatedFrameTag(malformedDelta)
+      expect(Result.isSuccess(tag)).toBe(true)
+      expect(Result.isSuccess(decodeFrame(malformedDelta, EMPTY_OWNER_REGISTRY))).toBe(false)
+      if (Result.isSuccess(tag)) {
+        expect(tag.success).toBe('ReplicatedWorldDelta')
+      }
+
+      for (const c4Tag of [
+        'ReplicatedWorldDelta',
+        'ReplicatedWorldSnapshot',
+        'ReplicatedWorldSnapshotStart',
+        'ReplicatedWorldSnapshotChunk',
+        'ReplicatedWorldSnapshotEnd',
+      ] as const) {
+        const validFrame = encoded(SAMPLES[c4Tag])
+        const inspectedTag = inspectReplicatedFrameTag(validFrame)
+        expect(Result.isSuccess(inspectedTag)).toBe(true)
+        if (Result.isSuccess(inspectedTag)) {
+          expect(inspectedTag.success).toBe(c4Tag)
+        }
+      }
+    }),
+  )
+
+  it.effect('does not classify unrelated, malformed-envelope, or unsupported-version frames as C4', () =>
+    Effect.sync(() => {
+      const ordinary = JSON.stringify({ message: SAMPLES.Ping, protocolVersion: PROTOCOL_VERSION })
+      const malformedEnvelope = JSON.stringify({ message: emptyWorldDelta, protocolVersion: PROTOCOL_VERSION, extra: true })
+      const oldVersion = JSON.stringify({ message: emptyWorldDelta, protocolVersion: PROTOCOL_VERSION - 1 })
+
+      const ordinaryTag = inspectReplicatedFrameTag(ordinary)
+      expect(Result.isSuccess(ordinaryTag)).toBe(true)
+      if (Result.isSuccess(ordinaryTag)) {
+        expect(ordinaryTag.success).toBeUndefined()
+      }
+      expect(failure(inspectReplicatedFrameTag(malformedEnvelope))?.reason).toBe('malformed-frame')
+      expect(failure(inspectReplicatedFrameTag(oldVersion))?.reason).toBe('unsupported-protocol-version')
+
+      const oversizedMalformedC4 = JSON.stringify({
+        message: { ...emptyWorldDelta, unexpected: 'x'.repeat(2_048) },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      expect(oversizedMalformedC4.length).toBeGreaterThan(1_024)
+      const oversizedTag = inspectReplicatedFrameTag(oversizedMalformedC4)
+      expect(Result.isSuccess(oversizedTag)).toBe(true)
+      expect(failure(decodeFrame(oversizedMalformedC4, EMPTY_OWNER_REGISTRY))?.reason).toBe('malformed-frame')
+      if (Result.isSuccess(oversizedTag)) {
+        expect(oversizedTag.success).toBe('ReplicatedWorldDelta')
+      }
+    }),
+  )
+})
+
+describe('wire byte accounting', () => {
+  it.effect('counts UTF-8 bytes including surrogate pairs and replacement of lone surrogates', () =>
+    Effect.sync(() => {
+      expect(wireFrameByteLength('')).toBe(0)
+      expect(wireFrameByteLength('a')).toBe(1)
+      expect(wireFrameByteLength('世')).toBe(3)
+      expect(wireFrameByteLength('😀')).toBe(4)
+      expect(wireFrameByteLength('\ud800')).toBe(3)
+      expect(wireFrameByteLength('世'.repeat(1_024))).toBe(3_072)
+    }),
+  )
+})
+
+describe('legacy frame ceilings', () => {
+  it.effect('enforces the PlayerDamageCommand UTF-16 ceiling and reports oversized frames distinctly', () =>
+    Effect.sync(() => {
+      const withCommandId = (commandId: string): string => JSON.stringify({
+        message: { ...SAMPLES.PlayerDamageCommand, commandId },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      const emptyIdFrame = withCommandId('')
+      const commandIdLength = 1_024 - emptyIdFrame.length
+      const atLimit = withCommandId('x'.repeat(commandIdLength))
+      const overLimit = withCommandId('x'.repeat(commandIdLength + 1))
+
+      expect(atLimit.length).toBe(1_024)
+      expect(Result.isSuccess(decodeFrame(atLimit))).toBe(true)
+
+      const tooLarge = failure(decodeFrame(overLimit))
+      expect(tooLarge?.reason).toBe('frame-too-large')
+      expect(tooLarge?.detail).toContain('UTF-16 code units 1025 exceed limit 1024')
+      expect(failure(encodeFrame({ ...SAMPLES.PlayerDamageCommand, commandId: 'x'.repeat(1_024) }))?.reason).toBe('frame-too-large')
+
+      const escapedKeys = overLimit
+        .replace('"message":', '"mes\\u0073age":')
+        .replace('"_tag":', '"\\u005ftag":')
+      const escapedKeyFailure = failure(decodeFrame(escapedKeys))
+      expect(escapedKeyFailure?.reason).toBe('frame-too-large')
+      expect(escapedKeyFailure?.detail).toContain('PlayerDamageCommand')
+    }),
+  )
+
+  it.effect('counts the derived PlayerDamageCommand UTF-8 boundary while UTF-16 remains the effective ceiling', () =>
+    Effect.sync(() => {
+      const withCommandId = (commandId: string): string => JSON.stringify({
+        message: { ...SAMPLES.PlayerDamageCommand, commandId },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      const emptyIdFrame = withCommandId('')
+      const bytesToLimit = 3_072 - wireFrameByteLength(emptyIdFrame)
+      const commandId = '世'.repeat(Math.floor(bytesToLimit / 3)) + 'a'.repeat(bytesToLimit % 3)
+      const atByteLimit = withCommandId(commandId)
+
+      expect(wireFrameByteLength(atByteLimit)).toBe(3_072)
+      expect(atByteLimit.length).toBeGreaterThan(1_024)
+      const tooLarge = failure(decodeFrame(atByteLimit))
+      expect(tooLarge?.reason).toBe('frame-too-large')
+      expect(tooLarge?.detail).toContain('UTF-16 code units')
+    }),
+  )
+
+  it.effect('uses only the root message tag and returns no scanner tag for malformed JSON', () =>
+    Effect.sync(() => {
+      const nestedSpoof = JSON.stringify({
+        message: {
+          _tag: 'Ping',
+          nonce: 7,
+          nested: { _tag: 'PlayerDamageCommand', commandId: 'x'.repeat(2_048) },
+        },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      expect(Result.isSuccess(decodeFrame(nestedSpoof))).toBe(true)
+
+      const duplicateMessage = `{"message":{"_tag":"PlayerDamageCommand","commandId":"${'x'.repeat(2_048)}"},"message":{"_tag":"Ping","nonce":7},"protocolVersion":${PROTOCOL_VERSION}}`
+      expect(Result.isSuccess(decodeFrame(duplicateMessage))).toBe(true)
+
+      const duplicateTag = `{"message":{"_tag":"PlayerDamageCommand","commandId":"${'x'.repeat(2_048)}","_tag":"Ping","nonce":7},"protocolVersion":${PROTOCOL_VERSION}}`
+      expect(Result.isSuccess(decodeFrame(duplicateTag))).toBe(true)
+
+      const malformed = `{"message":{"_tag":"PlayerDamageCommand","commandId":"${'x'.repeat(2_048)}",},"protocolVersion":${PROTOCOL_VERSION}}`
+      expect(failure(decodeFrame(malformed))?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it.effect('keeps new snapshot-transfer tags at the shared global ceiling', () =>
+    Effect.sync(() => {
+      const message = { ...snapshotStart, transferId: 'x'.repeat(1_024) }
+      const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+
+      expect(text.length).toBeGreaterThan(1_024)
+      expect(Result.isSuccess(decodeFrame(text))).toBe(true)
     }),
   )
 })
@@ -906,6 +1195,76 @@ describe('malformed input', () => {
         protocolVersion: PROTOCOL_VERSION,
       })
       expect(Result.isSuccess(decodeFrame(text))).toBe(true)
+    }),
+  )
+})
+
+
+describe('codec properties', () => {
+  it.effect('returns a typed result without throwing for arbitrary byte sequences', () =>
+    Effect.sync(() => {
+      fc.assert(fc.property(fc.uint8Array(), (bytes) => {
+        const text = Buffer.from(bytes).toString('utf8')
+        const decoded = decodeFrame(text, EMPTY_OWNER_REGISTRY)
+        if (Result.isFailure(decoded)) {
+          return true
+        }
+
+        return Result.isSuccess(
+          Schema.decodeUnknownResult(NetworkMessage, STRICT_PARSE_OPTIONS)(decoded.success),
+        )
+      }))
+    }),
+  )
+
+  it.effect('accepts only values that the public message schema validates and never throws on arbitrary text', () =>
+    Effect.sync(() => {
+      fc.assert(fc.property(fc.string(), (text) => {
+        const decoded = decodeFrame(text, EMPTY_OWNER_REGISTRY)
+        if (Result.isFailure(decoded)) {
+          return true
+        }
+
+        return Result.isSuccess(
+          Schema.decodeUnknownResult(NetworkMessage, STRICT_PARSE_OPTIONS)(decoded.success),
+        )
+      }))
+    }),
+  )
+
+  it.effect('preserves the encode/decode identity for arbitrary valid ping messages', () =>
+    Effect.sync(() => {
+      fc.assert(fc.property(fc.integer(), (nonce) => {
+        const message = { _tag: 'Ping' as const, nonce }
+        const encoded = encodeFrame(message, EMPTY_OWNER_REGISTRY)
+        if (Result.isFailure(encoded)) {
+          return false
+        }
+
+        const decoded = decodeFrame(encoded.success, EMPTY_OWNER_REGISTRY)
+        if (Result.isFailure(decoded)) {
+          return false
+        }
+
+        expect(decoded.success).toStrictEqual(message)
+        return true
+      }))
+    }),
+  )
+
+  it.effect('refuses arbitrary JSON payloads with a typed result and never throws', () =>
+    Effect.sync(() => {
+      fc.assert(fc.property(fc.jsonValue(), (message) => {
+        const text = JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+        const decoded = decodeFrame(text, EMPTY_OWNER_REGISTRY)
+        if (Result.isFailure(decoded)) {
+          return true
+        }
+
+        return Result.isSuccess(
+          Schema.decodeUnknownResult(NetworkMessage, STRICT_PARSE_OPTIONS)(decoded.success),
+        )
+      }))
     }),
   )
 })

@@ -64,6 +64,12 @@ import {
   PlayerDamageCommandAccepted,
   PlayerDamageCommandRejected,
 } from './protocol/player-damage.js'
+import { WorldIdSchema as KernelWorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import {
+  ReplicatedBlockChangeSchema,
+  ReplicatedOwnerChangeSchema,
+  WorldBlockReadSchema,
+} from '@nerima-games/mc-sim'
 import { Schema } from 'effect'
 
 /**
@@ -84,7 +90,7 @@ export { BlockPos, CommandId, EntityId, PlayerId, PlayerName, Revision, WorldId 
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 8
+export const PROTOCOL_VERSION = 10
 
 /** The floor every free-text identifier and content string in this protocol shares: not blank. */
 const MIN_NON_EMPTY_LENGTH = 1
@@ -1196,12 +1202,103 @@ export const AuthoritativeCommandResult: Schema.Union<
 > = Schema.Union([AuthoritativeCommandAccepted, AuthoritativeCommandRejected])
 export type AuthoritativeCommandResult = typeof AuthoritativeCommandResult.Type
 
+/** A C4 delta whose owner states are checked against coordinator registrations at decode time. */
+export const ReplicatedWorldDeltaMessage: Schema.TaggedStruct<'ReplicatedWorldDelta', {
+  blockChanges: Schema.$Array<typeof ReplicatedBlockChangeSchema>
+  changes: Schema.$Array<typeof ReplicatedOwnerChangeSchema>
+  revision: typeof WorldRevisionSchema
+  world: typeof KernelWorldIdSchema
+}> = Schema.TaggedStruct('ReplicatedWorldDelta', {
+  blockChanges: Schema.Array(ReplicatedBlockChangeSchema),
+  changes: Schema.Array(ReplicatedOwnerChangeSchema),
+  revision: WorldRevisionSchema,
+  world: KernelWorldIdSchema,
+})
+export type ReplicatedWorldDeltaMessage = typeof ReplicatedWorldDeltaMessage.Type
+
+/** One consistent C4 owner and block view used to replace client state. */
+export const ReplicatedWorldSnapshot: Schema.TaggedStruct<'ReplicatedWorldSnapshot', {
+  blocks: Schema.$Array<typeof WorldBlockReadSchema>
+  owners: Schema.$Array<typeof ReplicatedOwnerChangeSchema>
+  revision: typeof WorldRevisionSchema
+  world: typeof KernelWorldIdSchema
+}> = Schema.TaggedStruct('ReplicatedWorldSnapshot', {
+  blocks: Schema.Array(WorldBlockReadSchema),
+  owners: Schema.Array(ReplicatedOwnerChangeSchema),
+  revision: WorldRevisionSchema,
+  world: KernelWorldIdSchema,
+})
+export type ReplicatedWorldSnapshot = typeof ReplicatedWorldSnapshot.Type
+
+export const TransferIdSchema: Schema.brand<typeof Schema.String, 'TransferId'> = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH)),
+  Schema.brand('TransferId'),
+)
+export type TransferId = typeof TransferIdSchema.Type
+
+export const Base64Schema: Schema.brand<typeof Schema.String, 'Base64'> = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(4)),
+  Schema.check(Schema.isPattern(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)),
+  Schema.brand('Base64'),
+)
+export type Base64 = typeof Base64Schema.Type
+
+export const LowercaseHexSha256Schema: Schema.brand<typeof Schema.String, 'LowercaseHexSha256'> = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  Schema.brand('LowercaseHexSha256'),
+)
+export type LowercaseHexSha256 = typeof LowercaseHexSha256Schema.Type
+
+const NonNegativeSafeIntegerSchema: typeof Schema.Number = Schema.Number.pipe(
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+)
+const PositiveSafeIntegerSchema: typeof Schema.Number = Schema.Number.pipe(
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+)
+
+export const ReplicatedWorldSnapshotStart: Schema.TaggedStruct<'ReplicatedWorldSnapshotStart', {
+  chunkCount: typeof PositiveSafeIntegerSchema
+  revision: typeof WorldRevisionSchema
+  sha256: typeof LowercaseHexSha256Schema
+  totalBytes: typeof PositiveSafeIntegerSchema
+  transferId: typeof TransferIdSchema
+  world: typeof KernelWorldIdSchema
+}> = Schema.TaggedStruct('ReplicatedWorldSnapshotStart', {
+  chunkCount: PositiveSafeIntegerSchema,
+  revision: WorldRevisionSchema,
+  sha256: LowercaseHexSha256Schema,
+  totalBytes: PositiveSafeIntegerSchema,
+  transferId: TransferIdSchema,
+  world: KernelWorldIdSchema,
+})
+export type ReplicatedWorldSnapshotStart = typeof ReplicatedWorldSnapshotStart.Type
+
+export const ReplicatedWorldSnapshotChunk: Schema.TaggedStruct<'ReplicatedWorldSnapshotChunk', {
+  data: typeof Base64Schema
+  index: typeof NonNegativeSafeIntegerSchema
+  transferId: typeof TransferIdSchema
+}> = Schema.TaggedStruct('ReplicatedWorldSnapshotChunk', {
+  data: Base64Schema,
+  index: NonNegativeSafeIntegerSchema,
+  transferId: TransferIdSchema,
+})
+export type ReplicatedWorldSnapshotChunk = typeof ReplicatedWorldSnapshotChunk.Type
+
+export const ReplicatedWorldSnapshotEnd: Schema.TaggedStruct<'ReplicatedWorldSnapshotEnd', {
+  transferId: typeof TransferIdSchema
+}> = Schema.TaggedStruct('ReplicatedWorldSnapshotEnd', {
+  transferId: TransferIdSchema,
+})
+export type ReplicatedWorldSnapshotEnd = typeof ReplicatedWorldSnapshotEnd.Type
+
 export const AuthoritativeResyncRequest: Schema.TaggedStruct<
   'AuthoritativeResyncRequest',
-  { lastKnownRevision: Schema.optional<typeof Revision>; world: typeof WorldId }
+  { lastKnownRevision: Schema.optional<typeof Revision>; world: typeof KernelWorldIdSchema }
 > = Schema.TaggedStruct('AuthoritativeResyncRequest', {
   lastKnownRevision: Schema.optional(Revision),
-  world: WorldId,
+  world: KernelWorldIdSchema,
 })
 export type AuthoritativeResyncRequest = typeof AuthoritativeResyncRequest.Type
 
@@ -1284,6 +1381,11 @@ export const NetworkMessage: Schema.Union<
     typeof WitherCommandAccepted,
     typeof WitherCommandRejected,
     typeof WitherSnapshotDelta,
+    typeof ReplicatedWorldDeltaMessage,
+    typeof ReplicatedWorldSnapshot,
+    typeof ReplicatedWorldSnapshotStart,
+    typeof ReplicatedWorldSnapshotChunk,
+    typeof ReplicatedWorldSnapshotEnd,
   ]
 > = Schema.Union([
   PlayerJoin,
@@ -1332,6 +1434,11 @@ export const NetworkMessage: Schema.Union<
   WitherCommandAccepted,
   WitherCommandRejected,
   WitherSnapshotDelta,
+  ReplicatedWorldDeltaMessage,
+  ReplicatedWorldSnapshot,
+  ReplicatedWorldSnapshotStart,
+  ReplicatedWorldSnapshotChunk,
+  ReplicatedWorldSnapshotEnd,
 ])
 export type NetworkMessage = typeof NetworkMessage.Type
 
@@ -1355,6 +1462,7 @@ export const MESSAGE_TAGS: readonly [
   'EnchantingCommand', 'EnchantingCommandAccepted', 'EnchantingCommandRejected', 'PlayerEnchantmentsDelta',
   'DamageEnderDragonCommand', 'DamageEnderDragonCommandAccepted', 'DamageEnderDragonCommandRejected', 'EnderDragonSnapshotDelta',
   'SummonWitherCommand', 'DamageWitherCommand', 'WitherCommandAccepted', 'WitherCommandRejected', 'WitherSnapshotDelta',
+  'ReplicatedWorldDelta', 'ReplicatedWorldSnapshot', 'ReplicatedWorldSnapshotStart', 'ReplicatedWorldSnapshotChunk', 'ReplicatedWorldSnapshotEnd',
 ] = [
   'PlayerJoin',
   'PlayerLeave',
@@ -1432,6 +1540,11 @@ export const MESSAGE_TAGS: readonly [
   'WitherCommandAccepted',
   'WitherCommandRejected',
   'WitherSnapshotDelta',
+  'ReplicatedWorldDelta',
+  'ReplicatedWorldSnapshot',
+  'ReplicatedWorldSnapshotStart',
+  'ReplicatedWorldSnapshotChunk',
+  'ReplicatedWorldSnapshotEnd',
 ] as const satisfies ReadonlyArray<NetworkMessage['_tag']>
 
 /**
@@ -1441,9 +1554,11 @@ export const MESSAGE_TAGS: readonly [
  * from an unknown protocol version can be rejected without first having to
  * parse a message shape that may no longer exist.
  */
-export const Frame: Schema.Struct<{ message: typeof NetworkMessage; protocolVersion: typeof Schema.Number }> =
-  Schema.Struct({
-    message: NetworkMessage,
-    protocolVersion: Schema.Number.pipe(Schema.check(Schema.isInt())),
-  })
+export const Frame: Schema.Struct<{
+  message: typeof NetworkMessage
+  protocolVersion: Schema.Literals<readonly [typeof PROTOCOL_VERSION]>
+}> = Schema.Struct({
+  message: NetworkMessage,
+  protocolVersion: Schema.Literals([PROTOCOL_VERSION]),
+})
 export type Frame = typeof Frame.Type
