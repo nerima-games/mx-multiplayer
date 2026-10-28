@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import {
   PlayerId,
   type PlayerTransformSnapshot,
@@ -21,7 +21,7 @@ const snapshot = (
 })
 
 const makeSubject = (historyLimit = 4, teleportDistance = 16) =>
-  new SnapshotInterpolator({ historyLimit, teleportDistance })
+  Result.getOrThrow(SnapshotInterpolator.make({ historyLimit, teleportDistance }))
 
 describe('snapshot admission and history', () => {
   it.effect('rejects duplicate, delayed, reversed-tick and invalid snapshots', () =>
@@ -166,10 +166,67 @@ describe('disconnect cleanup', () => {
     }),
   )
 
-  it.effect('rejects invalid configuration eagerly', () =>
+  it.effect('returns typed failures for invalid configuration', () =>
     Effect.sync(() => {
-      expect(() => new SnapshotInterpolator({ historyLimit: 1, teleportDistance: 1 })).toThrow(RangeError)
-      expect(() => new SnapshotInterpolator({ historyLimit: 2, teleportDistance: 0 })).toThrow(RangeError)
+      expect(SnapshotInterpolator.make({ historyLimit: 1, teleportDistance: 1 })).toMatchObject({
+        _tag: 'Failure',
+        failure: { reason: 'invalid-history-limit' },
+      })
+      expect(SnapshotInterpolator.make({ historyLimit: 2, teleportDistance: 0 })).toMatchObject({
+        _tag: 'Failure',
+        failure: { reason: 'invalid-teleport-distance' },
+      })
+    }),
+  )
+
+  it.effect('keeps opposite extreme coordinates finite when distance calculation overflows', () =>
+    Effect.sync(() => {
+      const subject = makeSubject(4, Number.MAX_VALUE)
+      const maximum = Number.MAX_VALUE
+      subject.ingest(alice, {
+        at: { x: -maximum, y: maximum, z: 0 },
+        facing: { pitchRadians: 1, yawRadians: maximum },
+        sequence: 1,
+        tick: 10,
+      })
+      subject.ingest(alice, {
+        at: { x: maximum, y: -maximum, z: 0 },
+        facing: { pitchRadians: -1, yawRadians: -maximum },
+        sequence: 2,
+        tick: 20,
+      })
+
+      const sample = subject.sample(alice, 15)
+      expect(sample).toBeDefined()
+      expect(Number.isFinite(sample?.at.x)).toBe(true)
+      expect(Number.isFinite(sample?.at.y)).toBe(true)
+      expect(Number.isFinite(sample?.at.z)).toBe(true)
+      expect(Number.isFinite(sample?.facing.pitchRadians)).toBe(true)
+      expect(Number.isFinite(sample?.facing.yawRadians)).toBe(true)
+    }),
+  )
+
+  it.effect('interpolates nearby positions with finite extreme headings', () =>
+    Effect.sync(() => {
+      const subject = makeSubject(4, Number.MAX_VALUE)
+      const maximum = Number.MAX_VALUE
+      subject.ingest(alice, {
+        at: { x: 0, y: 1, z: 2 },
+        facing: { pitchRadians: 1, yawRadians: maximum },
+        sequence: 1,
+        tick: 10,
+      })
+      subject.ingest(alice, {
+        at: { x: 1, y: 2, z: 3 },
+        facing: { pitchRadians: -1, yawRadians: -maximum },
+        sequence: 2,
+        tick: 20,
+      })
+
+      const sample = subject.sample(alice, 15)
+      expect(sample?.at).toStrictEqual({ x: 0.5, y: 1.5, z: 2.5 })
+      expect(Number.isFinite(sample?.facing.pitchRadians)).toBe(true)
+      expect(Number.isFinite(sample?.facing.yawRadians)).toBe(true)
     }),
   )
 })
