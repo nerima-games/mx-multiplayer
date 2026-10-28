@@ -396,6 +396,35 @@ describe('authoritative command session', () => {
     expect(ready.subject.revision(world)).toBe(4)
   })
 
+  it('uses the no-prior revision when intent conflicts arrive after the WCC revision disappears', async () => {
+    const ready = sessionAt(4)
+    const request = command('intent-revision-unavailable')
+    const accepted = await Effect.runPromise(
+      ready.subject.executeIntent(ready.identity, request, networkIntentFor('intent-revision-unavailable')),
+    )
+    ready.revision = undefined
+
+    const changedIntent = await Effect.runPromise(
+      ready.subject.executeIntent(
+        ready.identity,
+        { ...request, action: { _tag: 'select-slot', slot: 1 } },
+        networkIntentFor('intent-revision-unavailable'),
+      ),
+    )
+    let invoked = false
+    const commit = await Effect.runPromise(
+      ready.subject.execute(ready.identity, request, () => {
+        invoked = true
+        return Effect.succeed({ accepted: true } as const)
+      }),
+    )
+
+    expect(accepted).toMatchObject({ _tag: 'AuthoritativeCommandIntentAccepted' })
+    expect(changedIntent).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'invalid-command', revision: 0 })
+    expect(commit).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'invalid-command', revision: 0 })
+    expect(invoked).toBe(false)
+  })
+
   it('rechecks WCC revision during intent preparation before reserving the command', async () => {
     const outcomes = await Promise.all([
       (async () => {
