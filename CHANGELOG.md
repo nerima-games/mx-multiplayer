@@ -1,5 +1,11 @@
 # @nerima-games/mx-multiplayer
 
+## 0.13.0
+
+### Minor Changes
+
+- Move the package to Effect 4 and align its simulation dependencies with mc-sim 0.7.1 and mc-kernel 0.14.0.
+
 ## 0.12.0
 
 ### Minor Changes
