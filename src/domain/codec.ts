@@ -52,7 +52,7 @@ import { ProtocolError } from './errors.js'
 export type WireText = string
 
 const MAX_FRAME_CODE_UNITS = 1_048_576
-const MAX_FRAME_UTF8_BYTES = 1_310_720
+const MAX_FRAME_UTF8_BYTES = 4_194_304
 const MAX_JSON_DEPTH = 13
 const MAX_JSON_COLLECTION_ITEMS = 31_149
 const ZERO = 0
