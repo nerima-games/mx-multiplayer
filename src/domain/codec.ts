@@ -335,14 +335,21 @@ const utf8ByteLength = (text: string): number => {
 /** Count UTF-8 bytes, matching the byte accounting used by frame validation. */
 export const wireFrameByteLength = (text: WireText): number => utf8ByteLength(text)
 
-type JsonScanContainer = {
-  kind: 'object' | 'array'
-  state: 'key-or-end' | 'key' | 'colon' | 'value' | 'value-or-end' | 'comma-or-end'
-  key: string | undefined
+type JsonScanContainerBase = {
   root: boolean
   rootMessageBody: boolean
   entries: number
 }
+type JsonScanObjectContainer = JsonScanContainerBase & {
+  kind: 'object'
+  state: 'key-or-end' | 'key' | 'colon' | 'value' | 'comma-or-end'
+  key: string | undefined
+}
+type JsonScanArrayContainer = JsonScanContainerBase & {
+  kind: 'array'
+  state: 'value-or-end' | 'value' | 'comma-or-end'
+}
+type JsonScanContainer = JsonScanObjectContainer | JsonScanArrayContainer
 
 type JsonScanMetrics = { maxDepth: number; maxCollectionItems: number; exceeded: boolean }
 type JsonScanState = { messageTag: string | undefined }
@@ -557,7 +564,7 @@ const readJsonNumberEnd = (text: string, start: number): number | undefined => {
   return readJsonExponentEnd(text, fractionEnd)
 }
 
-const createJsonContainer = (container: JsonScanContainer): JsonScanContainer => container
+const createJsonContainer = <TContainer extends JsonScanContainer>(container: TContainer): TContainer => container
 
 const recordCollectionEntry = (container: JsonScanContainer, metrics: JsonScanMetrics): boolean => {
   container.entries += ONE
@@ -602,7 +609,7 @@ const pushJsonContainer = (
   return true
 }
 
-const readObjectKeyText = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+const readObjectKeyText = (context: JsonScanContext, index: number, container: JsonScanObjectContainer): number | undefined => {
   const { metrics, text } = context
   const key = readJsonString(text, index, true)
   if (key === undefined || key.value === undefined || !recordCollectionEntry(container, metrics)) {
@@ -613,7 +620,7 @@ const readObjectKeyText = (context: JsonScanContext, index: number, container: J
   return key.end
 }
 
-const readObjectKey = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+const readObjectKey = (context: JsonScanContext, index: number, container: JsonScanObjectContainer): number | undefined => {
   const codeUnit = context.text.charCodeAt(index)
   if (container.state === 'key-or-end' && codeUnit === JSON_CHAR.closeBrace) {
     context.stack.pop()
@@ -622,7 +629,7 @@ const readObjectKey = (context: JsonScanContext, index: number, container: JsonS
   return readObjectKeyText(context, index, container)
 }
 
-const readObjectColon = (index: number, codeUnit: number, container: JsonScanContainer): number | undefined => {
+const readObjectColon = (index: number, codeUnit: number, container: JsonScanObjectContainer): number | undefined => {
   if (codeUnit !== JSON_CHAR.colon) {
     return undefined
   }
@@ -690,7 +697,7 @@ const readJsonValueContent = (context: JsonScanContext, index: number, isMessage
 const readObjectValueContent = (
   context: JsonScanContext,
   index: number,
-  container: JsonScanContainer,
+  container: JsonScanObjectContainer,
 ): number | undefined => {
   const isRootMessageValue = container.root && container.key === 'message'
   const isMessageTagValue = container.rootMessageBody && container.key === '_tag'
@@ -707,7 +714,7 @@ const readObjectValueContent = (
   return readJsonValueContent(context, index, isMessageTagValue)
 }
 
-const readObjectValue = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+const readObjectValue = (context: JsonScanContext, index: number, container: JsonScanObjectContainer): number | undefined => {
   container.state = 'comma-or-end'
   const result = readObjectValueContent(context, index, container)
   container.key = undefined
@@ -717,7 +724,7 @@ const readObjectValue = (context: JsonScanContext, index: number, container: Jso
 const readArrayValueContent = (
   context: JsonScanContext,
   index: number,
-  container: JsonScanContainer,
+  container: JsonScanArrayContainer,
 ): number | undefined => {
   const nestedEnd = readNestedContainerEnd(context, index, container)
   if (nestedEnd === null) {
@@ -729,7 +736,7 @@ const readArrayValueContent = (
   return readJsonPrimitiveEnd(context.text, index)
 }
 
-const readArrayValue = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+const readArrayValue = (context: JsonScanContext, index: number, container: JsonScanArrayContainer): number | undefined => {
   const { metrics, stack, text } = context
   const codeUnit = text.charCodeAt(index)
   if (container.state === 'value-or-end' && codeUnit === JSON_CHAR.closeBracket) {
@@ -771,33 +778,35 @@ const readCommaOrEnd = (context: JsonScanContext, index: number, container: Json
   return index + ONE
 }
 
-const advanceJsonObject = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
-  switch (container.state) {
-    case 'key-or-end':
-    case 'key':
-      return readObjectKey(context, index, container)
-    case 'colon':
-      return readObjectColon(index, context.text.charCodeAt(index), container)
-    case 'value':
-      return readObjectValue(context, index, container)
-    case 'comma-or-end':
-      return readCommaOrEnd(context, index, container)
-    default:
-      return undefined
-  }
+type JsonObjectScanStep = (
+  context: JsonScanContext,
+  index: number,
+  container: JsonScanObjectContainer,
+) => number | undefined
+type JsonArrayScanStep = (
+  context: JsonScanContext,
+  index: number,
+  container: JsonScanArrayContainer,
+) => number | undefined
+
+const JSON_OBJECT_SCAN_STEPS: Record<JsonScanObjectContainer['state'], JsonObjectScanStep> = {
+  'key-or-end': readObjectKey,
+  key: readObjectKey,
+  colon: (context, index, container) => readObjectColon(index, context.text.charCodeAt(index), container),
+  value: readObjectValue,
+  'comma-or-end': readCommaOrEnd,
+}
+const JSON_ARRAY_SCAN_STEPS: Record<JsonScanArrayContainer['state'], JsonArrayScanStep> = {
+  'value-or-end': readArrayValue,
+  value: readArrayValue,
+  'comma-or-end': readCommaOrEnd,
 }
 
-const advanceJsonArray = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
-  switch (container.state) {
-    case 'value-or-end':
-    case 'value':
-      return readArrayValue(context, index, container)
-    case 'comma-or-end':
-      return readCommaOrEnd(context, index, container)
-    default:
-      return undefined
-  }
-}
+const advanceJsonObject = (context: JsonScanContext, index: number, container: JsonScanObjectContainer): number | undefined =>
+  JSON_OBJECT_SCAN_STEPS[container.state](context, index, container)
+
+const advanceJsonArray = (context: JsonScanContext, index: number, container: JsonScanArrayContainer): number | undefined =>
+  JSON_ARRAY_SCAN_STEPS[container.state](context, index, container)
 
 const advanceJsonContainer = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
   if (container.kind === 'object') {
@@ -806,26 +815,32 @@ const advanceJsonContainer = (context: JsonScanContext, index: number, container
   return advanceJsonArray(context, index, container)
 }
 
-const scanJsonStep = (context: JsonScanContext, index: number): number | undefined => {
+const scanJsonStep = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
   const nextIndex = skipJsonWhitespace(context.text, index)
   if (nextIndex >= context.text.length) {
-    return undefined
-  }
-  const container = context.stack[context.stack.length - ONE]
-  if (container === undefined) {
     return undefined
   }
   return advanceJsonContainer(context, nextIndex, container)
 }
 
+const scanJsonIteration = (context: JsonScanContext, index: number): number | null | undefined => {
+  const container = context.stack.pop()
+  if (container === undefined) {
+    return null
+  }
+  context.stack.push(container)
+  return scanJsonStep(context, index, container)
+}
+
 const scanJsonBody = (context: JsonScanContext, start: number): string | undefined => {
   let index = start
-  while (context.stack.length > ZERO) {
-    const nextIndex = scanJsonStep(context, index)
+  let nextIndex = scanJsonIteration(context, index)
+  while (nextIndex !== null) {
     if (nextIndex === undefined) {
       return undefined
     }
     index = nextIndex
+    nextIndex = scanJsonIteration(context, index)
   }
   if (skipJsonWhitespace(context.text, index) === context.text.length) {
     return context.state.messageTag

@@ -195,28 +195,19 @@ export class SnapshotInterpolator {
     return this.#interpolate(history, renderTick)
   }
 
-  /** Precondition, enforced by the only caller (`sample`): `history` is non-empty. */
+  /** Precondition, enforced by the only caller (`sample`): history is non-empty and renderTick is finite. */
   static #sampleAtBoundary(
     history: readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>],
     renderTick: number,
   ): PlayerTransformSnapshot | undefined {
-    // The tuple type guarantees that the first element exists; the loop keeps
-    // `last` aligned with the final history entry without a non-null assertion.
     const [first] = history
-    let last = first
-    for (const snapshot of history) {
-      last = snapshot
-    }
     if (renderTick <= first.tick) {
       return first
-    }
-    if (renderTick >= last.tick) {
-      return last
     }
     return undefined
   }
 
-  /** Precondition, enforced by the only caller (`sample`): `first.tick < renderTick < last.tick`. */
+  /** Precondition, enforced by the only caller (`sample`): history is non-empty and renderTick > first.tick. */
   #interpolate(
     history: readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>],
     renderTick: number,
