@@ -1265,7 +1265,7 @@ const unsupportedProtocolVersion = (protocolVersion: number): ProtocolError =>
 /** Identify a v10 C4 tag before its body is decoded, for resync classification. */
 const inspectEnvelopeTag = (
   text: WireText,
-  rootTag: string | undefined,
+  shape: JsonFrameShape,
   envelope: { readonly message: unknown; readonly protocolVersion: number },
 ): Result.Result<ReplicatedFrameTag | undefined, ProtocolError> => {
   if (envelope.protocolVersion !== PROTOCOL_VERSION) {
@@ -1284,7 +1284,7 @@ const inspectEnvelopeTag = (
     case 'ReplicatedWorldSnapshotEnd':
       return Result.succeed(envelope.message['_tag'])
     default: {
-      const sizeFailure = legacyFrameSizeFailure(text, rootTag)
+      const sizeFailure = legacyFrameSizeFailure(text, shape.tag)
       if (sizeFailure !== undefined) {
         return Result.fail(sizeFailure)
       }
@@ -1300,12 +1300,15 @@ export const inspectReplicatedFrameTag = (
   if (globalSizeFailure !== undefined) {
     return Result.fail(globalSizeFailure)
   }
-  const rootTag = scanRootMessageTag(text)
+  const shape = scanJsonFrameShape(text)
+  if (Result.isFailure(shape)) {
+    return Result.fail(shape.failure)
+  }
   const envelopeResult = decodeWireEnvelope(text)
   if (Result.isFailure(envelopeResult)) {
     return Result.fail(malformedFrame(envelopeResult.failure.message))
   }
-  return inspectEnvelopeTag(text, rootTag, envelopeResult.success)
+  return inspectEnvelopeTag(text, shape.success, envelopeResult.success)
 }
 
 /**

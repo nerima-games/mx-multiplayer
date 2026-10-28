@@ -252,6 +252,42 @@ describe('inspectInboundFrame', () => {
 })
 
 describe('replicated owner registry inspection', () => {
+  it('classifies a registry-limited C4 decode failure without exposing its tag', () => {
+    const limits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
+      maxRegisteredOwners: 0,
+      maxDeltaBlockChanges: 0,
+      maxSnapshotBlockReads: 0,
+      maxDepth: MAX_JSON_DEPTH,
+      maxCollectionItems: 1,
+      maxDeltaFrameBytes: 1_048_576,
+      maxSnapshotFrameBytes: 1_048_576,
+      ownerStates: [],
+    })
+    const owners = Result.getOrThrow(createReplicatedOwnerRegistry([], limits))
+    const frame = wireFrame(JSON.stringify({
+      _tag: 'ReplicatedWorldDelta',
+      world: 'overworld',
+      revision: 1,
+      changes: [],
+      extra: [0, 0],
+      blockChanges: [{
+        dimension: 'overworld',
+        position: { x: 0, y: 64, z: 0 },
+        before: 0,
+        after: 1,
+      }],
+    }))
+
+    const boundedDecode = decodeFrame(frame, owners)
+    expect(boundedDecode).toMatchObject({ _tag: 'Failure', failure: { reason: 'frame-too-large' } })
+    expect(inspectInboundFrame(frame, owners)).toMatchObject({
+      _tag: 'Rejected',
+      reason: 'frame-too-large',
+      stage: 'predecode-limit',
+      tag: undefined,
+    })
+  })
+
   it('returns a typed error when a registration owner ID fails schema decoding', () => {
     const validOwnerId = makeReplicatedOwnerId('registered-owner')
     const invalidOwnerId = makeReplicatedOwnerId('')

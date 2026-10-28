@@ -8,6 +8,7 @@ import type {
   WorldId,
 } from './protocol.js'
 import { Effect } from 'effect'
+import type { Intent } from '@nerima-games/mc-sim'
 
 export type CommandDecision =
   | { readonly accepted: true }
@@ -25,6 +26,27 @@ type AcceptedEntry = {
   readonly result: AuthoritativeCommandResult
 }
 
+export type AuthoritativeCommandIntentAccepted = {
+  readonly _tag: 'AuthoritativeCommandIntentAccepted'
+  readonly commandId: CommandId
+  readonly intent: Intent
+}
+
+export type AuthoritativeCommandIntentReplayed = {
+  readonly _tag: 'AuthoritativeCommandIntentReplayed'
+  readonly commandId: CommandId
+}
+
+export type AuthoritativeCommandIntentResult =
+  | AuthoritativeCommandIntentAccepted
+  | AuthoritativeCommandIntentReplayed
+  | AuthoritativeCommandResult
+
+type AcceptedIntentEntry = {
+  readonly fingerprint: string
+  readonly result: AuthoritativeCommandIntentAccepted
+}
+
 type Rejection = {
   readonly command: AuthoritativeCommand
   readonly reason: CommandRejectionReason
@@ -34,6 +56,10 @@ type Rejection = {
 
 type PreparedExecution =
   | { readonly result: AuthoritativeCommandResult }
+  | { readonly key: string; readonly revisionBefore: number }
+
+type PreparedIntentExecution =
+  | { readonly result: AuthoritativeCommandIntentResult }
   | { readonly key: string; readonly revisionBefore: number }
 
 const NO_PRIOR_REVISION = 0
@@ -63,6 +89,7 @@ export class AuthoritativeSession {
   readonly #inFlight = new Set<string>()
   readonly #inFlightWorlds = new Set<WorldId>()
   readonly #results = new Map<PlayerId, Map<WorldId, Map<CommandId, AcceptedEntry>>>()
+  readonly #intentResults = new Map<PlayerId, Map<WorldId, Map<CommandId, AcceptedIntentEntry>>>()
 
   constructor(revisionFor: (world: WorldId) => number | undefined) {
     this.#revisionFor = revisionFor
@@ -103,7 +130,42 @@ export class AuthoritativeSession {
     return this.#preflightCurrent(command)
   }
 
-  #preflightCurrent(command: AuthoritativeCommand): AuthoritativeCommandResult | undefined {
+  /**
+   * Checks a network-intent command against the same connection, snapshot, and
+   * world-revision authority as a committed command. Identical accepted intent
+   * replays return an acknowledgment without the Intent, so callers cannot
+   * enqueue the same request again.
+   */
+  preflightIntent(
+    identity: ServerConnectionIdentity,
+    command: AuthoritativeCommand,
+  ): AuthoritativeCommandIntentResult | undefined {
+    const identityFailure = this.#identityFailure(identity, command)
+    if (identityFailure !== undefined) {
+      return identityFailure
+    }
+
+    const previousIntent = this.#previousIntentEntry(command)
+    if (previousIntent !== undefined) {
+      if (previousIntent.fingerprint === fingerprint(command)) {
+        return { _tag: 'AuthoritativeCommandIntentReplayed', commandId: command.commandId }
+      }
+      return AuthoritativeSession.#reject({
+        command,
+        reason: 'invalid-command',
+        resyncRequired: false,
+        revision: this.#readRevision(command.world) ?? NO_PRIOR_REVISION,
+      })
+    }
+
+    return this.#preflightCurrent(command)
+  }
+
+  #preflightCurrent(
+    command: AuthoritativeCommand,
+    revisionFailure: (command: AuthoritativeCommand, revision: number) => AuthoritativeCommandResult | undefined =
+      AuthoritativeSession.#revisionFailure,
+  ): AuthoritativeCommandResult | undefined {
     const currentRevision = this.#readRevision(command.world)
     const duplicateFailure = this.#duplicateFailure(command, currentRevision)
     if (duplicateFailure !== undefined) {
@@ -116,7 +178,7 @@ export class AuthoritativeSession {
     if (snapshotFailure !== undefined) {
       return snapshotFailure
     }
-    return AuthoritativeSession.#revisionFailure(command, currentRevision)
+    return revisionFailure(command, currentRevision)
   }
 
   execute<Failure>(
@@ -133,6 +195,37 @@ export class AuthoritativeSession {
       const application = this.#applyPrepared(command, prepared.revisionBefore, apply)
       return Effect.ensuring(
         application,
+        Effect.sync(() => {
+          this.#inFlight.delete(prepared.key)
+          this.#inFlightWorlds.delete(command.world)
+        }),
+      )
+    })
+  }
+
+  /**
+   * Records a validated C2 intent for this command without changing the WCC
+   * revision. Intent construction and enqueueing remain the caller's work.
+   */
+  executeIntent(
+    identity: ServerConnectionIdentity,
+    command: AuthoritativeCommand,
+    intent: Intent,
+  ): Effect.Effect<AuthoritativeCommandIntentResult> {
+    return Effect.suspend(() => {
+      const prepared = this.#prepareIntent(identity, command)
+      if ('result' in prepared) {
+        return Effect.succeed(prepared.result)
+      }
+
+      const result: AuthoritativeCommandIntentAccepted = {
+        _tag: 'AuthoritativeCommandIntentAccepted',
+        commandId: command.commandId,
+        intent,
+      }
+      this.#storeIntent(command, fingerprint(command), result)
+      return Effect.ensuring(
+        Effect.succeed(result),
         Effect.sync(() => {
           this.#inFlight.delete(prepared.key)
           this.#inFlightWorlds.delete(command.world)
@@ -191,6 +284,14 @@ export class AuthoritativeSession {
     command: AuthoritativeCommand,
     currentRevision: number | undefined,
   ): AuthoritativeCommandResult | undefined {
+    if (this.#previousIntentEntry(command) !== undefined) {
+      return AuthoritativeSession.#reject({
+        command,
+        reason: 'invalid-command',
+        resyncRequired: false,
+        revision: currentRevision ?? NO_PRIOR_REVISION,
+      })
+    }
     const existing = this.#previousEntry(command)
     if (existing !== undefined) {
       if (existing.fingerprint === fingerprint(command)) {
@@ -284,6 +385,42 @@ export class AuthoritativeSession {
     return { key, revisionBefore }
   }
 
+  #prepareIntent(identity: ServerConnectionIdentity, command: AuthoritativeCommand): PreparedIntentExecution {
+    const refusal = this.preflightIntent(identity, command)
+    if (refusal !== undefined) {
+      return { result: refusal }
+    }
+
+    return this.#prepareCurrentIntent(command)
+  }
+
+  #prepareCurrentIntent(command: AuthoritativeCommand): PreparedIntentExecution {
+    const revisionBefore = this.#readRevision(command.world)
+    if (revisionBefore === undefined) {
+      return {
+        result: AuthoritativeSession.#reject({
+          command,
+          reason: 'snapshot-required',
+          resyncRequired: true,
+          revision: NO_PRIOR_REVISION,
+        }),
+      }
+    }
+    const revisionFailure = AuthoritativeSession.#revisionFailure(command, revisionBefore)
+    if (revisionFailure !== undefined) {
+      return { result: revisionFailure }
+    }
+
+    return this.#reserveIntent(command, revisionBefore)
+  }
+
+  #reserveIntent(command: AuthoritativeCommand, revisionBefore: number): PreparedIntentExecution {
+    const key = ledgerKey(command)
+    this.#inFlight.add(key)
+    this.#inFlightWorlds.add(command.world)
+    return { key, revisionBefore }
+  }
+
   #applyPrepared<Failure>(
     command: AuthoritativeCommand,
     revisionBefore: number,
@@ -326,6 +463,10 @@ export class AuthoritativeSession {
     return this.#results.get(command.player)?.get(command.world)?.get(command.commandId)
   }
 
+  #previousIntentEntry(command: AuthoritativeCommand): AcceptedIntentEntry | undefined {
+    return this.#intentResults.get(command.player)?.get(command.world)?.get(command.commandId)
+  }
+
   static #reject({ command, reason, resyncRequired, revision }: Rejection): AuthoritativeCommandResult {
     return {
       _tag: 'AuthoritativeCommandRejected',
@@ -346,6 +487,24 @@ export class AuthoritativeSession {
     if (playerResults === undefined) {
       playerResults = new Map()
       this.#results.set(command.player, playerResults)
+    }
+    let worldResults = playerResults.get(command.world)
+    if (worldResults === undefined) {
+      worldResults = new Map()
+      playerResults.set(command.world, worldResults)
+    }
+    worldResults.set(command.commandId, { fingerprint: commandFingerprint, result })
+  }
+
+  #storeIntent(
+    command: AuthoritativeCommand,
+    commandFingerprint: string,
+    result: AuthoritativeCommandIntentAccepted,
+  ): void {
+    let playerResults = this.#intentResults.get(command.player)
+    if (playerResults === undefined) {
+      playerResults = new Map()
+      this.#intentResults.set(command.player, playerResults)
     }
     let worldResults = playerResults.get(command.world)
     if (worldResults === undefined) {

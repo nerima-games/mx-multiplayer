@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
 import { Cause, Effect, Exit, Result, Schema, SchemaAST } from 'effect'
+import { IntentSchema } from '@nerima-games/mc-sim'
 import {
   AuthoritativeCommand,
   AuthoritativeEntityState,
@@ -40,6 +41,15 @@ const command = (
   expectedRevision,
   player: commandPlayer,
   world: commandWorld,
+})
+
+const networkIntentFor = (id: string) => Schema.decodeUnknownSync(IntentSchema)({
+  expectedDimensionRevision: 3,
+  expectedRevision: 4,
+  id: CommandId.make(id),
+  payload: { _tag: 'UseItem', actor: player, item: 1 },
+  source: 'network',
+  targetTick: 12,
 })
 
 const sessionAt = (revision: number, targetWorld = world) => {
@@ -341,6 +351,62 @@ describe('authoritative command session', () => {
 
     expect(result).toMatchObject({ reason: 'invalid-command', revision: Number.MAX_SAFE_INTEGER })
     expect(invoked).toBe(false)
+  })
+
+  it('rejects network intents at a WCC revision that cannot advance safely', () => {
+    const ready = sessionAt(Number.MAX_SAFE_INTEGER)
+    const result = ready.subject.preflightIntent(
+      ready.identity,
+      command('intent-max-safe', Number.MAX_SAFE_INTEGER),
+    )
+
+    expect(result).toMatchObject({
+      _tag: 'AuthoritativeCommandRejected',
+      reason: 'invalid-command',
+      revision: Number.MAX_SAFE_INTEGER,
+    })
+  })
+
+  it('returns direct intent-execution preflight refusals without storing an intent', async () => {
+    const ready = sessionAt(4)
+    const result = await Effect.runPromise(
+      ready.subject.executeIntent(Symbol('unissued'), command('unissued-intent'), networkIntentFor('unissued-intent')),
+    )
+
+    expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
+  })
+
+  it('rechecks WCC revision during intent preparation before reserving the command', async () => {
+    const outcomes = await Promise.all([
+      (async () => {
+        let reads = 0
+        const subject = new AuthoritativeSession(() => {
+          reads += 1
+          return reads <= 2 ? 4 : undefined
+        })
+        const identity = subject.connect(player, world)
+        subject.restore(snapshotFor())
+        const result = await Effect.runPromise(
+          subject.executeIntent(identity, command('intent-revision-missing'), networkIntentFor('intent-revision-missing')),
+        )
+        return result
+      })(),
+      (async () => {
+        let reads = 0
+        const subject = new AuthoritativeSession(() => {
+          reads += 1
+          return reads <= 2 ? 4 : 5
+        })
+        const identity = subject.connect(player, world)
+        subject.restore(snapshotFor())
+        return Effect.runPromise(
+          subject.executeIntent(identity, command('intent-revision-stale'), networkIntentFor('intent-revision-stale')),
+        )
+      })(),
+    ])
+
+    expect(outcomes[0]).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'snapshot-required' })
+    expect(outcomes[1]).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'stale-revision', revision: 5 })
   })
 
   it('returns the accepted result for an identical payload and rejects command-id reuse with a different payload', async () => {

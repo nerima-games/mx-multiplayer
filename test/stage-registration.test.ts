@@ -644,6 +644,40 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
     }),
   )
 
+  it.effect('keeps an active transfer when an over-depth C4 frame fails resync classification', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const [start] = snapshotTransferFor(sync, 4)
+      if (start === undefined) {
+        throw new Error('snapshot transfer fixture did not contain its start frame')
+      }
+      let extra: unknown = 0
+      for (let depth = 2; depth < MAXIMUM_FRAME_JSON_DEPTH + 1; depth += 1) {
+        extra = [extra]
+      }
+      const overDepthC4Frame = JSON.stringify({
+        message: { ...deltaForRevision(4), extra },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+
+      yield* Ref.set(state.connection, connected)
+      yield* peer.send(encodeForSync(start, sync))
+      yield* runStage(stages[0])
+      expect(sync.transfers.isReceiving).toBe(true)
+
+      yield* peer.send(overDepthC4Frame)
+      yield* runStage(stages[0])
+
+      expect(sync.transfers.isReceiving).toBe(true)
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([])
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([])
+      expect((yield* countersOf(state)).malformed).toBe(1)
+    }),
+  )
+
   it.effect('drops malformed and unknown frames without scheduling a C4 resync', () =>
     Effect.gen(function* () {
       const [local, peer] = yield* makeLoopbackPair

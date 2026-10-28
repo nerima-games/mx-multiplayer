@@ -16,7 +16,11 @@ import type {
   CommandApplicationFailure,
   CommandApplicationOutcome,
   CommandDecision,
-  CommandNotWritable,
+  CommandIntentContext,
+  CommandUnsupported,
+  CommandUnsupportedReason,
+  AuthoritativeCommandIntentAccepted,
+  AuthoritativeCommandIntentReplayed,
   ChunkInterest,
   ConnectionRateLimitConfig,
   ConnectionRateLimitConfigField,
@@ -53,7 +57,11 @@ type NewPublicTypes = {
   commandApplicationFailure: CommandApplicationFailure
   commandApplicationOutcome: CommandApplicationOutcome
   commandDecision: CommandDecision
-  commandNotWritable: CommandNotWritable
+  commandIntentContext: CommandIntentContext
+  commandUnsupported: CommandUnsupported
+  commandUnsupportedReason: CommandUnsupportedReason
+  authoritativeCommandIntentAccepted: AuthoritativeCommandIntentAccepted
+  authoritativeCommandIntentReplayed: AuthoritativeCommandIntentReplayed
   connectionIdentity: ServerConnectionIdentity
   hungerIntent: Intent
   hungerRejectionReason: HungerRejectionReason

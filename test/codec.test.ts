@@ -2202,10 +2202,26 @@ describe('wire byte accounting', () => {
         message: { _tag: 'Ping', nonce: Number.MAX_SAFE_INTEGER, extra: Array.from({ length: count }, () => 0) },
         protocolVersion: PROTOCOL_VERSION,
       })
+      const c4FrameWithNestedArrays = (depth: number): string => {
+        let extra: unknown = 0
+        for (let currentDepth = 2; currentDepth < depth; currentDepth += 1) {
+          extra = [extra]
+        }
+        return JSON.stringify({
+          message: { ...emptyWorldDelta, extra },
+          protocolVersion: PROTOCOL_VERSION,
+        })
+      }
+      const c4FrameWithCollection = (count: number): string => JSON.stringify({
+        message: { ...emptyWorldDelta, extra: Array.from({ length: count }, () => 0) },
+        protocolVersion: PROTOCOL_VERSION,
+      })
       const depthLimitFrame = frameWithNestedArrays(GLOBAL_JSON_DEPTH_LIMIT)
       const overDepthFrame = frameWithNestedArrays(GLOBAL_JSON_DEPTH_LIMIT + 1)
       const collectionLimitFrame = frameWithCollection(GLOBAL_JSON_COLLECTION_LIMIT)
       const overCollectionFrame = frameWithCollection(GLOBAL_JSON_COLLECTION_LIMIT + 1)
+      const overDepthC4Frame = c4FrameWithNestedArrays(GLOBAL_JSON_DEPTH_LIMIT + 1)
+      const overCollectionC4Frame = c4FrameWithCollection(GLOBAL_JSON_COLLECTION_LIMIT + 1)
 
       expect(measureFrameShape(JSON.parse(depthLimitFrame)).maxDepth).toBe(GLOBAL_JSON_DEPTH_LIMIT)
       expect(measureFrameShape(JSON.parse(collectionLimitFrame)).maxCollectionItems).toBe(GLOBAL_JSON_COLLECTION_LIMIT)
@@ -2217,6 +2233,9 @@ describe('wire byte accounting', () => {
       expect(failure(decodeFrame(overDepthFrame))?.reason).toBe('frame-too-large')
       expect(Result.isSuccess(decodeFrame(collectionLimitFrame))).toBe(true)
       expect(failure(decodeFrame(overCollectionFrame))?.reason).toBe('frame-too-large')
+      expect(failure(inspectReplicatedFrameTag(overDepthC4Frame))?.reason).toBe('frame-too-large')
+      expect(failure(inspectReplicatedFrameTag(overCollectionC4Frame))?.reason).toBe('frame-too-large')
+      expect(failure(inspectReplicatedFrameTag(`${overDepthC4Frame}x`))?.reason).toBe('frame-too-large')
     }),
   )
 })
