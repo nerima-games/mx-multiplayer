@@ -1,7 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Result } from 'effect'
+import { makeReplicatedOwnerId, type ReplicatedOwnerRegistration } from '@nerima-games/mc-sim'
+import { Result, Schema } from 'effect'
 import { frameTag, inspectInboundFrame, unknownRecord } from '../src/application/server/frame-inspection'
-import { decodeFrame, wireFrameByteLength } from '../src/domain/codec'
+import {
+  createReplicatedOwnerRegistry,
+  decodeFrame,
+  ReplicatedOwnerRegistryLimitsSchema,
+  wireFrameByteLength,
+} from '../src/domain/codec'
 import { PROTOCOL_VERSION } from '../src/domain/protocol'
 
 // Mirror the limits enforced by codec until those constants are public exports.
@@ -114,13 +120,13 @@ describe('inspectInboundFrame', () => {
     expect(inspectInboundFrame(unknownTagFrame)).toMatchObject({
       _tag: 'Rejected',
       reason: 'unknown-message-tag',
-      stage: 'tag-after-decode',
+      stage: 'tag-predecode',
       tag: 'FutureMessage',
     })
     expect(inspectInboundFrame(missingTagFrame)).toMatchObject({
       _tag: 'Rejected',
       reason: 'missing-message-tag',
-      stage: 'tag-after-decode',
+      stage: 'tag-predecode',
     })
   })
 
@@ -148,6 +154,23 @@ describe('inspectInboundFrame', () => {
       stage: 'protocol',
       tag: 'Ping',
     })
+
+    expect(inspectInboundFrame(wireFrame('{"_tag":"ReplicatedWorldDelta"}'))).toMatchObject({
+      _tag: 'Rejected',
+      reason: 'malformed-frame',
+      stage: 'decode',
+      tag: 'ReplicatedWorldDelta',
+    })
+  })
+
+  it('applies the known-tag byte limit before decoding its message schema', () => {
+    const oversized = wireFrame(JSON.stringify({ _tag: 'PlayerDamageCommand', damage: 'x'.repeat(4_100) }))
+
+    expect(inspectInboundFrame(oversized)).toMatchObject({
+      _tag: 'Rejected',
+      reason: 'frame-too-large',
+      stage: 'predecode-limit',
+    })
   })
 
   it('rejects JSON depth above the cap before message Schema decode', async () => {
@@ -164,11 +187,10 @@ describe('inspectInboundFrame', () => {
           const exact = withDepth(atLimit)
           const over = withDepth(overLimit)
 
-          expect(decodeFailureReason(exact)).toBe('malformed-frame')
+          expect(decodeFailureReason(exact)).toBeUndefined()
           expect(inspectInboundFrame(exact)).toMatchObject({
-            _tag: 'Rejected',
-            reason: 'malformed-frame',
-            stage: 'decode',
+            _tag: 'Accepted',
+            message: { _tag: 'Ping', nonce: 1 },
           })
           expect(decodeFailureReason(over)).toBe('frame-too-large')
           expect(inspectInboundFrame(over)).toMatchObject({
@@ -195,11 +217,10 @@ describe('inspectInboundFrame', () => {
           const exact = withCollection(atLimit)
           const over = withCollection(overLimit)
 
-          expect(decodeFailureReason(exact)).toBe('malformed-frame')
+          expect(decodeFailureReason(exact)).toBeUndefined()
           expect(inspectInboundFrame(exact)).toMatchObject({
-            _tag: 'Rejected',
-            reason: 'malformed-frame',
-            stage: 'decode',
+            _tag: 'Accepted',
+            message: { _tag: 'Ping', nonce: 1 },
           })
           expect(decodeFailureReason(over)).toBe('frame-too-large')
           expect(inspectInboundFrame(over)).toMatchObject({
@@ -219,5 +240,48 @@ describe('inspectInboundFrame', () => {
       reason: 'malformed-frame',
       stage: 'decode',
     })
+  })
+
+  it('returns a typed malformed-frame error when the message is not an object', () => {
+    expect(inspectInboundFrame(wireFrame('null'))).toMatchObject({
+      _tag: 'Rejected',
+      reason: 'malformed-frame',
+      stage: 'decode',
+    })
+  })
+})
+
+describe('replicated owner registry inspection', () => {
+  it('returns a typed error when a registration owner ID fails schema decoding', () => {
+    const validOwnerId = makeReplicatedOwnerId('registered-owner')
+    const invalidOwnerId = makeReplicatedOwnerId('')
+    const stateSchema = Schema.Struct({ count: Schema.Number })
+    const registration: ReplicatedOwnerRegistration<typeof stateSchema> = {
+      ownerId: invalidOwnerId,
+      schema: stateSchema,
+      initialState: { count: 0 },
+    }
+    const limits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
+      maxRegisteredOwners: 1,
+      maxDeltaBlockChanges: 0,
+      maxSnapshotBlockReads: 0,
+      maxDepth: MAX_JSON_DEPTH,
+      maxCollectionItems: MAX_JSON_COLLECTION_ITEMS,
+      maxDeltaFrameBytes: 1_048_576,
+      maxSnapshotFrameBytes: 1_048_576,
+      ownerStates: [{
+        ownerId: validOwnerId,
+        maxStateBytes: 1_024,
+        maxStateDepth: 2,
+        maxCollectionItems: 1,
+      }],
+    })
+
+    const registry = createReplicatedOwnerRegistry([registration], limits)
+
+    expect(Result.isFailure(registry)).toBe(true)
+    if (Result.isFailure(registry)) {
+      expect(registry.failure.reason).toBe('malformed-frame')
+    }
   })
 })

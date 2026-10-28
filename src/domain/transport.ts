@@ -41,23 +41,16 @@ type InboundQueueAccounting = {
 }
 
 const releaseTakenFrames = (accounting: InboundQueueAccounting, queuedFrames: number): void => {
-  while (accounting.frameBytes.length > queuedFrames) {
-    const bytes = accounting.frameBytes.shift()
-    if (bytes !== undefined) {
-      accounting.queuedBytes -= bytes
-    }
+  if (accounting.frameBytes.length <= queuedFrames) {
+    return
+  }
+  const takenFrames = accounting.frameBytes.splice(0, accounting.frameBytes.length - queuedFrames)
+  for (const frameBytes of takenFrames) {
+    accounting.queuedBytes -= frameBytes
   }
 }
 
-const overflowFault = (accounting: InboundQueueAccounting, queuedFrames: number, frameBytes: number): TransportFault => ({
-  _tag: 'InboundQueueOverflow',
-  maxBytes: INBOUND_QUEUE_BYTE_CAPACITY,
-  maxFrames: INBOUND_QUEUE_CAPACITY,
-  observedBytes: accounting.queuedBytes + frameBytes,
-  observedFrames: queuedFrames + 1,
-})
-
-export type TransportFault = {
+type LoopbackQueueOverflow = {
   readonly _tag: 'InboundQueueOverflow'
   readonly maxBytes: number
   readonly maxFrames: number
@@ -65,14 +58,23 @@ export type TransportFault = {
   readonly observedFrames: number
 }
 
+const overflowFault = (accounting: InboundQueueAccounting, queuedFrames: number, frameBytes: number): LoopbackQueueOverflow => ({
+  _tag: 'InboundQueueOverflow',
+  maxBytes: INBOUND_QUEUE_BYTE_CAPACITY,
+  maxFrames: INBOUND_QUEUE_CAPACITY,
+  observedBytes: accounting.queuedBytes + frameBytes,
+  observedFrames: queuedFrames + 1,
+})
+
 export type TransportService = {
   /** Write one frame. Fails, rather than buffering, when not connected. */
-  readonly send: (frame: WireText) => Effect.Effect<void, TransportError | TransportFault>
+  readonly send: (frame: WireText) => Effect.Effect<void, TransportError>
   /**
    * Frames received from the peer, in arrival order.
    *
    * The bounded `Dequeue` makes queue pressure explicit: a producer that
-   * exceeds the frame or byte cap receives a typed overflow fault.
+   * exceeds the frame or byte cap receives a typed send failure with observed
+   * counts in its detail.
    */
   readonly inbound: Queue.Dequeue<WireText>
 }
@@ -115,7 +117,7 @@ export const connectionGatedTransport = (
 /** Encode and send. The ordinary way to talk to a peer. */
 export const sendMessage = (
   message: NetworkMessage,
-): Effect.Effect<void, ProtocolError | TransportError | TransportFault, TransportPort> =>
+): Effect.Effect<void, ProtocolError | TransportError, TransportPort> =>
   Effect.gen(function* () {
     const transport = yield* TransportPort
     const frame = yield* Effect.fromResult(encodeFrame(message))
@@ -130,26 +132,11 @@ export const receiveMessage: Effect.Effect<NetworkMessage, ProtocolError, Transp
     return yield* Effect.fromResult(decodeFrame(frame))
   })
 
-const accountOfferedLoopbackFrame = (
-  context: Readonly<{
-    accounting: InboundQueueAccounting
-    frameBytes: number
-    queuedFrames: number
-    target: Queue.Queue<WireText>
-  }>,
-): void => {
-  const { accounting, frameBytes, queuedFrames, target } = context
-  if (Queue.sizeUnsafe(target) > queuedFrames) {
-    accounting.frameBytes.push(frameBytes)
-    accounting.queuedBytes += frameBytes
-  }
-}
-
 const offerLoopbackFrame = (
   target: Queue.Queue<WireText>,
   accounting: InboundQueueAccounting,
   frame: WireText,
-): TransportFault | undefined => {
+): LoopbackQueueOverflow | undefined => {
   const queuedFrames = Queue.sizeUnsafe(target)
   releaseTakenFrames(accounting, queuedFrames)
   const frameBytes = wireFrameByteLength(frame)
@@ -159,10 +146,13 @@ const offerLoopbackFrame = (
   ) {
     return overflowFault(accounting, queuedFrames, frameBytes)
   }
+  // The synchronous capacity check and open-state check make queue rejection unreachable here.
+  /* v8 ignore next 3 -- @preserve */
   if (!Queue.offerUnsafe(target, frame)) {
     return overflowFault(accounting, queuedFrames, frameBytes)
   }
-  accountOfferedLoopbackFrame({ accounting, frameBytes, queuedFrames, target })
+  accounting.frameBytes.push(frameBytes)
+  accounting.queuedBytes += frameBytes
   return undefined
 }
 
@@ -170,13 +160,20 @@ const sendLoopbackFrame = (
   target: Queue.Queue<WireText>,
   accounting: InboundQueueAccounting,
   frame: WireText,
-): Effect.Effect<void, TransportError | TransportFault> => {
+): Effect.Effect<void, TransportError> => {
+  // TransportService exposes only the Dequeue, so callers cannot shut this queue down.
+  /* v8 ignore next 3 -- @preserve */
   if (target.state._tag !== 'Open') {
     return Effect.fail(new TransportError({ detail: 'loopback inbound queue is closed', reason: 'closed' }))
   }
   const overflow = offerLoopbackFrame(target, accounting, frame)
   if (overflow !== undefined) {
-    return Effect.fail(overflow)
+    return Effect.fail(
+      new TransportError({
+        detail: `loopback inbound queue overflow: ${overflow.observedFrames}/${overflow.maxFrames} frames, ${overflow.observedBytes}/${overflow.maxBytes} bytes`,
+        reason: 'send-failed',
+      }),
+    )
   }
   return Effect.void
 }

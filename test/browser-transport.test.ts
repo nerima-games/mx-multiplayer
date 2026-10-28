@@ -343,6 +343,58 @@ describe('browser transport ingress safety and liveness', () => {
     }),
   )
 
+  it.effect('closes when JSON shape limits reject a frame during decode', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      const nested = '['.repeat(12) + '0' + ']'.repeat(12)
+      socket.emitMessage({
+        data: `{"protocolVersion":10,"message":{"_tag":"Ping","nonce":1,"extra":${nested}}}`,
+      })
+      expect(transport.fault()).toMatchObject({ _tag: 'ProtocolError', reason: 'frame-too-large' })
+      expect(transport.state()).toBe('closed')
+      expect(yield* Queue.size(transport.inbound)).toBe(0)
+    }),
+  )
+
+  it.effect('does not send a liveness reply after the socket leaves the open state', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      socket.readyState = READY_STATE_CLOSED
+      const ping = encodeFrame({ _tag: 'Ping', nonce: 42 })
+      expect(Result.isSuccess(ping)).toBe(true)
+      if (Result.isSuccess(ping)) {
+        socket.emitMessage({ data: ping.success })
+      }
+      expect(socket.sent).toHaveLength(0)
+      expect(transport.state()).toBe('open')
+      yield* transport.close
+    }),
+  )
+
+  it.effect('closes the transport when a liveness reply write throws', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport()
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      socket.sendShouldThrow = true
+      const ping = encodeFrame({ _tag: 'Ping', nonce: 42 })
+      expect(Result.isSuccess(ping)).toBe(true)
+      if (Result.isSuccess(ping)) {
+        socket.emitMessage({ data: ping.success })
+      }
+      expect(transport.state()).toBe('closed')
+      const send = yield* Effect.result(transport.send('after-liveness-failure'))
+      expect(Result.isFailure(send)).toBe(true)
+      if (Result.isFailure(send)) {
+        expect(send.failure).toMatchObject({ _tag: 'TransportError', reason: 'send-failed' })
+      }
+    }),
+  )
+
   it.effect('closes with a typed frame-rate fault at the burst boundary', () =>
     Effect.gen(function* () {
       const { socket, transport } = yield* openTransport()
@@ -454,6 +506,71 @@ describe('browser transport ingress safety and liveness', () => {
       yield* TestClock.adjust(Duration.millis(intervalMs))
       expect(transport.fault()).toMatchObject({ _tag: 'HeartbeatTimeout', nonce: 0 })
       expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('does not clear an outstanding heartbeat for a mismatched Pong nonce', () =>
+    Effect.gen(function* () {
+      const intervalMs = 25
+      const { socket, transport } = yield* openTransport({ heartbeatIntervalMs: intervalMs, idleTimeoutMs: 2_000 })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      const pong = encodeFrame({ _tag: 'Pong', nonce: 999 })
+      expect(Result.isSuccess(pong)).toBe(true)
+      if (Result.isSuccess(pong)) {
+        socket.emitMessage({ data: pong.success })
+      }
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      expect(transport.fault()).toMatchObject({ _tag: 'HeartbeatTimeout', nonce: 0 })
+    }),
+  )
+
+  it.effect('defers heartbeat traffic until reconnect authentication completes', () =>
+    Effect.gen(function* () {
+      const intervalMs = 25
+      const { socket, transport } = yield* openTransport({
+        heartbeatIntervalMs: intervalMs,
+        idleTimeoutMs: 2_000,
+        reconnectAuth: {
+          clearRegistrationToken: () => undefined,
+          loadToken: () => 'resume-token',
+          playerId: 'alice',
+          saveToken: () => undefined,
+        },
+      })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      expect(socket.sent).toHaveLength(1)
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      expect(socket.sent).toHaveLength(1)
+      expect(transport.isAuthenticated()).toBe(false)
+      yield* transport.close
+    }),
+  )
+
+  it.effect('stops heartbeat and idle loops when the socket closes immediately after open', () =>
+    Effect.gen(function* () {
+      const { socket, transport } = yield* openTransport({ heartbeatIntervalMs: 25, idleTimeoutMs: 50 })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      socket.emitClose({ code: 1006, reason: 'lost before liveness began' })
+      yield* TestClock.adjust(Duration.millis(100))
+      expect(socket.sent).toHaveLength(0)
+      expect(transport.state()).toBe('closed')
+    }),
+  )
+
+  it.effect('keeps the first fault when idle and heartbeat deadlines coincide', () =>
+    Effect.gen(function* () {
+      const intervalMs = 25
+      const { socket, transport } = yield* openTransport({ heartbeatIntervalMs: intervalMs, idleTimeoutMs: intervalMs })
+      socket.readyState = READY_STATE_OPEN
+      socket.emitOpen()
+      yield* TestClock.adjust(Duration.millis(intervalMs))
+      expect(transport.state()).toBe('closed')
+      expect(['HeartbeatTimeout', 'IdleTimeout']).toContain(transport.fault()?._tag)
+      expect(socket.closes).toHaveLength(1)
     }),
   )
 
