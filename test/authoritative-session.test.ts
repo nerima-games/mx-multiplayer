@@ -376,6 +376,26 @@ describe('authoritative command session', () => {
     expect(result).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'unauthorized-player' })
   })
 
+  it('rejects a command ID already accepted as an intent if it is replayed through the commit path', async () => {
+    const ready = sessionAt(4)
+    const request = command('intent-cannot-commit')
+    const acceptedIntent = await Effect.runPromise(
+      ready.subject.executeIntent(ready.identity, request, networkIntentFor('intent-cannot-commit')),
+    )
+    let invoked = false
+    const committed = await Effect.runPromise(
+      ready.subject.execute(ready.identity, request, () => {
+        invoked = true
+        return Effect.succeed({ accepted: true } as const)
+      }),
+    )
+
+    expect(acceptedIntent).toMatchObject({ _tag: 'AuthoritativeCommandIntentAccepted' })
+    expect(committed).toMatchObject({ _tag: 'AuthoritativeCommandRejected', reason: 'invalid-command', revision: 4 })
+    expect(invoked).toBe(false)
+    expect(ready.subject.revision(world)).toBe(4)
+  })
+
   it('rechecks WCC revision during intent preparation before reserving the command', async () => {
     const outcomes = await Promise.all([
       (async () => {
