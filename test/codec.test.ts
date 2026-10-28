@@ -1,14 +1,17 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
-import { WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { BlockPositionSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { makeReplicatedOwnerId, type ReplicatedOwnerRegistration } from '@nerima-games/mc-sim'
 import { Effect, Result, Option, Schema } from 'effect'
 import {
   createReplicatedOwnerRegistry,
   decodeFrame,
+  decodeTransferredSnapshotFrame,
   encodeFrame,
   encodeFrameAsVersion,
+  encodeTransferredSnapshotFrame,
   inspectReplicatedFrameTag,
+  type ReplicatedOwnerRegistryLimits,
   wireFrameByteLength,
 } from '../src/domain/codec'
 import type { ProtocolError } from '../src/domain/errors'
@@ -36,6 +39,11 @@ const alice = PlayerId.make('alice')
 const overworld = WorldId.make('overworld')
 const end = WorldId.make('end')
 const commandId = CommandId.make('command-1')
+const GLOBAL_FRAME_CODE_UNIT_LIMIT = 1_048_576
+const GLOBAL_FRAME_UTF8_LIMIT = 1_310_720
+const GLOBAL_JSON_DEPTH_LIMIT = 13
+const GLOBAL_JSON_COLLECTION_LIMIT = 31_149
+const OLD_GLOBAL_FRAME_BASELINE = 1_048_576
 const commandHeader = { commandId, expectedRevision: 12, player: alice, world: overworld }
 const item = { count: 2, durability: { current: 63, max: 64 }, item: 'stone' }
 const entityId = EntityId.make('entity-1')
@@ -271,7 +279,6 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   WorldTimeWeatherDelta: { _tag: 'WorldTimeWeatherDelta', revision: 13, state: { timeOfDay: 7000, weather: 'rain' }, world: overworld },
 }
 
-const EMPTY_OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([]))
 const OWNER_STATE_SCHEMA = Schema.Struct({ count: Schema.Number.pipe(Schema.check(Schema.isInt())) })
 const OWNER_ID = makeReplicatedOwnerId('codec-owner')
 const OWNER_REGISTRATION: ReplicatedOwnerRegistration<typeof OWNER_STATE_SCHEMA> = {
@@ -279,7 +286,33 @@ const OWNER_REGISTRATION: ReplicatedOwnerRegistration<typeof OWNER_STATE_SCHEMA>
   schema: OWNER_STATE_SCHEMA,
   initialState: { count: 0 },
 }
-const OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([OWNER_REGISTRATION]))
+const EMPTY_OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = {
+  maxRegisteredOwners: 0,
+  maxDeltaBlockChanges: 0,
+  maxSnapshotBlockReads: 0,
+  maxDepth: GLOBAL_JSON_DEPTH_LIMIT,
+  maxCollectionItems: GLOBAL_JSON_COLLECTION_LIMIT,
+  maxDeltaFrameBytes: 1_048_576,
+  maxSnapshotFrameBytes: 1_048_576,
+  ownerStates: [],
+}
+const EMPTY_OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([], EMPTY_OWNER_REGISTRY_LIMITS))
+const OWNER_REGISTRY_LIMITS: ReplicatedOwnerRegistryLimits = {
+  maxRegisteredOwners: 1,
+  maxDeltaBlockChanges: 2,
+  maxSnapshotBlockReads: 2,
+  maxDepth: GLOBAL_JSON_DEPTH_LIMIT,
+  maxCollectionItems: GLOBAL_JSON_COLLECTION_LIMIT,
+  maxDeltaFrameBytes: 1_048_576,
+  maxSnapshotFrameBytes: 1_048_576,
+  ownerStates: [{
+    ownerId: OWNER_ID,
+    maxStateBytes: wireFrameByteLength(JSON.stringify({ count: Number.MAX_VALUE })),
+    maxStateDepth: 2,
+    maxCollectionItems: 1,
+  }],
+}
+const OWNER_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry([OWNER_REGISTRATION], OWNER_REGISTRY_LIMITS))
 const OWNER_DELTA = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
   _tag: 'ReplicatedWorldDelta',
   world: overworld,
@@ -289,6 +322,897 @@ const OWNER_DELTA = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorld
 }))
 const OWNER_SNAPSHOT = { ...emptyWorldSnapshot, owners: [{ owner: OWNER_ID, state: { count: 1 } }] }
 const encoded = (message: NetworkMessage): string => Result.getOrThrow(encodeFrame(message, EMPTY_OWNER_REGISTRY))
+
+const MAXIMUM_OWNER_STATE_SCHEMA = Schema.Struct({ labels: Schema.Array(Schema.String) })
+const MAXIMUM_OWNER_LABEL = 'x'.repeat(34)
+const MAXIMUM_OWNER_STATE = { labels: [MAXIMUM_OWNER_LABEL, 'y'.repeat(34)] }
+const MAXIMUM_C4_PROFILE_OWNER_COUNT = 3
+const MAXIMUM_C4_PROFILE_DELTA_BLOCK_COUNT = 256
+const MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT = 15_000
+const MAXIMUM_C4_PROFILE_OWNER_STATE_DEPTH = 3
+const MAXIMUM_C4_PROFILE_FRAME_DEPTH = 6
+const MAXIMUM_C4_OWNER_STATE_BYTES = wireFrameByteLength(JSON.stringify(MAXIMUM_OWNER_STATE))
+const MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES = Math.ceil(MAXIMUM_C4_OWNER_STATE_BYTES * 1.25)
+const MAXIMUM_C4_OWNER_STATE_EMPTY_COLLECTION = { labels: ['', '', ''] }
+const MAXIMUM_C4_OWNER_STATE_AT_LIMIT = {
+  labels: [
+    'x'.repeat(MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES - wireFrameByteLength(JSON.stringify(MAXIMUM_C4_OWNER_STATE_EMPTY_COLLECTION))),
+    '',
+    '',
+  ],
+}
+const MAXIMUM_C4_OWNER_STATE_OVER_LIMIT = {
+  labels: [
+    'x'.repeat(MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES + 1 - wireFrameByteLength(JSON.stringify(MAXIMUM_C4_OWNER_STATE_EMPTY_COLLECTION))),
+    '',
+    '',
+  ],
+}
+const MAXIMUM_C4_OWNER_IDS = [
+  OWNER_ID,
+  makeReplicatedOwnerId('codec-owner-2'),
+  makeReplicatedOwnerId('codec-owner-3'),
+  makeReplicatedOwnerId('codec-owner-4'),
+] as const
+const MAXIMUM_C4_BLOCK_BEFORE = 65_535
+const MAXIMUM_C4_BLOCK_AFTER = 65_534
+const MAXIMUM_C4_BLOCK_READ = 65_535
+const MAXIMUM_C4_AXIS = Number.MIN_SAFE_INTEGER
+const maximumC4BlockPosition = (index: number) => Schema.decodeUnknownSync(BlockPositionSchema)({
+  x: MAXIMUM_C4_AXIS + index,
+  y: MAXIMUM_C4_AXIS,
+  z: MAXIMUM_C4_AXIS,
+})
+const MAXIMUM_C4_PROFILE_OWNER_IDS = MAXIMUM_C4_OWNER_IDS.slice(0, MAXIMUM_C4_PROFILE_OWNER_COUNT)
+const MAXIMUM_C4_OWNER_CHANGES_AT_LIMIT = MAXIMUM_C4_OWNER_IDS.map((owner) => ({
+  owner,
+  state: MAXIMUM_C4_OWNER_STATE_AT_LIMIT,
+}))
+const MAXIMUM_C4_REGISTRATIONS: ReadonlyArray<ReplicatedOwnerRegistration<typeof MAXIMUM_OWNER_STATE_SCHEMA>> =
+  MAXIMUM_C4_OWNER_IDS.map((ownerId) => ({
+    ownerId,
+    schema: MAXIMUM_OWNER_STATE_SCHEMA,
+    initialState: MAXIMUM_OWNER_STATE,
+  }))
+const MAXIMUM_C4_OWNER_BOUNDS: ReplicatedOwnerRegistryLimits['ownerStates'] = MAXIMUM_C4_OWNER_IDS.map((ownerId) => ({
+  ownerId,
+  maxStateBytes: MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES,
+  maxStateDepth: Math.ceil(MAXIMUM_C4_PROFILE_OWNER_STATE_DEPTH * 1.25),
+  maxCollectionItems: 3,
+}))
+const MAXIMUM_C4_OWNER_COUNT_LIMIT = Math.ceil(MAXIMUM_C4_PROFILE_OWNER_COUNT * 1.25)
+const MAXIMUM_C4_DELTA_BLOCK_LIMIT = Math.ceil(MAXIMUM_C4_PROFILE_DELTA_BLOCK_COUNT * 1.25)
+const MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT = Math.ceil(MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT * 1.25)
+const MAXIMUM_C4_DEPTH_LIMIT = Math.ceil(MAXIMUM_C4_PROFILE_FRAME_DEPTH * 1.25)
+const MAXIMUM_C4_COLLECTION_LIMIT = MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT
+const MAXIMUM_C4_SIZING_LIMITS: ReplicatedOwnerRegistryLimits = {
+  maxRegisteredOwners: MAXIMUM_C4_OWNER_COUNT_LIMIT,
+  maxDeltaBlockChanges: MAXIMUM_C4_DELTA_BLOCK_LIMIT,
+  maxSnapshotBlockReads: MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT,
+  maxDepth: MAXIMUM_C4_DEPTH_LIMIT,
+  maxCollectionItems: MAXIMUM_C4_COLLECTION_LIMIT,
+  maxDeltaFrameBytes: GLOBAL_FRAME_UTF8_LIMIT,
+  maxSnapshotFrameBytes: 8 * 1_048_576,
+  ownerStates: MAXIMUM_C4_OWNER_BOUNDS,
+}
+const MAXIMUM_C4_MEASUREMENT_REGISTRY = Result.getOrThrow(
+  createReplicatedOwnerRegistry(MAXIMUM_C4_REGISTRATIONS, MAXIMUM_C4_SIZING_LIMITS),
+)
+const MAXIMUM_C4_REVISION = Result.getOrThrow(Schema.decodeUnknownResult(WorldRevisionSchema)(Number.MAX_SAFE_INTEGER))
+const maximumOwnerChanges = MAXIMUM_C4_PROFILE_OWNER_IDS.map((owner) => ({
+  owner,
+  state: MAXIMUM_C4_OWNER_STATE_AT_LIMIT,
+}))
+const MAXIMUM_C4_DELTA = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
+  _tag: 'ReplicatedWorldDelta',
+  world: overworld,
+  revision: MAXIMUM_C4_REVISION,
+  changes: maximumOwnerChanges,
+  blockChanges: Array.from({ length: MAXIMUM_C4_PROFILE_DELTA_BLOCK_COUNT }, (_, index) => ({
+    before: MAXIMUM_C4_BLOCK_BEFORE,
+    dimension: 'overworld',
+    position: maximumC4BlockPosition(index),
+    after: MAXIMUM_C4_BLOCK_AFTER,
+  })),
+}))
+const MAXIMUM_C4_DELTA_AT_COUNT_LIMIT = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
+  ...MAXIMUM_C4_DELTA,
+  changes: MAXIMUM_C4_OWNER_CHANGES_AT_LIMIT,
+  blockChanges: Array.from({ length: MAXIMUM_C4_DELTA_BLOCK_LIMIT }, (_, index) => ({
+    before: MAXIMUM_C4_BLOCK_BEFORE,
+    dimension: 'overworld',
+    position: maximumC4BlockPosition(index),
+    after: MAXIMUM_C4_BLOCK_AFTER,
+  })),
+}))
+const MAXIMUM_C4_SNAPSHOT = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshot)({
+  _tag: 'ReplicatedWorldSnapshot',
+  world: overworld,
+  revision: MAXIMUM_C4_REVISION,
+  owners: maximumOwnerChanges,
+  blocks: Array.from({ length: MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT }, (_, index) => ({
+    dimension: 'overworld',
+    position: maximumC4BlockPosition(index),
+    reading: { _tag: 'Block' as const, block: MAXIMUM_C4_BLOCK_READ },
+  })),
+}))
+const MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshot)({
+  ...MAXIMUM_C4_SNAPSHOT,
+  owners: MAXIMUM_C4_OWNER_CHANGES_AT_LIMIT,
+  blocks: Array.from({ length: MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT }, (_, index) => ({
+    dimension: 'overworld',
+    position: maximumC4BlockPosition(index),
+    reading: { _tag: 'Block' as const, block: MAXIMUM_C4_BLOCK_READ },
+  })),
+}))
+const MAXIMUM_C4_DELTA_FRAME_BYTES = wireFrameByteLength(
+  Result.getOrThrow(encodeFrame(MAXIMUM_C4_DELTA, MAXIMUM_C4_MEASUREMENT_REGISTRY)),
+)
+const MAXIMUM_C4_SNAPSHOT_FRAME_BYTES = wireFrameByteLength(
+  Result.getOrThrow(encodeTransferredSnapshotFrame(
+    MAXIMUM_C4_SNAPSHOT,
+    MAXIMUM_C4_MEASUREMENT_REGISTRY,
+    MAXIMUM_C4_SIZING_LIMITS.maxSnapshotFrameBytes,
+  )),
+)
+const MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES = wireFrameByteLength(
+  Result.getOrThrow(encodeFrame(MAXIMUM_C4_DELTA_AT_COUNT_LIMIT, MAXIMUM_C4_MEASUREMENT_REGISTRY)),
+)
+const MAXIMUM_C4_SNAPSHOT_COUNT_FRAME_BYTES = wireFrameByteLength(
+  Result.getOrThrow(encodeTransferredSnapshotFrame(
+    MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT,
+    MAXIMUM_C4_MEASUREMENT_REGISTRY,
+    MAXIMUM_C4_SIZING_LIMITS.maxSnapshotFrameBytes,
+  )),
+)
+const MAXIMUM_C4_DELTA_FRAME_LIMIT = Math.ceil(Math.max(
+  MAXIMUM_C4_DELTA_FRAME_BYTES,
+  MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES,
+) * 1.25)
+const MAXIMUM_C4_SNAPSHOT_FRAME_LIMIT = Math.ceil(Math.max(
+  MAXIMUM_C4_SNAPSHOT_FRAME_BYTES,
+  MAXIMUM_C4_SNAPSHOT_COUNT_FRAME_BYTES,
+) * 1.25)
+const MAXIMUM_C4_LIMITS: ReplicatedOwnerRegistryLimits = {
+  ...MAXIMUM_C4_SIZING_LIMITS,
+  maxDeltaFrameBytes: MAXIMUM_C4_DELTA_FRAME_LIMIT,
+  maxSnapshotFrameBytes: MAXIMUM_C4_SNAPSHOT_FRAME_LIMIT,
+}
+const MAXIMUM_C4_REGISTRY = Result.getOrThrow(createReplicatedOwnerRegistry(MAXIMUM_C4_REGISTRATIONS, MAXIMUM_C4_LIMITS))
+const withWorldPaddingAtFrameLimit = <Message extends NetworkMessage & { readonly world: WorldId }>(
+  message: Message,
+  frameLimit: number,
+): Message => {
+  const baseFrame = Result.getOrThrow(encodeFrame(message, MAXIMUM_C4_MEASUREMENT_REGISTRY))
+  const paddingBytes = frameLimit - wireFrameByteLength(baseFrame)
+  return { ...message, world: WorldId.make(`${message.world}${'x'.repeat(paddingBytes)}`) }
+}
+const withWorldPaddingAtTransferredFrameLimit = <Message extends NetworkMessage & { readonly world: WorldId }>(
+  message: Message,
+  frameLimit: number,
+): Message => {
+  const baseFrame = Result.getOrThrow(encodeTransferredSnapshotFrame(
+    message,
+    MAXIMUM_C4_MEASUREMENT_REGISTRY,
+    MAXIMUM_C4_SIZING_LIMITS.maxSnapshotFrameBytes,
+  ))
+  const paddingBytes = frameLimit - wireFrameByteLength(baseFrame)
+  return { ...message, world: WorldId.make(`${message.world}${'x'.repeat(paddingBytes)}`) }
+}
+const MAXIMUM_C4_DELTA_AT_FRAME_LIMIT = withWorldPaddingAtFrameLimit(MAXIMUM_C4_DELTA, MAXIMUM_C4_DELTA_FRAME_LIMIT)
+const MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT = withWorldPaddingAtTransferredFrameLimit(MAXIMUM_C4_SNAPSHOT, MAXIMUM_C4_SNAPSHOT_FRAME_LIMIT)
+
+type FrameShape = Readonly<{ maxDepth: number; maxCollectionItems: number }>
+const measureFrameShape = (value: unknown, parentDepth = 0): FrameShape => {
+  if (Array.isArray(value)) {
+    const depth = parentDepth + 1
+    const childShapes = value.map((entry) => measureFrameShape(entry, depth))
+    return {
+      maxDepth: Math.max(depth, ...childShapes.map((shape) => shape.maxDepth)),
+      maxCollectionItems: Math.max(value.length, ...childShapes.map((shape) => shape.maxCollectionItems)),
+    }
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.values(value)
+    const depth = parentDepth + 1
+    const childShapes = entries.map((entry) => measureFrameShape(entry, depth))
+    return {
+      maxDepth: Math.max(depth, ...childShapes.map((shape) => shape.maxDepth)),
+      maxCollectionItems: Math.max(entries.length, ...childShapes.map((shape) => shape.maxCollectionItems)),
+    }
+  }
+  return { maxDepth: parentDepth, maxCollectionItems: 0 }
+}
+
+type JsonPathSegment = string | number
+type JsonPath = ReadonlyArray<JsonPathSegment>
+type FrameBudget = Readonly<{ codeUnits: number; utf8Bytes: number }>
+
+const GLOBAL_FRAME_BUDGET: FrameBudget = {
+  codeUnits: GLOBAL_FRAME_CODE_UNIT_LIMIT,
+  utf8Bytes: GLOBAL_FRAME_UTF8_LIMIT,
+}
+const LEGACY_FRAME_BUDGETS: ReadonlyMap<NetworkMessage['_tag'], FrameBudget> = new Map([
+  ['PlayerDamageCommand', { codeUnits: 1_024, utf8Bytes: 4_096 }],
+  ['CraftingCommand', { codeUnits: 1_024, utf8Bytes: 4_096 }],
+  ['BrewingCommand', { codeUnits: 8_192, utf8Bytes: 32_768 }],
+  ['AnvilCommand', { codeUnits: 2_048, utf8Bytes: 8_192 }],
+  ['EnchantingCommand', { codeUnits: 32_768, utf8Bytes: 131_072 }],
+  ['SummonWitherCommand', { codeUnits: 1_048_576, utf8Bytes: 4_194_304 }],
+  ['DamageWitherCommand', { codeUnits: 1_048_576, utf8Bytes: 4_194_304 }],
+  ['DamageEnderDragonCommand', { codeUnits: 16_384, utf8Bytes: 65_536 }],
+])
+const frameBudgetForTag = (tag: NetworkMessage['_tag']): FrameBudget => {
+  const legacy = LEGACY_FRAME_BUDGETS.get(tag)
+  return {
+    codeUnits: Math.min(GLOBAL_FRAME_BUDGET.codeUnits, legacy?.codeUnits ?? GLOBAL_FRAME_BUDGET.codeUnits),
+    utf8Bytes: Math.min(GLOBAL_FRAME_BUDGET.utf8Bytes, legacy?.utf8Bytes ?? GLOBAL_FRAME_BUDGET.utf8Bytes),
+  }
+}
+const MAXIMUM_SAMPLE_PARSE_OPTIONS = { onExcessProperty: 'error' as const }
+const decodeNetworkMessage = (value: unknown): NetworkMessage | undefined => {
+  const decoded = Schema.decodeUnknownResult(NetworkMessage, MAXIMUM_SAMPLE_PARSE_OPTIONS)(value)
+  return Result.isSuccess(decoded) ? decoded.success : undefined
+}
+const isRecordValue = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+const stringPaths = (value: unknown, path: JsonPath = []): ReadonlyArray<JsonPath> => {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => stringPaths(entry, [...path, index]))
+  }
+  if (isRecordValue(value)) {
+    return Object.entries(value).flatMap(([key, entry]) => key === '_tag' ? [] : stringPaths(entry, [...path, key]))
+  }
+  return typeof value === 'string' ? [path] : []
+}
+const arrayPaths = (value: unknown, path: JsonPath = []): ReadonlyArray<JsonPath> => {
+  if (Array.isArray(value)) {
+    return [path, ...value.flatMap((entry, index) => arrayPaths(entry, [...path, index]))]
+  }
+  if (isRecordValue(value)) {
+    return Object.entries(value).flatMap(([key, entry]) => key === '_tag' ? [] : arrayPaths(entry, [...path, key]))
+  }
+  return []
+}
+const canonicalArrayPath = (path: JsonPath): string => path.map((segment, index) =>
+  typeof segment === 'number' ? '[]' : index === 0 ? segment : `.${segment}`,
+).join('')
+let MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH = 0
+let MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION = 0
+const numberPaths = (value: unknown, path: JsonPath = []): ReadonlyArray<JsonPath> => {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => numberPaths(entry, [...path, index]))
+  }
+  if (isRecordValue(value)) {
+    return Object.entries(value).flatMap(([key, entry]) => numberPaths(entry, [...path, key]))
+  }
+  return typeof value === 'number' ? [path] : []
+}
+const replaceAtPath = (value: unknown, path: JsonPath, replacement: unknown): unknown => {
+  const [segment, ...rest] = path
+  if (segment === undefined) {
+    return replacement
+  }
+  if (Array.isArray(value) && typeof segment === 'number') {
+    return value.map((entry, index) => index === segment ? replaceAtPath(entry, rest, replacement) : entry)
+  }
+  if (isRecordValue(value) && typeof segment === 'string') {
+    return { ...value, [segment]: replaceAtPath(value[segment], rest, replacement) }
+  }
+  return value
+}
+const valueAtPath = (value: unknown, path: JsonPath): unknown => {
+  let current = value
+  for (const segment of path) {
+    if (Array.isArray(current) && typeof segment === 'number') {
+      current = current[segment]
+    } else if (isRecordValue(current) && typeof segment === 'string') {
+      current = current[segment]
+    } else {
+      return undefined
+    }
+  }
+  return current
+}
+type ArraySampleWitness = Readonly<{ path: JsonPath; value: unknown }>
+const MAXIMUM_ARRAY_SAMPLE_WITNESSES: Partial<Record<NetworkMessage['_tag'], ReadonlyArray<ArraySampleWitness>>> = {
+  AuthoritativeSnapshot: [
+    { path: ['containers'], value: SAMPLES.ContainerDelta.state },
+    { path: ['furnaces'], value: SAMPLES.FurnaceDelta.state },
+    { path: ['villagerTrades'], value: SAMPLES.VillagerTradeDelta.state },
+  ],
+  RealmTransferSnapshot: [
+    { path: ['authoritativeSnapshot', 'containers'], value: SAMPLES.ContainerDelta.state },
+    { path: ['authoritativeSnapshot', 'entities'], value: living },
+    { path: ['authoritativeSnapshot', 'furnaces'], value: SAMPLES.FurnaceDelta.state },
+    { path: ['authoritativeSnapshot', 'villagerTrades'], value: SAMPLES.VillagerTradeDelta.state },
+    { path: ['worldSnapshot', 'blocks'], value: { world: end, at: { x: 1, y: 64, z: 1 }, block: 'stone' } },
+    { path: ['worldSnapshot', 'levers'], value: { at: { x: 2, y: 64, z: 1 }, active: true } },
+    {
+      path: ['worldSnapshot', 'players'],
+      value: {
+        player: alice,
+        name: PlayerName.make('Alice'),
+        world: end,
+        at: { x: 1, y: 64, z: 1 },
+        facing: { yawRadians: 0, pitchRadians: 0 },
+      },
+    },
+    { path: ['worldSnapshot', 'poweredRails'], value: { at: { x: 3, y: 64, z: 1 }, powered: true } },
+  ],
+  WitherSnapshotDelta: [{
+    path: ['snapshot', 'skulls'],
+    value: {
+      ageSecs: 0,
+      descriptor: {
+        destroysResistantBlocks: false,
+        direction: { x: 0, y: 0, z: 1 },
+        explosivePower: 1,
+        origin: { x: 0, y: 70, z: 0 },
+        speed: 1,
+        variant: 'normal',
+      },
+      dimension: 'end',
+      id: 'skull-1',
+      ownerId: 'wither-1',
+      position: { x: 0, y: 70, z: 0 },
+    },
+  }],
+}
+const withMaximumArraySampleWitnesses = (tag: NetworkMessage['_tag'], message: NetworkMessage): NetworkMessage => {
+  const candidate = (MAXIMUM_ARRAY_SAMPLE_WITNESSES[tag] ?? []).reduce<unknown>((current, { path, value }) => {
+    const array = valueAtPath(current, path)
+    expect(Array.isArray(array), `${tag}.${canonicalArrayPath(path)} witness path must be an array`).toBe(true)
+    return Array.isArray(array) && array.length === 0 ? replaceAtPath(current, path, [value]) : current
+  }, message)
+  const decoded = decodeNetworkMessage(candidate)
+  expect(decoded, `${tag} seeded array witnesses must satisfy NetworkMessage`).toBeDefined()
+  return decoded ?? message
+}
+const MAXIMUM_SCHEMA_NUMBER_CANDIDATES = [
+  -Number.MAX_SAFE_INTEGER,
+  -1_000_000,
+  -300,
+  -200,
+  -100,
+  -64,
+  -50,
+  -36,
+  -20,
+  -10,
+  -3,
+  -2,
+  -1,
+  0,
+  0.5,
+  1,
+  2,
+  3,
+  4,
+  9,
+  20,
+  24_000,
+  35,
+  36,
+  50,
+  64,
+  100,
+  200,
+  300,
+  1_000,
+  65_535,
+  1_000_000,
+  1_000_000_000,
+  Math.PI / 2,
+  Number.MAX_SAFE_INTEGER,
+  Number.MAX_VALUE,
+].sort((left, right) => right - left)
+const maximumSchemaNumbers = (message: NetworkMessage): NetworkMessage => {
+  let current: NetworkMessage = message
+  for (const path of numberPaths(current)) {
+    const initial = valueAtPath(current, path)
+    if (typeof initial !== 'number') {
+      continue
+    }
+    const candidates = MAXIMUM_SCHEMA_NUMBER_CANDIDATES.filter((candidate) => candidate > initial)
+    let maximumMessage = current
+    let lower = 0
+    let upper = candidates.length - 1
+    while (lower <= upper) {
+      const middle = Math.floor((lower + upper) / 2)
+      const candidate = candidates[middle]
+      if (candidate === undefined) {
+        break
+      }
+      const decoded = decodeNetworkMessage(replaceAtPath(current, path, candidate))
+      if (decoded !== undefined) {
+        maximumMessage = decoded
+        upper = middle - 1
+      } else {
+        lower = middle + 1
+      }
+    }
+    current = maximumMessage
+  }
+  return current
+}
+const maximumDomainMessage = (sample: NetworkMessage): NetworkMessage => {
+  switch (sample._tag) {
+    case 'Chat':
+      return { ...sample, text: 'x'.repeat(256) }
+    case 'PlayerMove':
+      return { ...sample, world: overworld }
+    case 'BlockBreak':
+      return { ...sample, world: overworld }
+    case 'BlockPlace':
+      return { ...sample, world: overworld }
+    case 'PlayerInventoryCommand':
+      return { ...sample, action: { _tag: 'move-item', count: 1, destination: 1, source: 0 } }
+    case 'PlayerVitalsCommand':
+      return { ...sample, action: { _tag: 'activity', activity: 'attack', amount: 100 } }
+    case 'ContainerCommand':
+      return {
+        ...sample,
+        action: {
+          _tag: 'move-item',
+          count: 1,
+          destination: { _tag: 'container-slot', slot: 0 },
+          source: { _tag: 'player-slot', slot: 0 },
+        },
+      }
+    case 'FurnaceCommand':
+      return {
+        ...sample,
+        action: {
+          _tag: 'move-item',
+          count: 1,
+          destination: { _tag: 'furnace-slot', slot: 'input' },
+          source: { _tag: 'player-slot', slot: 0 },
+        },
+      }
+    case 'BowUseCommand':
+      return { ...sample, action: 'release' }
+    case 'FishingCommand':
+      return { ...sample, action: 'reel' }
+    case 'VehicleCommand':
+      return { ...sample, action: { _tag: 'move', direction: 'backward' } }
+    case 'AnvilCommand':
+      return { ...sample, name: 'x'.repeat(50), slot: 35 }
+    case 'PlayerAnvilNamesDelta':
+      return {
+        ...sample,
+        names: Array.from({ length: 36 }, (_, slot) => ({ name: 'x'.repeat(50), slot })),
+      }
+    case 'CraftingCommand':
+      return { ...sample, grid: { cells: Array.from({ length: 9 }, () => 'stone'), height: 3, width: 3 } }
+    case 'PlayerDamageCommand':
+      return { ...sample, amount: 20, minimumHealthPoints: 1 }
+    case 'BrewingCommand':
+      return { ...sample, action: { _tag: 'insert', slot: 35 } }
+    case 'EnchantingCommand':
+      return { ...sample, offer: 2, slot: 35 }
+    case 'PlayerEnchantmentsDelta': {
+      const template = sample.items[0]?.item
+      if (template === undefined) {
+        return sample
+      }
+      return {
+        ...sample,
+        items: Array.from({ length: 36 }, (_, slot) => ({ item: template, slot })),
+      }
+    }
+    case 'DamageWitherCommand':
+      return { ...sample, kind: 'explosion' }
+    case 'EnderDragonSnapshotDelta':
+      return { ...sample, snapshot: { ...sample.snapshot, health: 200, phase: 'perching', rewardEmitted: false } }
+    case 'AnvilCommandRejected':
+      return { ...sample, reason: 'insufficient-experience' }
+    case 'AuthoritativeCommandRejected':
+      return { ...sample, reason: 'unauthorized-player' }
+    case 'CraftingCommandRejected':
+      return { ...sample, reason: 'missing-ingredients' }
+    case 'PlayerDamageCommandRejected':
+      return { ...sample, reason: 'unauthorized-player' }
+    case 'EnchantingCommandRejected':
+      return { ...sample, reason: 'conflicting-enchantment' }
+    case 'DamageEnderDragonCommandRejected':
+      return { ...sample, reason: 'invalid-command' }
+    case 'WitherCommandRejected':
+      return { ...sample, reason: 'invalid-command' }
+    default:
+      return sample
+  }
+}
+const maximumBooleanValues = (message: NetworkMessage): NetworkMessage => {
+  let current: NetworkMessage = message
+  const visit = (value: unknown, path: JsonPath = []): void => {
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(entry, [...path, index]))
+      return
+    }
+    if (isRecordValue(value)) {
+      Object.entries(value).forEach(([key, entry]) => visit(entry, [...path, key]))
+      return
+    }
+    if (typeof value !== 'boolean') {
+      return
+    }
+    const decoded = decodeNetworkMessage(replaceAtPath(current, path, false))
+    if (decoded !== undefined) {
+      current = decoded
+    }
+  }
+  visit(message)
+  return current
+}
+const maximumFixedSample = (tag: NetworkMessage['_tag']): NetworkMessage => {
+  if (tag === 'Ping' || tag === 'Pong') {
+    return { _tag: tag, nonce: Number.MAX_SAFE_INTEGER }
+  }
+  return maximumDomainMessage(SAMPLES[tag])
+}
+const envelopeText = (message: unknown): string => JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+const maximumFrameForStringPath = (
+  message: NetworkMessage,
+  path: JsonPath,
+  budget: FrameBudget,
+): Readonly<{ bytes: number; message: NetworkMessage; frame: string }> | undefined => {
+  const emptyStringMessage = replaceAtPath(message, path, '')
+  const emptyStringFrame = envelopeText(emptyStringMessage)
+  const availableCodeUnits = budget.codeUnits - emptyStringFrame.length
+  const availableUtf8Bytes = budget.utf8Bytes - wireFrameByteLength(emptyStringFrame)
+  if (availableCodeUnits < 1 || availableUtf8Bytes < 1) {
+    return undefined
+  }
+
+  const maximumFrameCandidate = (size: number, makeString: (size: number) => string) => {
+    const candidate = decodeNetworkMessage(replaceAtPath(message, path, makeString(size)))
+    if (candidate === undefined) {
+      return undefined
+    }
+    const frame = envelopeText(candidate)
+    const bytes = wireFrameByteLength(frame)
+    if (frame.length > budget.codeUnits || bytes > budget.utf8Bytes) {
+      return undefined
+    }
+    return { bytes, frame, message: candidate }
+  }
+
+  const largestAccepted = (
+    maximumSize: number,
+    makeString: (size: number) => string,
+  ) => {
+    const maximum = maximumFrameCandidate(maximumSize, makeString)
+    if (maximum !== undefined) {
+      return maximum
+    }
+
+    let lower = 1
+    let upper = maximumSize - 1
+    let best: ReturnType<typeof maximumFrameCandidate> = undefined
+    while (lower <= upper) {
+      const middle = Math.floor((lower + upper) / 2)
+      const candidate = maximumFrameCandidate(middle, makeString)
+      if (candidate !== undefined) {
+        best = candidate
+        lower = middle + 1
+      } else {
+        upper = middle - 1
+      }
+    }
+    return best
+  }
+
+  const maximumUnicodeBytes = Math.min(availableUtf8Bytes, availableCodeUnits * 3)
+  const unicodeFixture = largestAccepted(maximumUnicodeBytes, (byteCount) => {
+    const triplets = Math.floor(byteCount / 3)
+    const remainder = byteCount % 3
+    return '\u0800'.repeat(triplets) + (remainder === 2 ? 'é' : remainder === 1 ? 'x' : '')
+  })
+  if (unicodeFixture !== undefined && (
+    unicodeFixture.frame.length === budget.codeUnits || unicodeFixture.bytes === budget.utf8Bytes
+  )) {
+    return unicodeFixture
+  }
+  const maximumAsciiLength = Math.min(availableCodeUnits, availableUtf8Bytes)
+  const asciiFixture = largestAccepted(maximumAsciiLength, (length) => 'x'.repeat(length))
+  if (unicodeFixture === undefined) {
+    return asciiFixture
+  }
+  if (asciiFixture === undefined) {
+    return unicodeFixture
+  }
+  return unicodeFixture.bytes >= asciiFixture.bytes
+    ? unicodeFixture
+    : asciiFixture
+}
+const maximumWorldIdForFrame = (frame: string, worldId: WorldId, budget: FrameBudget): WorldId => {
+  const serializedWorldId = JSON.stringify(worldId)
+  const fixedCodeUnits = frame.length - serializedWorldId.length
+  const fixedUtf8Bytes = wireFrameByteLength(frame) - wireFrameByteLength(serializedWorldId)
+  const availableCodeUnits = budget.codeUnits - fixedCodeUnits - 2
+  const availableUtf8Bytes = budget.utf8Bytes - fixedUtf8Bytes - 2
+  const maximumUnicodeBytes = Math.min(availableUtf8Bytes, availableCodeUnits * 3)
+  const triplets = Math.floor(maximumUnicodeBytes / 3)
+  const remainder = maximumUnicodeBytes % 3
+  return WorldId.make('\u0800'.repeat(triplets) + (remainder === 2 ? 'é' : remainder === 1 ? 'x' : ''))
+}
+const maximumWireFixtureForTag = (
+  tag: NetworkMessage['_tag'],
+): Readonly<{ message: NetworkMessage; frame: string; owners: typeof EMPTY_OWNER_REGISTRY }> => {
+  if (tag === 'ReplicatedWorldDelta') {
+    return {
+      message: MAXIMUM_C4_DELTA_AT_FRAME_LIMIT,
+      frame: envelopeText(MAXIMUM_C4_DELTA_AT_FRAME_LIMIT),
+      owners: MAXIMUM_C4_REGISTRY,
+    }
+  }
+  if (tag === 'ReplicatedWorldSnapshot') {
+    return {
+      message: MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT,
+      frame: envelopeText(MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT),
+      owners: MAXIMUM_C4_REGISTRY,
+    }
+  }
+
+  let message = maximumFixedSample(tag)
+  const budget = frameBudgetForTag(tag)
+  if (tag === 'AuthoritativeSnapshot' && message._tag === 'AuthoritativeSnapshot') {
+    const world = maximumWorldIdForFrame(envelopeText(message), message.world, budget)
+    const maximumMessage = { ...message, world }
+    return { message: maximumMessage, frame: envelopeText(maximumMessage), owners: EMPTY_OWNER_REGISTRY }
+  }
+  if (tag === 'WorldSnapshot' && message._tag === 'WorldSnapshot') {
+    const world = maximumWorldIdForFrame(envelopeText(message), message.world, budget)
+    const maximumMessage = { ...message, world }
+    return { message: maximumMessage, frame: envelopeText(maximumMessage), owners: EMPTY_OWNER_REGISTRY }
+  }
+  if (tag === 'RealmTransferSnapshot' && message._tag === 'RealmTransferSnapshot') {
+    const destinationWorld = maximumWorldIdForFrame(envelopeText(message), message.destinationWorld, budget)
+    const maximumMessage = { ...message, destinationWorld }
+    return { message: maximumMessage, frame: envelopeText(maximumMessage), owners: EMPTY_OWNER_REGISTRY }
+  }
+  message = maximumBooleanValues(maximumSchemaNumbers(maximumDomainMessage(message)))
+  let largest: ReturnType<typeof maximumFrameForStringPath> = undefined
+  for (const path of stringPaths(message)) {
+    const candidate = maximumFrameForStringPath(message, path, budget)
+    if (candidate === undefined) {
+      continue
+    }
+    const candidateIsAtCeiling = candidate.frame.length === budget.codeUnits || candidate.bytes === budget.utf8Bytes
+    const currentLargestIsAtCeiling = largest !== undefined && (
+      largest.frame.length === budget.codeUnits || largest.bytes === budget.utf8Bytes
+    )
+    if (largest === undefined || candidate.bytes > largest.bytes) {
+      largest = candidate
+    }
+    if (candidateIsAtCeiling || currentLargestIsAtCeiling) {
+      break
+    }
+  }
+  if (largest !== undefined) {
+    return { ...largest, owners: EMPTY_OWNER_REGISTRY }
+  }
+  const frame = Result.getOrThrow(encodeFrame(message, EMPTY_OWNER_REGISTRY))
+  return { message, frame, owners: EMPTY_OWNER_REGISTRY }
+}
+type MaximumArrayFixture = Readonly<{ message: NetworkMessage; frame: string; count: number }>
+const maximumFrameForArrayPath = (
+  message: NetworkMessage,
+  path: JsonPath,
+  budget: FrameBudget,
+  owners: typeof EMPTY_OWNER_REGISTRY,
+): MaximumArrayFixture | undefined => {
+  const original = valueAtPath(message, path)
+  if (!Array.isArray(original) || original.length === 0) {
+    return undefined
+  }
+  const witness = original[0]
+  const emptyArrayFrame = envelopeText(replaceAtPath(message, path, []))
+  const witnessText = JSON.stringify(witness)
+  const witnessBytes = wireFrameByteLength(witnessText)
+  const fixedCodeUnits = emptyArrayFrame.length - 2
+  const fixedBytes = wireFrameByteLength(emptyArrayFrame) - 2
+  const maximumCount = Math.min(
+    Math.floor((budget.codeUnits - fixedCodeUnits + 1) / (witnessText.length + 1)),
+    Math.floor((budget.utf8Bytes - fixedBytes + 1) / (witnessBytes + 1)),
+  )
+  if (maximumCount < original.length) {
+    return undefined
+  }
+
+  const makeMessage = (count: number): unknown => replaceAtPath(message, path, Array.from({ length: count }, () => witness))
+  const makeFrame = (count: number): string => envelopeText(makeMessage(count))
+  const isAccepted = (count: number): boolean => {
+    const frame = makeFrame(count)
+    if (frame.length > budget.codeUnits || wireFrameByteLength(frame) > budget.utf8Bytes) {
+      return false
+    }
+    return decodeNetworkMessage(makeMessage(count)) !== undefined
+  }
+
+  let bestCount = original.length
+  if (!isAccepted(bestCount)) {
+    return undefined
+  }
+  if (maximumCount > bestCount && isAccepted(maximumCount)) {
+    bestCount = maximumCount
+  }
+  else {
+    let low = bestCount + 1
+    let high = maximumCount - 1
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2)
+      if (isAccepted(middle)) {
+        bestCount = middle
+        low = middle + 1
+      } else {
+        high = middle - 1
+      }
+    }
+  }
+
+  const messageCandidate = decodeNetworkMessage(makeMessage(bestCount))
+  if (messageCandidate === undefined) {
+    return undefined
+  }
+  const frame = Result.getOrThrow(encodeFrame(messageCandidate, owners))
+  return { message: messageCandidate, frame, count: bestCount }
+}
+const maximumRealmTransferLeverArrayFixture = (): Readonly<{
+  count: number
+  frame: string
+  message: Extract<NetworkMessage, { _tag: 'RealmTransferSnapshot' }>
+}> => {
+  const sample = maximumBooleanValues(
+    maximumSchemaNumbers(maximumDomainMessage(maximumFixedSample('RealmTransferSnapshot'))),
+  )
+  const seeded = withMaximumArraySampleWitnesses('RealmTransferSnapshot', sample)
+  if (seeded._tag !== 'RealmTransferSnapshot') {
+    throw new Error('RealmTransferSnapshot array witnesses changed the message tag')
+  }
+  const witness = seeded.worldSnapshot.levers[0]
+  if (witness === undefined) {
+    throw new Error('RealmTransferSnapshot lever witness is missing')
+  }
+  const emptyMessage = { ...seeded, worldSnapshot: { ...seeded.worldSnapshot, levers: [] } }
+  const emptyFrame = envelopeText(emptyMessage)
+  const witnessText = JSON.stringify(witness)
+  const fixedCodeUnits = emptyFrame.length - 2
+  const fixedBytes = wireFrameByteLength(emptyFrame) - 2
+  const budget = frameBudgetForTag('RealmTransferSnapshot')
+  const count = Math.min(
+    Math.floor((budget.codeUnits - fixedCodeUnits + 1) / (witnessText.length + 1)),
+    Math.floor((budget.utf8Bytes - fixedBytes + 1) / (wireFrameByteLength(witnessText) + 1)),
+  )
+  const message = {
+    ...seeded,
+    worldSnapshot: {
+      ...seeded.worldSnapshot,
+      levers: Array.from({ length: count }, () => witness),
+    },
+  }
+  return { count, frame: envelopeText(message), message }
+}
+const maximumArrayFixtureMeasurementsForTag = (tag: NetworkMessage['_tag']): string => {
+  if (tag === 'AuthoritativeSnapshot') {
+    return 'maximum global collection fixture: RealmTransferSnapshot.worldSnapshot.levers'
+  }
+  if (tag === 'RealmTransferSnapshot') {
+    const fixture = maximumRealmTransferLeverArrayFixture()
+    const bytes = wireFrameByteLength(fixture.frame)
+    const shape = measureFrameShape({ message: fixture.message, protocolVersion: PROTOCOL_VERSION })
+    const budget = frameBudgetForTag(tag)
+    MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH = Math.max(MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH, shape.maxDepth)
+    MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION = Math.max(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION, shape.maxCollectionItems)
+    expect(fixture.frame.length).toBeLessThanOrEqual(budget.codeUnits)
+    expect(bytes).toBeLessThanOrEqual(budget.utf8Bytes)
+    expect(fixture.message.worldSnapshot.levers).toHaveLength(fixture.count)
+    expect(shape.maxCollectionItems).toBeLessThanOrEqual(GLOBAL_JSON_COLLECTION_LIMIT)
+    const firstLever = fixture.message.worldSnapshot.levers[0]
+    if (firstLever === undefined) {
+      throw new Error('RealmTransferSnapshot lever fixture is empty')
+    }
+    const nextMessage = {
+      ...fixture.message,
+      worldSnapshot: {
+        ...fixture.message.worldSnapshot,
+        levers: [...fixture.message.worldSnapshot.levers, firstLever],
+      },
+    }
+    const nextFrame = envelopeText(nextMessage)
+    expect(nextFrame.length > budget.codeUnits || wireFrameByteLength(nextFrame) > budget.utf8Bytes).toBe(true)
+    return `worldSnapshot.levers: ${fixture.count} items | ${bytes} UTF-8 bytes | depth ${shape.maxDepth}`
+  }
+  const isC4Tag = tag === 'ReplicatedWorldDelta' || tag === 'ReplicatedWorldSnapshot'
+  const owners = isC4Tag ? MAXIMUM_C4_REGISTRY : EMPTY_OWNER_REGISTRY
+  const sample = tag === 'ReplicatedWorldDelta'
+    ? MAXIMUM_C4_DELTA
+    : tag === 'ReplicatedWorldSnapshot'
+      ? MAXIMUM_C4_SNAPSHOT
+      : maximumBooleanValues(maximumSchemaNumbers(maximumDomainMessage(maximumFixedSample(tag))))
+  const message = withMaximumArraySampleWitnesses(tag, sample)
+  const paths = arrayPaths(message)
+  if (paths.length === 0) {
+    return 'no array fields in valid domain sample'
+  }
+
+  const c4MessageFrame = isC4Tag
+    ? tag === 'ReplicatedWorldSnapshot'
+      ? Result.getOrThrow(encodeTransferredSnapshotFrame(
+          message,
+          owners,
+          MAXIMUM_C4_SIZING_LIMITS.maxSnapshotFrameBytes,
+        ))
+      : Result.getOrThrow(encodeFrame(message, owners))
+    : ''
+  const measuredPaths = new Set<string>()
+  return paths.map((path) => {
+    const original = valueAtPath(message, path)
+    const pathName = canonicalArrayPath(path) || '<root>'
+    if (measuredPaths.has(pathName)) {
+      return undefined
+    }
+    measuredPaths.add(pathName)
+    if (!Array.isArray(original) || original.length === 0) {
+      return `${pathName}: no sample member`
+    }
+
+    if (isC4Tag) {
+      const messageFrame = c4MessageFrame
+      const count = valueAtPath(message, path)
+      if (!Array.isArray(count)) {
+        return `${pathName}: schema path did not resolve to an array`
+      }
+      const items = count
+      const shape = measureFrameShape({ message, protocolVersion: PROTOCOL_VERSION })
+      MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH = Math.max(MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH, shape.maxDepth)
+      MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION = Math.max(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION, shape.maxCollectionItems)
+      expect(shape.maxDepth, `${tag}.${pathName} exceeds global depth`).toBeLessThanOrEqual(GLOBAL_JSON_DEPTH_LIMIT)
+      expect(shape.maxCollectionItems, `${tag}.${pathName} exceeds global collection count`).toBeLessThanOrEqual(GLOBAL_JSON_COLLECTION_LIMIT)
+      expect(shape.maxDepth, `${tag}.${pathName} exceeds typed depth`).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxDepth)
+      expect(shape.maxCollectionItems, `${tag}.${pathName} exceeds typed collection count`).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxCollectionItems)
+      if (pathName === 'changes' || pathName === 'owners') {
+        const ownerIds = items.flatMap((ownerChange) => isRecordValue(ownerChange) && typeof ownerChange['owner'] === 'string' ? [ownerChange['owner']] : [])
+        expect(new Set(ownerIds).size, `${tag}.${pathName} must use distinct owner ids`).toBe(items.length)
+      }
+      if (pathName === 'blockChanges' || pathName === 'blocks') {
+        const positions = items.flatMap((blockChange) => {
+          if (!isRecordValue(blockChange) || !isRecordValue(blockChange['position'])) {
+            return []
+          }
+          const { x, y, z } = blockChange['position']
+          return typeof x === 'number' && typeof y === 'number' && typeof z === 'number' ? [`${x},${y},${z}`] : []
+        })
+        expect(new Set(positions).size, `${tag}.${pathName} must use distinct block positions`).toBe(items.length)
+      }
+      return `${pathName}: ${items.length} typed-max items | ${wireFrameByteLength(messageFrame)} UTF-8 bytes | depth ${shape.maxDepth} | unique members`
+    }
+
+    const budget = frameBudgetForTag(tag)
+    const fixture = maximumFrameForArrayPath(message, path, budget, owners)
+    if (fixture === undefined) {
+      return `${pathName}: no valid repeated-member witness at sample count ${original.length}`
+    }
+
+    const fixtureShape = measureFrameShape({ message: fixture.message, protocolVersion: PROTOCOL_VERSION })
+    MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH = Math.max(MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH, fixtureShape.maxDepth)
+    MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION = Math.max(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION, fixtureShape.maxCollectionItems)
+    expect(fixtureShape.maxDepth, `${tag}.${pathName} exceeds global depth`).toBeLessThanOrEqual(GLOBAL_JSON_DEPTH_LIMIT)
+    expect(fixtureShape.maxCollectionItems, `${tag}.${pathName} exceeds global collection count`).toBeLessThanOrEqual(GLOBAL_JSON_COLLECTION_LIMIT)
+    const count = valueAtPath(fixture.message, path)
+    expect(Array.isArray(count)).toBe(true)
+    expect(count).toHaveLength(fixture.count)
+    return `${pathName}: ${fixture.count} items | ${wireFrameByteLength(fixture.frame)} UTF-8 bytes | depth ${fixtureShape.maxDepth}`
+  }).filter((measurement): measurement is string => measurement !== undefined).join('; ')
+}
+const MAXIMUM_FIXTURE_MEASUREMENTS = new Map<NetworkMessage['_tag'], string>()
+let MAXIMUM_FIXTURE_OBSERVED_DEPTH = 0
+const REPRESENTATIVE_SAMPLE_FRAME_MEASUREMENTS = MESSAGE_TAGS.map((tag) => {
+  const text = encoded(SAMPLES[tag])
+  const shape = measureFrameShape(JSON.parse(text))
+  return `${tag} | ${wireFrameByteLength(text)} UTF-8 bytes | depth ${shape.maxDepth} | max collection ${shape.maxCollectionItems}`
+}).join('\n')
 
 /** The ProtocolError a decode produced, or undefined if it succeeded. */
 const failure = (result: Result.Result<unknown, ProtocolError>): ProtocolError | undefined =>
@@ -316,6 +1240,308 @@ describe('frame round trip', () => {
   it.effect('has a sample for every declared tag, and declares every sampled tag', () =>
     Effect.sync(() => {
       expect([...MESSAGE_TAGS].sort()).toStrictEqual(Object.keys(SAMPLES).sort())
+    }),
+  )
+
+  it.effect('records UTF-8 size and JSON shape for one valid representative of every tag', () =>
+    Effect.sync(() => {
+      expect(REPRESENTATIVE_SAMPLE_FRAME_MEASUREMENTS.split('\n')).toHaveLength(MESSAGE_TAGS.length)
+      expect(REPRESENTATIVE_SAMPLE_FRAME_MEASUREMENTS).toMatchInlineSnapshot(`
+        "PlayerJoin | 119 UTF-8 bytes | depth 3 | max collection 4
+        PlayerLeave | 72 UTF-8 bytes | depth 2 | max collection 2
+        PlayerMove | 159 UTF-8 bytes | depth 3 | max collection 4
+        BlockPlace | 112 UTF-8 bytes | depth 3 | max collection 4
+        BlockBreak | 98 UTF-8 bytes | depth 3 | max collection 3
+        Chat | 87 UTF-8 bytes | depth 2 | max collection 3
+        WorldInfo | 89 UTF-8 bytes | depth 2 | max collection 3
+        WorldSnapshot | 507 UTF-8 bytes | depth 5 | max collection 8
+        BlockMutationRejected | 181 UTF-8 bytes | depth 3 | max collection 7
+        AuthoritativeSnapshot | 1036 UTF-8 bytes | depth 8 | max collection 10
+        RealmTransferSnapshot | 783 UTF-8 bytes | depth 9 | max collection 10
+        EyeOfEnderThrown | 190 UTF-8 bytes | depth 3 | max collection 7
+        PlayerInventoryDelta | 216 UTF-8 bytes | depth 6 | max collection 5
+        PlayerVitalsDelta | 161 UTF-8 bytes | depth 3 | max collection 5
+        PlayerFishingDelta | 154 UTF-8 bytes | depth 3 | max collection 5
+        WorldTimeWeatherDelta | 143 UTF-8 bytes | depth 3 | max collection 4
+        ContainerDelta | 219 UTF-8 bytes | depth 6 | max collection 4
+        FurnaceDelta | 260 UTF-8 bytes | depth 5 | max collection 6
+        VillagerTradeDelta | 298 UTF-8 bytes | depth 8 | max collection 5
+        EntitySpawnDelta | 322 UTF-8 bytes | depth 4 | max collection 7
+        EntityUpdateDelta | 323 UTF-8 bytes | depth 4 | max collection 7
+        EntityDespawnDelta | 118 UTF-8 bytes | depth 2 | max collection 4
+        LightningStrikeDelta | 129 UTF-8 bytes | depth 3 | max collection 4
+        PlayerInventoryCommand | 190 UTF-8 bytes | depth 3 | max collection 6
+        PlayerVitalsCommand | 204 UTF-8 bytes | depth 3 | max collection 6
+        WorldTimeWeatherCommand | 196 UTF-8 bytes | depth 3 | max collection 6
+        ContainerCommand | 192 UTF-8 bytes | depth 3 | max collection 7
+        FurnaceCommand | 302 UTF-8 bytes | depth 4 | max collection 7
+        VillagerTradeCommand | 218 UTF-8 bytes | depth 2 | max collection 8
+        EntityAttackCommand | 168 UTF-8 bytes | depth 2 | max collection 6
+        EntityPickupCommand | 168 UTF-8 bytes | depth 2 | max collection 6
+        BowUseCommand | 159 UTF-8 bytes | depth 2 | max collection 6
+        IgniteTntCommand | 169 UTF-8 bytes | depth 3 | max collection 6
+        EndPortalUseCommand | 176 UTF-8 bytes | depth 3 | max collection 6
+        ThrowEyeOfEnderCommand | 149 UTF-8 bytes | depth 2 | max collection 5
+        InsertEyeIntoEndPortalFrameCommand | 190 UTF-8 bytes | depth 3 | max collection 6
+        NetherPortalUseCommand | 179 UTF-8 bytes | depth 3 | max collection 6
+        ToggleLeverCommand | 174 UTF-8 bytes | depth 3 | max collection 6
+        EnderPearlCommand | 144 UTF-8 bytes | depth 2 | max collection 5
+        BucketUseCommand | 143 UTF-8 bytes | depth 2 | max collection 5
+        VehicleUseCommand | 144 UTF-8 bytes | depth 2 | max collection 5
+        FishingCommand | 157 UTF-8 bytes | depth 2 | max collection 6
+        VehicleCommand | 210 UTF-8 bytes | depth 3 | max collection 7
+        AuthoritativeCommandAccepted | 130 UTF-8 bytes | depth 2 | max collection 4
+        AuthoritativeCommandRejected | 178 UTF-8 bytes | depth 2 | max collection 6
+        AuthoritativeResyncRequest | 113 UTF-8 bytes | depth 2 | max collection 3
+        Ping | 58 UTF-8 bytes | depth 2 | max collection 2
+        Pong | 58 UTF-8 bytes | depth 2 | max collection 2
+        AnvilCommand | 167 UTF-8 bytes | depth 2 | max collection 7
+        AnvilCommandAccepted | 102 UTF-8 bytes | depth 2 | max collection 3
+        AnvilCommandRejected | 126 UTF-8 bytes | depth 2 | max collection 4
+        PlayerAnvilNamesDelta | 156 UTF-8 bytes | depth 4 | max collection 5
+        CraftingCommand | 205 UTF-8 bytes | depth 4 | max collection 6
+        CraftingCommandAccepted | 105 UTF-8 bytes | depth 2 | max collection 3
+        CraftingCommandRejected | 125 UTF-8 bytes | depth 2 | max collection 4
+        PlayerDamageCommand | 157 UTF-8 bytes | depth 2 | max collection 6
+        PlayerDamageCommandAccepted | 109 UTF-8 bytes | depth 2 | max collection 3
+        PlayerDamageCommandRejected | 136 UTF-8 bytes | depth 2 | max collection 4
+        BrewingCommand | 203 UTF-8 bytes | depth 3 | max collection 7
+        BrewingCommandAccepted | 104 UTF-8 bytes | depth 2 | max collection 3
+        BrewingCommandRejected | 135 UTF-8 bytes | depth 2 | max collection 4
+        BrewingStandDelta | 246 UTF-8 bytes | depth 4 | max collection 5
+        PlayerStatusEffectsDelta | 219 UTF-8 bytes | depth 5 | max collection 5
+        EnchantingCommand | 163 UTF-8 bytes | depth 2 | max collection 7
+        EnchantingCommandAccepted | 107 UTF-8 bytes | depth 2 | max collection 3
+        EnchantingCommandRejected | 137 UTF-8 bytes | depth 2 | max collection 4
+        PlayerEnchantmentsDelta | 262 UTF-8 bytes | depth 7 | max collection 6
+        DamageEnderDragonCommand | 131 UTF-8 bytes | depth 2 | max collection 4
+        DamageEnderDragonCommandAccepted | 114 UTF-8 bytes | depth 2 | max collection 3
+        DamageEnderDragonCommandRejected | 140 UTF-8 bytes | depth 2 | max collection 4
+        EnderDragonSnapshotDelta | 168 UTF-8 bytes | depth 3 | max collection 4
+        SummonWitherCommand | 176 UTF-8 bytes | depth 3 | max collection 6
+        DamageWitherCommand | 174 UTF-8 bytes | depth 2 | max collection 7
+        WitherCommandAccepted | 103 UTF-8 bytes | depth 2 | max collection 3
+        WitherCommandRejected | 130 UTF-8 bytes | depth 2 | max collection 4
+        WitherSnapshotDelta | 382 UTF-8 bytes | depth 7 | max collection 6
+        ReplicatedWorldDelta | 129 UTF-8 bytes | depth 3 | max collection 5
+        ReplicatedWorldSnapshot | 125 UTF-8 bytes | depth 3 | max collection 5
+        ReplicatedWorldSnapshotStart | 238 UTF-8 bytes | depth 2 | max collection 7
+        ReplicatedWorldSnapshotChunk | 122 UTF-8 bytes | depth 2 | max collection 4
+        ReplicatedWorldSnapshotEnd | 96 UTF-8 bytes | depth 2 | max collection 2"
+      `)
+    }),
+  )
+
+  MESSAGE_TAGS.forEach((tag) => {
+    it.effect(`measures the maximum legitimate wire frame for ${tag}`, () =>
+      Effect.sync(() => {
+        const fixture = maximumWireFixtureForTag(tag)
+        let decodedMessage = fixture.message
+        if (fixture.message._tag === 'AuthoritativeSnapshot') {
+          expect(Schema.is(WorldId)(fixture.message.world)).toBe(true)
+        } else if (fixture.message._tag === 'RealmTransferSnapshot') {
+          expect(Schema.is(WorldId)(fixture.message.destinationWorld)).toBe(true)
+        } else {
+          const decoded = fixture.message._tag === 'ReplicatedWorldSnapshot'
+            ? decodeTransferredSnapshotFrame(fixture.frame, fixture.owners, MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes)
+            : decodeFrame(fixture.frame, fixture.owners)
+          expect(Result.isSuccess(decoded), `${tag} maximum fixture failed to decode`).toBe(true)
+          decodedMessage = Result.getOrThrow(decoded)
+          expect(decodedMessage, `${tag} maximum fixture changed during round trip`).toStrictEqual(fixture.message)
+        }
+
+        const bytes = wireFrameByteLength(fixture.frame)
+        const shape = measureFrameShape({ message: decodedMessage, protocolVersion: PROTOCOL_VERSION })
+        MAXIMUM_FIXTURE_OBSERVED_DEPTH = Math.max(MAXIMUM_FIXTURE_OBSERVED_DEPTH, shape.maxDepth)
+        const isC4Tag = tag === 'ReplicatedWorldDelta' || tag === 'ReplicatedWorldSnapshot'
+        const depthLimit = isC4Tag ? MAXIMUM_C4_LIMITS.maxDepth : GLOBAL_JSON_DEPTH_LIMIT
+        const collectionLimit = isC4Tag ? MAXIMUM_C4_LIMITS.maxCollectionItems : GLOBAL_JSON_COLLECTION_LIMIT
+        const budget = tag === 'ReplicatedWorldDelta'
+          ? { codeUnits: GLOBAL_FRAME_CODE_UNIT_LIMIT, utf8Bytes: MAXIMUM_C4_LIMITS.maxDeltaFrameBytes }
+          : tag === 'ReplicatedWorldSnapshot'
+            ? { codeUnits: MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes, utf8Bytes: MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes }
+            : frameBudgetForTag(tag)
+        expect(fixture.frame.length, `${tag} exceeds UTF-16 code-unit budget`).toBeLessThanOrEqual(budget.codeUnits)
+        expect(bytes, `${tag} exceeds UTF-8 byte budget`).toBeLessThanOrEqual(budget.utf8Bytes)
+        expect(shape.maxDepth, `${tag} exceeds the global JSON depth cap`).toBeLessThanOrEqual(GLOBAL_JSON_DEPTH_LIMIT)
+        expect(shape.maxCollectionItems, `${tag} exceeds the global collection cap`).toBeLessThanOrEqual(GLOBAL_JSON_COLLECTION_LIMIT)
+        if (tag === 'ReplicatedWorldDelta' || tag === 'ReplicatedWorldSnapshot') {
+          expect(shape.maxDepth, `${tag} exceeds its typed depth bound`).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxDepth)
+          expect(shape.maxCollectionItems, `${tag} exceeds its typed collection bound`).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxCollectionItems)
+        }
+
+        const schemaBoundedTag = tag === 'Ping' || tag === 'Pong' || tag === 'EnderDragonSnapshotDelta'
+        if (!schemaBoundedTag) {
+          expect(
+            fixture.frame.length === budget.codeUnits || bytes === budget.utf8Bytes,
+            `${tag} does not reach its enforced frame ceiling`,
+          ).toBe(true)
+        }
+
+        const ceiling = tag === 'Ping' || tag === 'Pong' || tag === 'EnderDragonSnapshotDelta'
+          ? 'schema'
+          : tag === 'ReplicatedWorldDelta' || tag === 'ReplicatedWorldSnapshot'
+            ? 'C4 typed'
+            : LEGACY_FRAME_BUDGETS.has(tag)
+              ? 'legacy'
+              : 'global'
+        const profile = tag === 'ReplicatedWorldDelta'
+          ? `profile ${MAXIMUM_C4_PROFILE_OWNER_COUNT} owners/${MAXIMUM_C4_PROFILE_DELTA_BLOCK_COUNT} unique blocks ${MAXIMUM_C4_DELTA_FRAME_BYTES} bytes; count-limit ${MAXIMUM_C4_OWNER_COUNT_LIMIT} owners/${MAXIMUM_C4_DELTA_BLOCK_LIMIT} blocks ${MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES} bytes; owner-state ${MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES} bytes/depth ${MAXIMUM_C4_LIMITS.ownerStates[0]?.maxStateDepth}/collection ${MAXIMUM_C4_LIMITS.ownerStates[0]?.maxCollectionItems}`
+          : tag === 'ReplicatedWorldSnapshot'
+            ? `profile ${MAXIMUM_C4_PROFILE_OWNER_COUNT} owners/${MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT} logical reads ${MAXIMUM_C4_SNAPSHOT_FRAME_BYTES} transferred bytes; count-limit ${MAXIMUM_C4_OWNER_COUNT_LIMIT} owners/${MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT} reads ${MAXIMUM_C4_SNAPSHOT_COUNT_FRAME_BYTES} transferred bytes; owner-state ${MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES} bytes/depth ${MAXIMUM_C4_LIMITS.ownerStates[0]?.maxStateDepth}/collection ${MAXIMUM_C4_LIMITS.ownerStates[0]?.maxCollectionItems}`
+            : undefined
+        MAXIMUM_FIXTURE_MEASUREMENTS.set(tag, [
+          `${tag} | observed ${bytes} UTF-8 bytes/${fixture.frame.length} code units, depth ${shape.maxDepth}, collection ${shape.maxCollectionItems}`,
+          `cap ${budget.utf8Bytes} UTF-8 bytes/${budget.codeUnits} code units, depth ${depthLimit} (global ${GLOBAL_JSON_DEPTH_LIMIT}), collection ${collectionLimit} (global ${GLOBAL_JSON_COLLECTION_LIMIT})`,
+          ceiling,
+          profile,
+          `arrays ${maximumArrayFixtureMeasurementsForTag(tag)}`,
+        ].filter((measurement): measurement is string => measurement !== undefined).join(' | '))
+      }),
+    )
+  })
+
+  it.effect('records the maximum frame and collection fixtures for every message tag', () =>
+    Effect.sync(() => {
+      const measurements = MESSAGE_TAGS.flatMap((tag) => {
+        const measurement = MAXIMUM_FIXTURE_MEASUREMENTS.get(tag)
+        return measurement === undefined ? [] : [measurement]
+      })
+      expect(MAXIMUM_FIXTURE_MEASUREMENTS.size).toBe(MESSAGE_TAGS.length)
+      expect(measurements.map((measurement) => measurement.split(' | ')[0])).toStrictEqual([...MESSAGE_TAGS])
+      expect(MAXIMUM_FIXTURE_OBSERVED_DEPTH).toBe(9)
+      expect(MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH).toBe(10)
+      expect(GLOBAL_JSON_DEPTH_LIMIT).toBeGreaterThanOrEqual(MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH)
+      expect(GLOBAL_JSON_DEPTH_LIMIT).toBe(Math.ceil(
+        Math.max(MAXIMUM_FIXTURE_OBSERVED_DEPTH, MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH) * 1.25,
+      ))
+      expect(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION).toBe(24_919)
+      expect(GLOBAL_JSON_COLLECTION_LIMIT).toBe(Math.ceil(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION * 1.25))
+      expect(measurements.join('\n')).toMatchInlineSnapshot(`
+        "PlayerJoin | observed 1310720 UTF-8 bytes/437022 code units, depth 3, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerLeave | observed 1310720 UTF-8 bytes/436952 code units, depth 2, collection 2 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerMove | observed 1310720 UTF-8 bytes/437080 code units, depth 3, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BlockPlace | observed 1310720 UTF-8 bytes/437022 code units, depth 3, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BlockBreak | observed 1310720 UTF-8 bytes/437011 code units, depth 3, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        Chat | observed 1310720 UTF-8 bytes/437124 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        WorldInfo | observed 1310720 UTF-8 bytes/436966 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        WorldSnapshot | observed 1310720 UTF-8 bytes/437239 code units, depth 5, collection 8 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays blocks: 9703 items | 1048506 UTF-8 bytes | depth 5; levers: 12044 items | 1048536 UTF-8 bytes | depth 5; players: 4616 items | 1048400 UTF-8 bytes | depth 5; poweredRails: 11907 items | 1048523 UTF-8 bytes | depth 5
+        BlockMutationRejected | observed 1310720 UTF-8 bytes/437064 code units, depth 3, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        AuthoritativeSnapshot | observed 1310720 UTF-8 bytes/437592 code units, depth 8, collection 10 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays maximum global collection fixture: RealmTransferSnapshot.worldSnapshot.levers
+        RealmTransferSnapshot | observed 1310720 UTF-8 bytes/437427 code units, depth 9, collection 10 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays worldSnapshot.levers: 24919 items | 1048555 UTF-8 bytes | depth 10
+        EyeOfEnderThrown | observed 1310720 UTF-8 bytes/437121 code units, depth 3, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerInventoryDelta | observed 1310720 UTF-8 bytes/437093 code units, depth 6, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.slots: 9798 items | 1048567 UTF-8 bytes | depth 6
+        PlayerVitalsDelta | observed 1310720 UTF-8 bytes/437060 code units, depth 3, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerFishingDelta | observed 1310720 UTF-8 bytes/437013 code units, depth 3, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        WorldTimeWeatherDelta | observed 1310720 UTF-8 bytes/437014 code units, depth 3, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        ContainerDelta | observed 1310720 UTF-8 bytes/437085 code units, depth 6, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.slots: 9798 items | 1048555 UTF-8 bytes | depth 6
+        FurnaceDelta | observed 1310720 UTF-8 bytes/437132 code units, depth 5, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        VillagerTradeDelta | observed 1310720 UTF-8 bytes/437168 code units, depth 8, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.offers: 4314 items | 1048459 UTF-8 bytes | depth 8; state.offers[].input: 9797 items | 1048572 UTF-8 bytes | depth 8
+        EntitySpawnDelta | observed 1310720 UTF-8 bytes/437226 code units, depth 4, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EntityUpdateDelta | observed 1310720 UTF-8 bytes/437226 code units, depth 4, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EntityDespawnDelta | observed 1310720 UTF-8 bytes/436989 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        LightningStrikeDelta | observed 1310720 UTF-8 bytes/437036 code units, depth 3, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerInventoryCommand | observed 1310720 UTF-8 bytes/437084 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerVitalsCommand | observed 1310720 UTF-8 bytes/437049 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        WorldTimeWeatherCommand | observed 1310720 UTF-8 bytes/437049 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        ContainerCommand | observed 1310720 UTF-8 bytes/437138 code units, depth 4, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        FurnaceCommand | observed 1310720 UTF-8 bytes/437130 code units, depth 4, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        VillagerTradeCommand | observed 1310720 UTF-8 bytes/437056 code units, depth 2, collection 8 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EntityAttackCommand | observed 1310720 UTF-8 bytes/437022 code units, depth 2, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EntityPickupCommand | observed 1310720 UTF-8 bytes/437022 code units, depth 2, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BowUseCommand | observed 1310720 UTF-8 bytes/437016 code units, depth 2, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        IgniteTntCommand | observed 1310720 UTF-8 bytes/437052 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EndPortalUseCommand | observed 1310720 UTF-8 bytes/437057 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        ThrowEyeOfEnderCommand | observed 1310720 UTF-8 bytes/437010 code units, depth 2, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        InsertEyeIntoEndPortalFrameCommand | observed 1310720 UTF-8 bytes/437066 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        NetherPortalUseCommand | observed 1310720 UTF-8 bytes/437059 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        ToggleLeverCommand | observed 1310720 UTF-8 bytes/437056 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EnderPearlCommand | observed 1310720 UTF-8 bytes/437006 code units, depth 2, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BucketUseCommand | observed 1310720 UTF-8 bytes/437006 code units, depth 2, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        VehicleUseCommand | observed 1310720 UTF-8 bytes/437006 code units, depth 2, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        FishingCommand | observed 1310720 UTF-8 bytes/437015 code units, depth 2, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        VehicleCommand | observed 1310720 UTF-8 bytes/437051 code units, depth 3, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        AuthoritativeCommandAccepted | observed 1310720 UTF-8 bytes/436997 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        AuthoritativeCommandRejected | observed 1310720 UTF-8 bytes/437033 code units, depth 2, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        AuthoritativeResyncRequest | observed 1310720 UTF-8 bytes/436986 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        Ping | observed 73 UTF-8 bytes/73 code units, depth 2, collection 2 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | schema | arrays no array fields in valid domain sample
+        Pong | observed 73 UTF-8 bytes/73 code units, depth 2, collection 2 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | schema | arrays no array fields in valid domain sample
+        AnvilCommand | observed 5716 UTF-8 bytes/2048 code units, depth 2, collection 7 | cap 8192 UTF-8 bytes/2048 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        AnvilCommandAccepted | observed 1310720 UTF-8 bytes/436978 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        AnvilCommandRejected | observed 1310720 UTF-8 bytes/437002 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerAnvilNamesDelta | observed 1310720 UTF-8 bytes/438725 code units, depth 4, collection 36 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays names: 14561 items | 1048532 UTF-8 bytes | depth 4
+        CraftingCommand | observed 2554 UTF-8 bytes/1024 code units, depth 4, collection 9 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays grid.cells: 9 items | 268 UTF-8 bytes | depth 4
+        CraftingCommandAccepted | observed 1310720 UTF-8 bytes/436980 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        CraftingCommandRejected | observed 1310720 UTF-8 bytes/437001 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerDamageCommand | observed 2698 UTF-8 bytes/1024 code units, depth 2, collection 7 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        PlayerDamageCommandAccepted | observed 1310720 UTF-8 bytes/436983 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerDamageCommandRejected | observed 1310720 UTF-8 bytes/437004 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BrewingCommand | observed 24070 UTF-8 bytes/8192 code units, depth 3, collection 7 | cap 32768 UTF-8 bytes/8192 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        BrewingCommandAccepted | observed 1310720 UTF-8 bytes/436980 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BrewingCommandRejected | observed 1310720 UTF-8 bytes/437000 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BrewingStandDelta | observed 1310720 UTF-8 bytes/437128 code units, depth 4, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerStatusEffectsDelta | observed 1310720 UTF-8 bytes/437096 code units, depth 5, collection 5 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.effects: 7824 items | 1048571 UTF-8 bytes | depth 5
+        EnchantingCommand | observed 97966 UTF-8 bytes/32768 code units, depth 2, collection 7 | cap 131072 UTF-8 bytes/32768 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        EnchantingCommandAccepted | observed 1310720 UTF-8 bytes/436982 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EnchantingCommandRejected | observed 1310720 UTF-8 bytes/437005 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        PlayerEnchantmentsDelta | observed 1310720 UTF-8 bytes/441019 code units, depth 7, collection 36 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays items: 6277 items | 1048425 UTF-8 bytes | depth 7; items[].item.enchantments: 23691 items | 1048538 UTF-8 bytes | depth 7
+        DamageEnderDragonCommand | observed 48880 UTF-8 bytes/16384 code units, depth 2, collection 4 | cap 65536 UTF-8 bytes/16384 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        DamageEnderDragonCommandAccepted | observed 1310720 UTF-8 bytes/436986 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        DamageEnderDragonCommandRejected | observed 1310720 UTF-8 bytes/437004 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EnderDragonSnapshotDelta | observed 204 UTF-8 bytes/204 code units, depth 3, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | schema | arrays no array fields in valid domain sample
+        SummonWitherCommand | observed 1310720 UTF-8 bytes/437071 code units, depth 3, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        DamageWitherCommand | observed 1310720 UTF-8 bytes/437044 code units, depth 2, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        WitherCommandAccepted | observed 1310720 UTF-8 bytes/436979 code units, depth 2, collection 3 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        WitherCommandRejected | observed 1310720 UTF-8 bytes/436997 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        WitherSnapshotDelta | observed 1310720 UTF-8 bytes/437330 code units, depth 7, collection 6 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays snapshot.skulls: 4077 items | 1048426 UTF-8 bytes | depth 7; snapshot.withers: 2344 items | 1048215 UTF-8 bytes | depth 7
+        ReplicatedWorldDelta | observed 54489 UTF-8 bytes/54489 code units, depth 6, collection 256 | cap 54489 UTF-8 bytes/1048576 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/256 unique blocks 34872 bytes; count-limit 4 owners/320 blocks 43591 bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blockChanges: 256 typed-max items | 34872 UTF-8 bytes | depth 6 | unique members; changes: 3 typed-max items | 34872 UTF-8 bytes | depth 6 | unique members; changes[].state.labels: 3 typed-max items | 34872 UTF-8 bytes | depth 6 | unique members
+        ReplicatedWorldSnapshot | observed 3422759 UTF-8 bytes/3422759 code units, depth 6, collection 15000 | cap 3422759 UTF-8 bytes/3422759 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/15000 logical reads 2190564 transferred bytes; count-limit 4 owners/18750 reads 2738207 transferred bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blocks: 15000 typed-max items | 2190564 UTF-8 bytes | depth 6 | unique members; owners: 3 typed-max items | 2190564 UTF-8 bytes | depth 6 | unique members; owners[].state.labels: 3 typed-max items | 2190564 UTF-8 bytes | depth 6 | unique members
+        ReplicatedWorldSnapshotStart | observed 1310720 UTF-8 bytes/437088 code units, depth 2, collection 7 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        ReplicatedWorldSnapshotChunk | observed 1310720 UTF-8 bytes/436992 code units, depth 2, collection 4 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        ReplicatedWorldSnapshotEnd | observed 1310720 UTF-8 bytes/436964 code units, depth 2, collection 2 | cap 1310720 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample"
+      `)
+    }),
+  )
+
+  it.effect('measures a maximum grouped-delta rate fixture at the simulation tick cadence', () =>
+    Effect.sync(() => {
+      // The old compose multiplayer server advances at 20 ticks per second.
+      const tickMilliseconds = 50
+      const windowMilliseconds = 1_000
+      const fixtureFrameCount = windowMilliseconds / tickMilliseconds
+      const frames = Array.from({ length: fixtureFrameCount }, (_, index) => {
+        const revision = Result.getOrThrow(
+          Schema.decodeUnknownResult(WorldRevisionSchema)(Number.MAX_SAFE_INTEGER - fixtureFrameCount + index),
+        )
+        return Result.getOrThrow(encodeFrame({ ...MAXIMUM_C4_DELTA_AT_COUNT_LIMIT, revision }, MAXIMUM_C4_REGISTRY))
+      })
+      const frameBytes = frames.map((frame) => wireFrameByteLength(frame))
+      const measuredBytesPerSecond = frameBytes.reduce((total, bytes) => total + bytes, 0)
+      const frameRateLimit = Math.ceil(fixtureFrameCount * 1.25)
+      const frameBytesPerSecondLimit = frameRateLimit * Math.max(...frameBytes)
+
+      expect(frames).toHaveLength(20)
+      expect(new Set(frameBytes)).toStrictEqual(new Set([MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES]))
+      expect(measuredBytesPerSecond).toBe(MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES * fixtureFrameCount)
+      expect(frameRateLimit).toBe(25)
+      expect(frameBytesPerSecondLimit).toBe(MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES * frameRateLimit)
+      expect({
+        measuredFramesPerSecond: fixtureFrameCount,
+        measuredBytesPerSecond,
+        frameRateLimit,
+        frameBytesPerSecondLimit,
+        burstFrameCount: 64,
+        burstFrameLimit: Math.ceil(64 * 1.25),
+      }).toMatchInlineSnapshot(`
+        {
+          "burstFrameCount": 64,
+          "burstFrameLimit": 80,
+          "frameBytesPerSecondLimit": 1089775,
+          "frameRateLimit": 25,
+          "measuredBytesPerSecond": 871820,
+          "measuredFramesPerSecond": 20,
+        }
+      `)
     }),
   )
 
@@ -421,15 +1647,240 @@ describe('registered C4 owner messages', () => {
     }),
   )
 
+  it.effect('accepts the configured owner, block, shape, and byte boundaries for C4 delta and snapshot fixtures', () =>
+    Effect.sync(() => {
+      const deltaFrame = Result.getOrThrow(encodeFrame(MAXIMUM_C4_DELTA_AT_FRAME_LIMIT, MAXIMUM_C4_REGISTRY))
+      const snapshotFrame = Result.getOrThrow(encodeTransferredSnapshotFrame(
+        MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT,
+        MAXIMUM_C4_REGISTRY,
+        MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes,
+      ))
+      const deltaShape = measureFrameShape({ message: MAXIMUM_C4_DELTA_AT_FRAME_LIMIT, protocolVersion: PROTOCOL_VERSION })
+      const snapshotShape = measureFrameShape({
+        message: MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT,
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      const boundaryMetrics = {
+        ownerStateUtf8Bytes: MAXIMUM_C4_OWNER_STATE_BYTES,
+        configuredOwnerStateBytes: MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES,
+        delta: {
+          ownerCount: MAXIMUM_C4_DELTA_AT_FRAME_LIMIT.changes.length,
+          blockCount: MAXIMUM_C4_DELTA_AT_FRAME_LIMIT.blockChanges.length,
+          profileUtf8Bytes: MAXIMUM_C4_DELTA_FRAME_BYTES,
+          countLimitFixtureUtf8Bytes: MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES,
+          configuredFrameLimitBytes: MAXIMUM_C4_LIMITS.maxDeltaFrameBytes,
+          utf8Bytes: wireFrameByteLength(deltaFrame),
+          ...deltaShape,
+        },
+        snapshot: {
+          ownerCount: MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT.owners.length,
+          blockReadCount: MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT.blocks.length,
+          profileUtf8Bytes: MAXIMUM_C4_SNAPSHOT_FRAME_BYTES,
+          countLimitFixtureUtf8Bytes: MAXIMUM_C4_SNAPSHOT_COUNT_FRAME_BYTES,
+          configuredFrameLimitBytes: MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes,
+          utf8Bytes: wireFrameByteLength(snapshotFrame),
+          ...snapshotShape,
+        },
+      }
+
+      expect(boundaryMetrics).toMatchInlineSnapshot(`
+        {
+          "configuredOwnerStateBytes": 108,
+          "delta": {
+            "blockCount": 256,
+            "configuredFrameLimitBytes": 54489,
+            "countLimitFixtureUtf8Bytes": 43591,
+            "maxCollectionItems": 256,
+            "maxDepth": 6,
+            "ownerCount": 3,
+            "profileUtf8Bytes": 34872,
+            "utf8Bytes": 54489,
+          },
+          "ownerStateUtf8Bytes": 86,
+          "snapshot": {
+            "blockReadCount": 15000,
+            "configuredFrameLimitBytes": 3422759,
+            "countLimitFixtureUtf8Bytes": 2738207,
+            "maxCollectionItems": 15000,
+            "maxDepth": 6,
+            "ownerCount": 3,
+            "profileUtf8Bytes": 2190564,
+            "utf8Bytes": 3422759,
+          },
+        }
+      `)
+      expect(MAXIMUM_C4_DELTA_AT_FRAME_LIMIT.changes).toHaveLength(MAXIMUM_C4_PROFILE_OWNER_COUNT)
+      expect(MAXIMUM_C4_DELTA_AT_FRAME_LIMIT.blockChanges).toHaveLength(MAXIMUM_C4_PROFILE_DELTA_BLOCK_COUNT)
+      expect(MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT.owners).toHaveLength(MAXIMUM_C4_PROFILE_OWNER_COUNT)
+      expect(MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT.blocks).toHaveLength(MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT)
+      expect(MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES).toBe(Math.ceil(MAXIMUM_C4_OWNER_STATE_BYTES * 1.25))
+      expect(MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES).toBe(MAXIMUM_C4_LIMITS.ownerStates[0]?.maxStateBytes)
+      expect(MAXIMUM_C4_LIMITS.ownerStates[0]?.maxStateDepth).toBe(Math.ceil(MAXIMUM_C4_PROFILE_OWNER_STATE_DEPTH * 1.25))
+      expect(MAXIMUM_C4_OWNER_COUNT_LIMIT).toBe(Math.ceil(MAXIMUM_C4_PROFILE_OWNER_COUNT * 1.25))
+      expect(MAXIMUM_C4_DELTA_BLOCK_LIMIT).toBe(Math.ceil(MAXIMUM_C4_PROFILE_DELTA_BLOCK_COUNT * 1.25))
+      expect(MAXIMUM_C4_SNAPSHOT_BLOCK_LIMIT).toBe(Math.ceil(MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT * 1.25))
+      expect(MAXIMUM_C4_DEPTH_LIMIT).toBe(Math.ceil(MAXIMUM_C4_PROFILE_FRAME_DEPTH * 1.25))
+      expect(MAXIMUM_C4_COLLECTION_LIMIT).toBe(MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT * 1.25)
+      expect(MAXIMUM_C4_DELTA_FRAME_LIMIT).toBe(Math.ceil(Math.max(
+        MAXIMUM_C4_DELTA_FRAME_BYTES,
+        MAXIMUM_C4_DELTA_COUNT_FRAME_BYTES,
+      ) * 1.25))
+      expect(MAXIMUM_C4_SNAPSHOT_FRAME_LIMIT).toBe(Math.ceil(Math.max(
+        MAXIMUM_C4_SNAPSHOT_FRAME_BYTES,
+        MAXIMUM_C4_SNAPSHOT_COUNT_FRAME_BYTES,
+      ) * 1.25))
+      expect(deltaShape.maxDepth).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxDepth)
+      expect(deltaShape.maxCollectionItems).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxCollectionItems)
+      expect(snapshotShape.maxDepth).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxDepth)
+      expect(snapshotShape.maxCollectionItems).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.maxCollectionItems)
+      expect(snapshotShape.maxDepth).toBe(MAXIMUM_C4_PROFILE_FRAME_DEPTH)
+      expect(snapshotShape.maxCollectionItems).toBe(MAXIMUM_C4_PROFILE_SNAPSHOT_BLOCK_COUNT)
+      expect(wireFrameByteLength(deltaFrame)).toBe(MAXIMUM_C4_LIMITS.maxDeltaFrameBytes)
+      expect(wireFrameByteLength(snapshotFrame)).toBe(MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes)
+      expect(Result.getOrThrow(decodeFrame(deltaFrame, MAXIMUM_C4_REGISTRY))).toStrictEqual(MAXIMUM_C4_DELTA_AT_FRAME_LIMIT)
+      expect(Result.getOrThrow(decodeTransferredSnapshotFrame(
+        snapshotFrame,
+        MAXIMUM_C4_REGISTRY,
+        MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes,
+      ))).toStrictEqual(MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT)
+    }),
+  )
+
+  it.effect('accepts exact C4 owner and block counts, then rejects each count one above its typed limit', () =>
+    Effect.sync(() => {
+      const frameFor = (message: unknown) => JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+      const deltaFrame = Result.getOrThrow(encodeFrame(MAXIMUM_C4_DELTA_AT_COUNT_LIMIT, MAXIMUM_C4_REGISTRY))
+      const smallSnapshotLimits = { ...MAXIMUM_C4_LIMITS, maxSnapshotBlockReads: 2 }
+      const smallSnapshotOwners = Result.getOrThrow(
+        createReplicatedOwnerRegistry(MAXIMUM_C4_REGISTRATIONS, smallSnapshotLimits),
+      )
+      const exactCountSnapshot = {
+        ...MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT,
+        blocks: MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT.blocks.slice(0, smallSnapshotLimits.maxSnapshotBlockReads),
+      }
+      const overOwnerDelta = {
+        ...MAXIMUM_C4_DELTA_AT_COUNT_LIMIT,
+        changes: [...MAXIMUM_C4_DELTA_AT_COUNT_LIMIT.changes, MAXIMUM_C4_DELTA_AT_COUNT_LIMIT.changes[0]],
+      }
+      const overDeltaBlocks = {
+        ...MAXIMUM_C4_DELTA_AT_COUNT_LIMIT,
+        blockChanges: [...MAXIMUM_C4_DELTA_AT_COUNT_LIMIT.blockChanges, {
+          before: 0,
+          dimension: 'overworld',
+          position: { x: MAXIMUM_C4_DELTA_BLOCK_LIMIT, y: 64, z: 0 },
+          after: 65_535,
+        }],
+      }
+      const overOwnerSnapshot = {
+        ...exactCountSnapshot,
+        owners: [...exactCountSnapshot.owners, exactCountSnapshot.owners[0]],
+      }
+      const overSnapshotBlocks = {
+        ...exactCountSnapshot,
+        blocks: [...exactCountSnapshot.blocks, exactCountSnapshot.blocks[0]],
+      }
+      const exactSnapshotFrame = Result.getOrThrow(encodeTransferredSnapshotFrame(
+        exactCountSnapshot,
+        smallSnapshotOwners,
+        smallSnapshotLimits.maxSnapshotFrameBytes,
+      ))
+
+      expect(MAXIMUM_C4_DELTA_AT_COUNT_LIMIT.changes).toHaveLength(MAXIMUM_C4_LIMITS.maxRegisteredOwners)
+      expect(MAXIMUM_C4_DELTA_AT_COUNT_LIMIT.blockChanges).toHaveLength(MAXIMUM_C4_LIMITS.maxDeltaBlockChanges)
+      expect(MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT.owners).toHaveLength(MAXIMUM_C4_LIMITS.maxRegisteredOwners)
+      expect(MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT.blocks).toHaveLength(MAXIMUM_C4_LIMITS.maxSnapshotBlockReads)
+      expect(measureFrameShape({ message: exactCountSnapshot, protocolVersion: PROTOCOL_VERSION }).maxCollectionItems)
+        .toBeLessThanOrEqual(smallSnapshotLimits.maxCollectionItems)
+      expect(Result.getOrThrow(decodeFrame(deltaFrame, MAXIMUM_C4_REGISTRY))).toStrictEqual(MAXIMUM_C4_DELTA_AT_COUNT_LIMIT)
+      expect(Result.getOrThrow(decodeTransferredSnapshotFrame(
+        exactSnapshotFrame,
+        smallSnapshotOwners,
+        smallSnapshotLimits.maxSnapshotFrameBytes,
+      ))).toStrictEqual(exactCountSnapshot)
+      expect(failure(decodeFrame(frameFor(overOwnerDelta), MAXIMUM_C4_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(decodeFrame(frameFor(overDeltaBlocks), MAXIMUM_C4_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(decodeTransferredSnapshotFrame(
+        frameFor(overOwnerSnapshot),
+        smallSnapshotOwners,
+        smallSnapshotLimits.maxSnapshotFrameBytes,
+      ))?.reason).toBe('malformed-frame')
+      expect(failure(decodeTransferredSnapshotFrame(
+        frameFor(overSnapshotBlocks),
+        smallSnapshotOwners,
+        smallSnapshotLimits.maxSnapshotFrameBytes,
+      ))?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it.effect('accepts owner state at its typed byte and collection limits, and rejects the next value', () =>
+    Effect.sync(() => {
+      const overStateBytes = {
+        ...MAXIMUM_C4_DELTA,
+        changes: MAXIMUM_C4_OWNER_CHANGES_AT_LIMIT.map((change, index) => index === 0
+          ? { ...change, state: MAXIMUM_C4_OWNER_STATE_OVER_LIMIT }
+          : change),
+      }
+      const overStateCollection = {
+        ...MAXIMUM_C4_DELTA,
+        changes: MAXIMUM_C4_OWNER_IDS.map((owner) => ({
+          owner,
+          state: { labels: ['', '', '', ''] },
+        })),
+      }
+      const atStateLimit = { ...MAXIMUM_C4_DELTA, changes: MAXIMUM_C4_OWNER_CHANGES_AT_LIMIT }
+      const atStateLimitFrame = Result.getOrThrow(encodeFrame(atStateLimit, MAXIMUM_C4_REGISTRY))
+      const stateShape = measureFrameShape(MAXIMUM_C4_OWNER_STATE_AT_LIMIT)
+
+      expect(wireFrameByteLength(JSON.stringify(MAXIMUM_C4_OWNER_STATE_AT_LIMIT))).toBe(MAXIMUM_C4_OWNER_STATE_LIMIT_BYTES)
+      expect(stateShape.maxDepth).toBeLessThanOrEqual(MAXIMUM_C4_LIMITS.ownerStates[0]?.maxStateDepth ?? 0)
+      expect(stateShape.maxCollectionItems).toBe(MAXIMUM_C4_LIMITS.ownerStates[0]?.maxCollectionItems)
+      expect(Result.getOrThrow(decodeFrame(atStateLimitFrame, MAXIMUM_C4_REGISTRY))).toStrictEqual(atStateLimit)
+      expect(failure(encodeFrame(overStateBytes, MAXIMUM_C4_REGISTRY))?.reason).toBe('unencodable-message')
+      expect(failure(encodeFrame(overStateCollection, MAXIMUM_C4_REGISTRY))?.reason).toBe('unencodable-message')
+    }),
+  )
+
+  it.effect('rejects C4 frames one UTF-8 byte above the exact delta and snapshot limits', () =>
+    Effect.sync(() => {
+      const frameFor = (message: unknown) => JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION })
+      const overDelta = {
+        ...MAXIMUM_C4_DELTA_AT_FRAME_LIMIT,
+        world: WorldId.make(`${MAXIMUM_C4_DELTA_AT_FRAME_LIMIT.world}x`),
+      }
+      const overSnapshot = {
+        ...MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT,
+        world: WorldId.make(`${MAXIMUM_C4_SNAPSHOT_AT_FRAME_LIMIT.world}x`),
+      }
+      const overDeltaFrame = frameFor(overDelta)
+      const overSnapshotFrame = frameFor(overSnapshot)
+
+      expect(wireFrameByteLength(overDeltaFrame)).toBe(MAXIMUM_C4_LIMITS.maxDeltaFrameBytes + 1)
+      expect(wireFrameByteLength(overSnapshotFrame)).toBe(MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes + 1)
+      expect(failure(decodeFrame(overDeltaFrame, MAXIMUM_C4_REGISTRY))?.reason).toBe('frame-too-large')
+      expect(failure(decodeTransferredSnapshotFrame(
+        overSnapshotFrame,
+        MAXIMUM_C4_REGISTRY,
+        MAXIMUM_C4_LIMITS.maxSnapshotFrameBytes,
+      ))?.reason).toBe('frame-too-large')
+    }),
+  )
+
   it.effect('requires a registry for C4 messages even when their owner list is empty', () =>
     Effect.sync(() => {
-      expect(failure(decodeFrame(encoded(emptyWorldDelta)))?.reason).toBe('malformed-frame')
+      const unregisteredDelta = JSON.stringify({ message: emptyWorldDelta, protocolVersion: PROTOCOL_VERSION })
+      const unregisteredSnapshot = JSON.stringify({ message: emptyWorldSnapshot, protocolVersion: PROTOCOL_VERSION })
+
+      expect(failure(decodeFrame(unregisteredDelta))?.reason).toBe('malformed-frame')
+      expect(failure(decodeFrame(unregisteredSnapshot))?.reason).toBe('malformed-frame')
     }),
   )
 
   it.effect('rejects duplicate registrations, unknown owners, duplicate changes, and invalid owner state', () =>
     Effect.sync(() => {
-      const duplicateRegistry = createReplicatedOwnerRegistry([OWNER_REGISTRATION, OWNER_REGISTRATION])
+      const duplicateRegistry = createReplicatedOwnerRegistry([OWNER_REGISTRATION, OWNER_REGISTRATION], {
+        ...OWNER_REGISTRY_LIMITS,
+        maxRegisteredOwners: 2,
+      })
       expect(failure(duplicateRegistry)?.reason).toBe('malformed-frame')
 
       const unknownOwner = {
@@ -443,6 +1894,14 @@ describe('registered C4 owner messages', () => {
           { owner: OWNER_ID, state: { count: 3 } },
         ],
       }
+      const firstMaximumOwnerChange = MAXIMUM_C4_OWNER_CHANGES_AT_LIMIT.at(0)
+      if (firstMaximumOwnerChange === undefined) {
+        throw new Error('maximum C4 fixture must contain an owner change')
+      }
+      const duplicateRegisteredOwnerChanges = {
+        ...MAXIMUM_C4_DELTA,
+        changes: [firstMaximumOwnerChange, firstMaximumOwnerChange],
+      }
       const invalidState = {
         ...OWNER_DELTA,
         changes: [{ owner: OWNER_ID, state: { count: 2, extra: true } }],
@@ -451,8 +1910,133 @@ describe('registered C4 owner messages', () => {
 
       expect(failure(decodeFrame(frameFor(unknownOwner), OWNER_REGISTRY))?.reason).toBe('malformed-frame')
       expect(failure(decodeFrame(frameFor(duplicateChanges), OWNER_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(decodeFrame(frameFor(duplicateRegisteredOwnerChanges), MAXIMUM_C4_REGISTRY))?.reason).toBe('malformed-frame')
       expect(failure(decodeFrame(frameFor(invalidState), OWNER_REGISTRY))?.reason).toBe('malformed-frame')
       expect(failure(encodeFrame(invalidState, OWNER_REGISTRY))?.reason).toBe('unencodable-message')
+    }),
+  )
+
+  it.effect('rejects invalid registry limits and mismatched owner-state bounds', () =>
+    Effect.sync(() => {
+      const [ownerBounds] = OWNER_REGISTRY_LIMITS.ownerStates
+      if (ownerBounds === undefined) {
+        throw new Error('owner registry fixture must contain its state bounds')
+      }
+      const invalidOwnerId = makeReplicatedOwnerId('')
+      const invalidOwnerRegistration: ReplicatedOwnerRegistration<typeof OWNER_STATE_SCHEMA> = {
+        ...OWNER_REGISTRATION,
+        ownerId: invalidOwnerId,
+      }
+
+      const invalidCountLimit = createReplicatedOwnerRegistry([OWNER_REGISTRATION], {
+        ...OWNER_REGISTRY_LIMITS,
+        maxRegisteredOwners: 0,
+      })
+      const invalidOwnerIdentity = createReplicatedOwnerRegistry([invalidOwnerRegistration], {
+        ...OWNER_REGISTRY_LIMITS,
+        ownerStates: [{ ...ownerBounds, ownerId: invalidOwnerId }],
+      })
+      const invalidDepthLimit = createReplicatedOwnerRegistry([OWNER_REGISTRATION], {
+        ...OWNER_REGISTRY_LIMITS,
+        maxDepth: GLOBAL_JSON_DEPTH_LIMIT + 1,
+      })
+      const invalidOwnerStateBound = createReplicatedOwnerRegistry([OWNER_REGISTRATION], {
+        ...OWNER_REGISTRY_LIMITS,
+        ownerStates: [{ ...ownerBounds, maxStateBytes: 0 }],
+      })
+      const duplicateOwnerStateBound = createReplicatedOwnerRegistry([OWNER_REGISTRATION], {
+        ...OWNER_REGISTRY_LIMITS,
+        ownerStates: [ownerBounds, ownerBounds],
+      })
+      const missingOwnerStateBound = createReplicatedOwnerRegistry([OWNER_REGISTRATION], {
+        ...OWNER_REGISTRY_LIMITS,
+        ownerStates: [],
+      })
+      const unusedOwnerStateBound = createReplicatedOwnerRegistry([], {
+        ...EMPTY_OWNER_REGISTRY_LIMITS,
+        ownerStates: [ownerBounds],
+      })
+
+      for (const invalidRegistry of [
+        invalidCountLimit,
+        invalidOwnerIdentity,
+        invalidDepthLimit,
+        invalidOwnerStateBound,
+        duplicateOwnerStateBound,
+        missingOwnerStateBound,
+        unusedOwnerStateBound,
+      ]) {
+        expect(failure(invalidRegistry)?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
+
+  it.effect('enforces the owner-state depth bound on validated state', () =>
+    Effect.sync(() => {
+      const nestedOwnerId = makeReplicatedOwnerId('codec-nested-owner')
+      const nestedStateSchema = Schema.Struct({ nested: Schema.Struct({ value: Schema.Number }) })
+      const registration: ReplicatedOwnerRegistration<typeof nestedStateSchema> = {
+        ownerId: nestedOwnerId,
+        schema: nestedStateSchema,
+        initialState: { nested: { value: 1 } },
+      }
+      const registry = Result.getOrThrow(createReplicatedOwnerRegistry([registration], {
+        ...OWNER_REGISTRY_LIMITS,
+        ownerStates: [{ ownerId: nestedOwnerId, maxStateBytes: 1_024, maxStateDepth: 2, maxCollectionItems: 1 }],
+      }))
+      const message = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
+        _tag: 'ReplicatedWorldDelta',
+        world: overworld,
+        revision: replicatedWorldRevision,
+        changes: [{ owner: nestedOwnerId, state: { nested: { value: 2 } } }],
+        blockChanges: [],
+      }))
+
+      expect(failure(encodeFrame(message, registry))?.reason).toBe('unencodable-message')
+    }),
+  )
+
+  it.effect('requires a registry and its block-read allowance for C4 snapshots', () =>
+    Effect.sync(() => {
+      const snapshot = {
+        ...emptyWorldSnapshot,
+        blocks: [{
+          dimension: 'overworld',
+          position: { x: 0, y: 64, z: 0 },
+          reading: { _tag: 'Block' as const, block: 1 },
+        }],
+      }
+      const frame = JSON.stringify({ message: snapshot, protocolVersion: PROTOCOL_VERSION })
+
+      expect(failure(decodeFrame(encoded(emptyWorldSnapshot)))?.reason).toBe('malformed-frame')
+      expect(failure(decodeFrame(frame, EMPTY_OWNER_REGISTRY))?.reason).toBe('malformed-frame')
+      expect(failure(encodeFrame(snapshot, EMPTY_OWNER_REGISTRY))?.reason).toBe('unencodable-message')
+    }),
+  )
+
+  it.effect('validates snapshot-transfer byte limits and snapshot message tags', () =>
+    Effect.sync(() => {
+      const pingFrame = encoded(SAMPLES.Ping)
+      const snapshotFrame = encoded(emptyWorldSnapshot)
+
+      expect(failure(encodeTransferredSnapshotFrame(emptyWorldSnapshot, EMPTY_OWNER_REGISTRY, 0))?.reason).toBe('unencodable-message')
+      expect(failure(encodeTransferredSnapshotFrame(emptyWorldDelta, EMPTY_OWNER_REGISTRY, GLOBAL_FRAME_UTF8_LIMIT))?.reason).toBe('unencodable-message')
+      expect(failure(encodeTransferredSnapshotFrame(emptyWorldSnapshot, EMPTY_OWNER_REGISTRY, 1))?.reason).toBe('frame-too-large')
+      expect(failure(decodeTransferredSnapshotFrame(snapshotFrame, EMPTY_OWNER_REGISTRY, 0))?.reason).toBe('malformed-frame')
+      expect(failure(decodeTransferredSnapshotFrame(snapshotFrame, EMPTY_OWNER_REGISTRY, 1))?.reason).toBe('frame-too-large')
+      expect(failure(decodeTransferredSnapshotFrame(pingFrame, EMPTY_OWNER_REGISTRY, GLOBAL_FRAME_UTF8_LIMIT))?.reason).toBe('malformed-frame')
+    }),
+  )
+
+  it.effect('enforces the configured C4 frame depth before accepting a valid delta', () =>
+    Effect.sync(() => {
+      const shallowRegistry = Result.getOrThrow(createReplicatedOwnerRegistry([], {
+        ...EMPTY_OWNER_REGISTRY_LIMITS,
+        maxDepth: 2,
+      }))
+      const frame = JSON.stringify({ message: emptyWorldDelta, protocolVersion: PROTOCOL_VERSION })
+
+      expect(failure(decodeFrame(frame, shallowRegistry))?.reason).toBe('frame-too-large')
     }),
   )
 
@@ -515,6 +2099,14 @@ describe('registered C4 owner messages', () => {
       if (Result.isSuccess(ordinaryTag)) {
         expect(ordinaryTag.success).toBeUndefined()
       }
+      const nonObjectMessage = inspectReplicatedFrameTag(JSON.stringify({
+        message: 'Ping',
+        protocolVersion: PROTOCOL_VERSION,
+      }))
+      expect(Result.isSuccess(nonObjectMessage)).toBe(true)
+      if (Result.isSuccess(nonObjectMessage)) {
+        expect(nonObjectMessage.success).toBeUndefined()
+      }
       expect(failure(inspectReplicatedFrameTag(malformedEnvelope))?.reason).toBe('malformed-frame')
       expect(failure(inspectReplicatedFrameTag(oldVersion))?.reason).toBe('unsupported-protocol-version')
 
@@ -544,13 +2136,84 @@ describe('wire byte accounting', () => {
       expect(wireFrameByteLength('世'.repeat(1_024))).toBe(3_072)
     }),
   )
+
+  it.effect('retains the 1 MiB ASCII frame baseline in both UTF-8 bytes and code units', () =>
+    Effect.sync(() => {
+      const baseMessage = { ...SAMPLES.PlayerMove, world: WorldId.make('x') }
+      const baseFrame = envelopeText(baseMessage)
+      const worldPadding = OLD_GLOBAL_FRAME_BASELINE - baseFrame.length
+      const message = { ...baseMessage, world: WorldId.make('x'.repeat(worldPadding + 1)) }
+      const frame = Result.getOrThrow(encodeFrame(message))
+
+      expect(frame.length).toBe(OLD_GLOBAL_FRAME_BASELINE)
+      expect(wireFrameByteLength(frame)).toBe(OLD_GLOBAL_FRAME_BASELINE)
+      expect(Result.getOrThrow(decodeFrame(frame))).toStrictEqual(message)
+    }),
+  )
+
+  it.effect('accepts the exact global UTF-8 byte cap with 3-byte BMP text and rejects its next character', () =>
+    Effect.sync(() => {
+      const baseMessage = { ...SAMPLES.PlayerMove, world: WorldId.make('x') }
+      const baseFrame = envelopeText(baseMessage)
+      const bytesForWorld = GLOBAL_FRAME_UTF8_LIMIT - wireFrameByteLength(baseFrame)
+      const triplets = Math.floor(bytesForWorld / 3)
+      const remainder = bytesForWorld % 3
+      const world = `x${'\u0800'.repeat(triplets)}${remainder === 2 ? 'é' : remainder === 1 ? 'x' : ''}`
+      const message = { ...baseMessage, world: WorldId.make(world) }
+      const exactFrame = Result.getOrThrow(encodeFrame(message))
+      const overMessage = { ...message, world: WorldId.make(`${world}\u0800`) }
+      const overFrame = envelopeText(overMessage)
+
+      expect(wireFrameByteLength(exactFrame)).toBe(GLOBAL_FRAME_UTF8_LIMIT)
+      expect(exactFrame.length).toBeLessThanOrEqual(GLOBAL_FRAME_CODE_UNIT_LIMIT)
+      expect(Result.getOrThrow(decodeFrame(exactFrame))).toStrictEqual(message)
+      expect(wireFrameByteLength(overFrame)).toBe(GLOBAL_FRAME_UTF8_LIMIT + 3)
+      expect(failure(decodeFrame(overFrame))?.reason).toBe('frame-too-large')
+      expect(failure(encodeFrame(overMessage))?.reason).toBe('frame-too-large')
+      expect(failure(inspectReplicatedFrameTag(overFrame))?.reason).toBe('frame-too-large')
+    }),
+  )
+
+  it.effect('enforces exact global JSON depth and collection ceilings before schema decoding', () =>
+    Effect.sync(() => {
+      const frameWithNestedArrays = (depth: number): string => {
+        let extra: unknown = 0
+        for (let currentDepth = 2; currentDepth < depth; currentDepth += 1) {
+          extra = [extra]
+        }
+        return JSON.stringify({
+          message: { _tag: 'Ping', nonce: Number.MAX_SAFE_INTEGER, extra },
+          protocolVersion: PROTOCOL_VERSION,
+        })
+      }
+      const frameWithCollection = (count: number): string => JSON.stringify({
+        message: { _tag: 'Ping', nonce: Number.MAX_SAFE_INTEGER, extra: Array.from({ length: count }, () => 0) },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      const depthLimitFrame = frameWithNestedArrays(GLOBAL_JSON_DEPTH_LIMIT)
+      const overDepthFrame = frameWithNestedArrays(GLOBAL_JSON_DEPTH_LIMIT + 1)
+      const collectionLimitFrame = frameWithCollection(GLOBAL_JSON_COLLECTION_LIMIT)
+      const overCollectionFrame = frameWithCollection(GLOBAL_JSON_COLLECTION_LIMIT + 1)
+
+      expect(measureFrameShape(JSON.parse(depthLimitFrame)).maxDepth).toBe(GLOBAL_JSON_DEPTH_LIMIT)
+      expect(measureFrameShape(JSON.parse(collectionLimitFrame)).maxCollectionItems).toBe(GLOBAL_JSON_COLLECTION_LIMIT)
+      expect(wireFrameByteLength(depthLimitFrame)).toBeLessThan(GLOBAL_FRAME_UTF8_LIMIT)
+      expect(wireFrameByteLength(overDepthFrame)).toBeLessThan(GLOBAL_FRAME_UTF8_LIMIT)
+      expect(wireFrameByteLength(collectionLimitFrame)).toBeLessThan(GLOBAL_FRAME_UTF8_LIMIT)
+      expect(wireFrameByteLength(overCollectionFrame)).toBeLessThan(GLOBAL_FRAME_UTF8_LIMIT)
+      expect(Result.isSuccess(decodeFrame(depthLimitFrame))).toBe(true)
+      expect(failure(decodeFrame(overDepthFrame))?.reason).toBe('frame-too-large')
+      expect(Result.isSuccess(decodeFrame(collectionLimitFrame))).toBe(true)
+      expect(failure(decodeFrame(overCollectionFrame))?.reason).toBe('frame-too-large')
+    }),
+  )
 })
 
 describe('legacy frame ceilings', () => {
   it.effect('enforces the PlayerDamageCommand UTF-16 ceiling and reports oversized frames distinctly', () =>
     Effect.sync(() => {
-      const withCommandId = (commandId: string): string => JSON.stringify({
-        message: { ...SAMPLES.PlayerDamageCommand, commandId },
+      const withCommandId = (id: string): string => JSON.stringify({
+        message: { ...SAMPLES.PlayerDamageCommand, commandId: id },
         protocolVersion: PROTOCOL_VERSION,
       })
       const emptyIdFrame = withCommandId('')
@@ -564,6 +2227,7 @@ describe('legacy frame ceilings', () => {
       const tooLarge = failure(decodeFrame(overLimit))
       expect(tooLarge?.reason).toBe('frame-too-large')
       expect(tooLarge?.detail).toContain('UTF-16 code units 1025 exceed limit 1024')
+      expect(failure(inspectReplicatedFrameTag(overLimit))?.reason).toBe('frame-too-large')
       expect(failure(encodeFrame({ ...SAMPLES.PlayerDamageCommand, commandId: 'x'.repeat(1_024) }))?.reason).toBe('frame-too-large')
 
       const escapedKeys = overLimit
@@ -577,14 +2241,14 @@ describe('legacy frame ceilings', () => {
 
   it.effect('counts the derived PlayerDamageCommand UTF-8 boundary while UTF-16 remains the effective ceiling', () =>
     Effect.sync(() => {
-      const withCommandId = (commandId: string): string => JSON.stringify({
-        message: { ...SAMPLES.PlayerDamageCommand, commandId },
+      const withCommandId = (id: string): string => JSON.stringify({
+        message: { ...SAMPLES.PlayerDamageCommand, commandId: id },
         protocolVersion: PROTOCOL_VERSION,
       })
       const emptyIdFrame = withCommandId('')
       const bytesToLimit = 3_072 - wireFrameByteLength(emptyIdFrame)
-      const commandId = '世'.repeat(Math.floor(bytesToLimit / 3)) + 'a'.repeat(bytesToLimit % 3)
-      const atByteLimit = withCommandId(commandId)
+      const unicodeCommandId = '世'.repeat(Math.floor(bytesToLimit / 3)) + 'a'.repeat(bytesToLimit % 3)
+      const atByteLimit = withCommandId(unicodeCommandId)
 
       expect(wireFrameByteLength(atByteLimit)).toBe(3_072)
       expect(atByteLimit.length).toBeGreaterThan(1_024)
@@ -617,6 +2281,50 @@ describe('legacy frame ceilings', () => {
     }),
   )
 
+  it.effect('scans valid JSON escapes, whitespace, containers, and number forms before decoding the envelope', () =>
+    Effect.sync(() => {
+      const escapedValue = '\\/\\b\\f\\n\\r\\t\\"\\\\\\u0041\\u00af\\u00AF'
+      const frame = '{\r\n\t"message":{"_tag":"Ping","nonce":7,"ignored":"' +
+        escapedValue +
+        '","nested":[true,false,null,-0,1.25e+2,1E2,{"empty":[]}]},\r\n\t"protocolVersion":' +
+        PROTOCOL_VERSION +
+        '\r\n}'
+      const decoded = decodeFrame(frame)
+
+      expect(Result.isSuccess(decoded)).toBe(true)
+      expect(failure(inspectReplicatedFrameTag(frame))).toBeUndefined()
+    }),
+  )
+
+  it.effect('rejects malformed JSON strings, numbers, delimiters, and trailing content during frame inspection', () =>
+    Effect.sync(() => {
+      const validPrefix = '{"message":{"_tag":"Ping","nonce":1},"protocolVersion":' + PROTOCOL_VERSION + '}'
+      const unfinishedEscape = '{"message":{"_tag":"Ping","nonce":1,"ignored":"\\'
+      const invalidFrames = [
+        { id: 'invalid simple escape', frame: '{"message":{"_tag":"Ping","nonce":1,"ignored":"\\q"},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'invalid Unicode hex digit', frame: '{"message":{"_tag":"Ping","nonce":1,"ignored":"\\u00g0"},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'unterminated string escape', frame: unfinishedEscape },
+        { id: 'unterminated string body', frame: '{"message":{"_tag":"Ping","nonce":1,"ignored":"' },
+        { id: 'invalid string in array', frame: '{"message":{"_tag":"Ping","nonce":1,"ignored":["\\q"]},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'unescaped control character', frame: '{"message":{"_tag":"Ping","nonce":1,"ignored":"' + String.fromCharCode(1) + '"},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'leading zero in integer', frame: '{"message":{"_tag":"Ping","nonce":01},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'missing integer digits', frame: '{"message":{"_tag":"Ping","nonce":+1},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'missing fraction digits', frame: '{"message":{"_tag":"Ping","nonce":1.},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'missing exponent digits', frame: '{"message":{"_tag":"Ping","nonce":1e+},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'missing object colon', frame: '{"message" {"_tag":"Ping","nonce":1},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'mismatched object closer', frame: '{"message":{"_tag":"Ping","nonce":1]},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'trailing object comma', frame: '{"message":{"_tag":"Ping","nonce":1,},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'trailing array comma', frame: '{"message":{"_tag":"Ping","nonce":1,"ignored":[1,]},"protocolVersion":' + PROTOCOL_VERSION + '}' },
+        { id: 'trailing non-whitespace', frame: validPrefix + ' x' },
+        { id: 'truncated after whitespace', frame: validPrefix.slice(0, -1) + ' \r\n' },
+      ]
+
+      for (const { frame, id } of invalidFrames) {
+        expect(failure(inspectReplicatedFrameTag(frame))?.reason, id).toBe('malformed-frame')
+      }
+    }),
+  )
+
   it.effect('keeps new snapshot-transfer tags at the shared global ceiling', () =>
     Effect.sync(() => {
       const message = { ...snapshotStart, transferId: 'x'.repeat(1_024) }
@@ -624,6 +2332,20 @@ describe('legacy frame ceilings', () => {
 
       expect(text.length).toBeGreaterThan(1_024)
       expect(Result.isSuccess(decodeFrame(text))).toBe(true)
+    }),
+  )
+
+  it.effect('counts object nesting while scanning frame shape', () =>
+    Effect.sync(() => {
+      const depth = GLOBAL_JSON_DEPTH_LIMIT + 1
+      const nestedObjects = '{"child":'.repeat(depth) + 'null' + '}'.repeat(depth)
+      const frame = '{"message":{"_tag":"Ping","nonce":1,"ignored":' +
+        nestedObjects +
+        '},"protocolVersion":' +
+        PROTOCOL_VERSION +
+        '}'
+
+      expect(failure(decodeFrame(frame))?.reason).toBe('frame-too-large')
     }),
   )
 })
@@ -660,6 +2382,12 @@ describe('protocol version', () => {
       })
 
       expect(failure(decodeFrame(futureFrame))?.reason).toBe('unsupported-protocol-version')
+    }),
+  )
+
+  it.effect('rejects a non-integral protocol version while encoding a frame', () =>
+    Effect.sync(() => {
+      expect(failure(encodeFrameAsVersion(1.5, SAMPLES.Ping))?.reason).toBe('unencodable-message')
     }),
   )
 })
@@ -1236,12 +2964,12 @@ describe('codec properties', () => {
     Effect.sync(() => {
       fc.assert(fc.property(fc.integer(), (nonce) => {
         const message = { _tag: 'Ping' as const, nonce }
-        const encoded = encodeFrame(message, EMPTY_OWNER_REGISTRY)
-        if (Result.isFailure(encoded)) {
+        const encodeResult = encodeFrame(message, EMPTY_OWNER_REGISTRY)
+        if (Result.isFailure(encodeResult)) {
           return false
         }
 
-        const decoded = decodeFrame(encoded.success, EMPTY_OWNER_REGISTRY)
+        const decoded = decodeFrame(encodeResult.success, EMPTY_OWNER_REGISTRY)
         if (Result.isFailure(decoded)) {
           return false
         }

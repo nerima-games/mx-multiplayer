@@ -106,6 +106,25 @@ describe('deterministic interpolation', () => {
     }),
   )
 
+  it.effect('interpolates orientation when position is unchanged instead of treating zero distance as a teleport', () =>
+    Effect.sync(() => {
+      const subject = makeSubject(4, 8)
+      subject.ingest(alice, {
+        ...snapshot(1, 10, 7),
+        facing: { pitchRadians: 0, yawRadians: 0 },
+      })
+      subject.ingest(alice, {
+        ...snapshot(2, 20, 7),
+        facing: { pitchRadians: 1, yawRadians: 1 },
+      })
+
+      const sample = subject.sample(alice, 15)
+      expect(sample?.at).toStrictEqual({ x: 7, y: 64, z: 0 })
+      expect(sample?.facing).toStrictEqual({ pitchRadians: 0.5, yawRadians: 0.5 })
+      expect(sample?.tick).toBe(15)
+    }),
+  )
+
   it.effect('walks past a non-matching pair to interpolate within a later one in a 3-snapshot history', () =>
     Effect.sync(() => {
       const subject = makeSubject(4, 16)

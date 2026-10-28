@@ -33,13 +33,16 @@ const LAST_INDEX = -1
 
 /** A full turn is two half turns (`Math.PI` each). */
 const FULL_TURN_MULTIPLIER = 2
+const VECTOR_COMPONENT_COUNT = 3
+const VECTOR_COMPONENT_POWER = 2
+const INTERPOLATION_TOTAL_WEIGHT = 1
 
 /** Below this, `sample`'s neighbor-pair scan has no earlier snapshot to interpolate from. */
 const NEIGHBOR_OFFSET = 1
 
 /** A buffer holding fewer than this cannot bracket a render tick between two snapshots. */
 const MIN_HISTORY_LIMIT = 2
-const SQRT_THREE = Math.sqrt(3)
+const SQRT_VECTOR_COMPONENT_COUNT = Math.sqrt(VECTOR_COMPONENT_COUNT)
 const MAX_FINITE_NUMBER = Number.MAX_VALUE
 
 const validSnapshot = (snapshot: PlayerTransformSnapshot): boolean =>
@@ -67,14 +70,11 @@ const axisDistance = (left: number, right: number): number | undefined => {
   return Math.abs(right - left)
 }
 
-const atOrBeyondDistance = (left: Vec3, right: Vec3, threshold: number): boolean => {
-  const x = axisDistance(left.x, right.x)
-  const y = axisDistance(left.y, right.y)
-  const z = axisDistance(left.z, right.z)
-  if (x === undefined || y === undefined || z === undefined) {
-    return true
-  }
-
+const scaledDistanceAtOrBeyondThreshold = (
+  distances: Readonly<{ readonly x: number; readonly y: number; readonly z: number }>,
+  threshold: number,
+): boolean => {
+  const { x, y, z } = distances
   const scale = Math.max(x, y, z)
   if (scale === ZERO) {
     return false
@@ -82,16 +82,29 @@ const atOrBeyondDistance = (left: Vec3, right: Vec3, threshold: number): boolean
   if (scale >= threshold) {
     return true
   }
-  if (scale < threshold / SQRT_THREE) {
+  if (scale < threshold / SQRT_VECTOR_COMPONENT_COUNT) {
     return false
   }
-
-  const scaledDistance = Math.sqrt((x / scale) ** 2 + (y / scale) ** 2 + (z / scale) ** 2)
+  const scaledDistance = Math.sqrt(
+    (x / scale) ** VECTOR_COMPONENT_POWER +
+      (y / scale) ** VECTOR_COMPONENT_POWER +
+      (z / scale) ** VECTOR_COMPONENT_POWER,
+  )
   return scaledDistance >= threshold / scale
 }
 
+const atOrBeyondDistance = (left: Vec3, right: Vec3, threshold: number): boolean => {
+  const x = axisDistance(left.x, right.x)
+  const y = axisDistance(left.y, right.y)
+  const z = axisDistance(left.z, right.z)
+  if (x === undefined || y === undefined || z === undefined) {
+    return true
+  }
+  return scaledDistanceAtOrBeyondThreshold({ x, y, z }, threshold)
+}
+
 const lerp = (left: number, right: number, alpha: number): number =>
-  left * (1 - alpha) + right * alpha
+  left * (INTERPOLATION_TOTAL_WEIGHT - alpha) + right * alpha
 
 const interpolateYaw = (left: number, right: number, alpha: number): number => {
   const fullTurn = Math.PI * FULL_TURN_MULTIPLIER
@@ -216,12 +229,6 @@ export class SnapshotInterpolator {
         return this.#interpolatePair(left, right, renderTick)
       }
       left = right
-      // Unreachable: the precondition above guarantees some `right` in this
-      // Loop satisfies `renderTick <= right.tick` no later than the final
-      // Element, so the loop always returns from inside the `if` above. The
-      // `-- @preserve` suffix is required under vitest 4 (Vitest 4.1 restored
-      // Ignore-hint support but esbuild strips ignore comments lacking it).
-      /* v8 ignore next -- @preserve */
     }
     return history.at(LAST_INDEX)
   }

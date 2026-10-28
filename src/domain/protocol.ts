@@ -59,12 +59,12 @@ import {
   EnchantingCommandRejected,
   PlayerEnchantmentsDelta,
 } from './protocol/enchanting.js'
+import { WorldIdSchema as KernelWorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import {
   PlayerDamageCommand,
   PlayerDamageCommandAccepted,
   PlayerDamageCommandRejected,
 } from './protocol/player-damage.js'
-import { WorldIdSchema as KernelWorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import {
   ReplicatedBlockChangeSchema,
   ReplicatedOwnerChangeSchema,
@@ -94,6 +94,7 @@ export const PROTOCOL_VERSION = 10
 
 /** The floor every free-text identifier and content string in this protocol shares: not blank. */
 const MIN_NON_EMPTY_LENGTH = 1
+const MIN_BASE64_QUARTET_LENGTH = 4
 const ZERO = 0
 
 // ---------------------------------------------------------------------------
@@ -1237,25 +1238,28 @@ export const TransferIdSchema: Schema.brand<typeof Schema.String, 'TransferId'> 
 export type TransferId = typeof TransferIdSchema.Type
 
 export const Base64Schema: Schema.brand<typeof Schema.String, 'Base64'> = Schema.String.pipe(
-  Schema.check(Schema.isMinLength(4)),
+  Schema.check(Schema.isMinLength(MIN_BASE64_QUARTET_LENGTH)),
   Schema.check(Schema.isPattern(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)),
   Schema.brand('Base64'),
 )
 export type Base64 = typeof Base64Schema.Type
 
+const SHA256_HEX_CHARACTER_COUNT = 64
+const LOWERCASE_HEX_SHA256_PATTERN = new RegExp(`^[0-9a-f]{${SHA256_HEX_CHARACTER_COUNT}}$`)
+
 export const LowercaseHexSha256Schema: Schema.brand<typeof Schema.String, 'LowercaseHexSha256'> = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  Schema.check(Schema.isPattern(LOWERCASE_HEX_SHA256_PATTERN)),
   Schema.brand('LowercaseHexSha256'),
 )
 export type LowercaseHexSha256 = typeof LowercaseHexSha256Schema.Type
 
 const NonNegativeSafeIntegerSchema: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  Schema.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 })),
 )
 const PositiveSafeIntegerSchema: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+  Schema.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 1 })),
 )
 
 export const ReplicatedWorldSnapshotStart: Schema.TaggedStruct<'ReplicatedWorldSnapshotStart', {

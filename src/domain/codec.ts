@@ -32,18 +32,18 @@
  * round trip at the far end, where the frame is no longer available to debug.
  */
 import {
-  ReplicatedOwnerIdSchema,
-  type ReplicatedOwnerChange,
-  type ReplicatedOwnerId,
-  type ReplicatedOwnerRegistration,
-} from '@nerima-games/mc-sim'
-import { Result, Schema } from 'effect'
-import { ProtocolError } from './errors.js'
-import {
   NetworkMessage,
   type NetworkMessage as NetworkMessageType,
   PROTOCOL_VERSION,
 } from './protocol.js'
+import {
+  type ReplicatedOwnerChange,
+  type ReplicatedOwnerId,
+  ReplicatedOwnerIdSchema,
+  type ReplicatedOwnerRegistration,
+} from '@nerima-games/mc-sim'
+import { Result, Schema } from 'effect'
+import { ProtocolError } from './errors.js'
 
 /**
  * One frame, as text. Exactly one message; framing multiple messages into a
@@ -52,17 +52,82 @@ import {
 export type WireText = string
 
 const MAX_FRAME_CODE_UNITS = 1_048_576
-const MAX_FRAME_UTF8_BYTES = 3_145_728
-const legacyFrameLimits: ReadonlyMap<string, { readonly codeUnits: number; readonly utf8Bytes: number }> = new Map([
-  ['PlayerDamageCommand', { codeUnits: 1_024, utf8Bytes: 3_072 }],
-  ['CraftingCommand', { codeUnits: 1_024, utf8Bytes: 3_072 }],
-  ['BrewingCommand', { codeUnits: 8_192, utf8Bytes: 24_576 }],
-  ['AnvilCommand', { codeUnits: 2_048, utf8Bytes: 6_144 }],
-  ['EnchantingCommand', { codeUnits: 32_768, utf8Bytes: 98_304 }],
-  ['WitherCommand', { codeUnits: 1_048_576, utf8Bytes: 3_145_728 }],
-  ['EnderDragonCommand', { codeUnits: 16_384, utf8Bytes: 49_152 }],
-  ['SleepCommand', { codeUnits: 1_048_576, utf8Bytes: 3_145_728 }],
-])
+const MAX_FRAME_UTF8_BYTES = 1_310_720
+const MAX_JSON_DEPTH = 13
+const MAX_JSON_COLLECTION_ITEMS = 31_149
+const ZERO = 0
+const ONE = 1
+const TWO = 2
+const THREE = 3
+const FOUR = 4
+const FIVE = 5
+const SIX = 6
+const TEN = 10
+const JSON_CHAR = {
+  backslash: 0x5c,
+  carriageReturn: 0x0d,
+  closeBrace: 0x7d,
+  closeBracket: 0x5d,
+  colon: 0x3a,
+  comma: 0x2c,
+  decimalPoint: 0x2e,
+  digitNine: 0x39,
+  digitOne: 0x31,
+  digitZero: 0x30,
+  escapeBackspace: 0x62,
+  escapeFormFeed: 0x66,
+  escapeLineFeed: 0x6e,
+  escapeReturn: 0x72,
+  escapeSlash: 0x2f,
+  escapeTab: 0x74,
+  escapeUnicode: 0x75,
+  exponentLower: 0x65,
+  exponentUpper: 0x45,
+  lineFeed: 0x0a,
+  minus: 0x2d,
+  openBrace: 0x7b,
+  openBracket: 0x5b,
+  plus: 0x2b,
+  quote: 0x22,
+  space: 0x20,
+  tab: 0x09,
+} as const
+const HEX_CHAR = {
+  digitNine: 0x39,
+  digitZero: 0x30,
+  lowerA: 0x61,
+  lowerF: 0x66,
+  upperA: 0x41,
+  upperF: 0x46,
+} as const
+const UNICODE_SURROGATE = {
+  highEnd: 0xdbff,
+  highStart: 0xd800,
+  lowEnd: 0xdfff,
+  lowStart: 0xdc00,
+} as const
+const UTF8_CODE_UNIT_LIMITS = {
+  ascii: 0x7f,
+  twoByte: 0x7ff,
+} as const
+const UNICODE_HEX_SHIFTS = {
+  fourThousandNinetySix: 0x1000,
+  one: ONE,
+  sixteen: 0x10,
+  twoHundredFiftySix: 0x100,
+} as const
+type LegacyFrameLimit = Readonly<{ codeUnits: number; utf8Bytes: number }>
+const legacyFrameLimitEntries: ReadonlyArray<readonly [NetworkMessage['_tag'], LegacyFrameLimit]> = [
+  ['PlayerDamageCommand', { codeUnits: 1_024, utf8Bytes: 4_096 }],
+  ['CraftingCommand', { codeUnits: 1_024, utf8Bytes: 4_096 }],
+  ['BrewingCommand', { codeUnits: 8_192, utf8Bytes: 32_768 }],
+  ['AnvilCommand', { codeUnits: 2_048, utf8Bytes: 8_192 }],
+  ['EnchantingCommand', { codeUnits: 32_768, utf8Bytes: 131_072 }],
+  ['SummonWitherCommand', { codeUnits: 1_048_576, utf8Bytes: 4_194_304 }],
+  ['DamageWitherCommand', { codeUnits: 1_048_576, utf8Bytes: 4_194_304 }],
+  ['DamageEnderDragonCommand', { codeUnits: 16_384, utf8Bytes: 65_536 }],
+]
+const legacyFrameLimits: ReadonlyMap<string, LegacyFrameLimit> = new Map(legacyFrameLimitEntries)
 const strictParseOptions = { onExcessProperty: 'error' as const }
 const WireFrame = Schema.fromJsonString(
   Schema.Struct({
@@ -86,8 +151,38 @@ const strictRootMessageTags = new Set([
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const isJsonWhitespace = (codeUnit: number): boolean =>
+  codeUnit === JSON_CHAR.carriageReturn ||
+  codeUnit === JSON_CHAR.lineFeed ||
+  codeUnit === JSON_CHAR.space ||
+  codeUnit === JSON_CHAR.tab
+
 const ownerRegistryBrand: unique symbol = Symbol('ReplicatedOwnerRegistry')
 export type ReplicatedOwnerRegistry = Readonly<{ [ownerRegistryBrand]: true }>
+
+export type ReplicatedOwnerStateBounds = Readonly<{
+  ownerId: ReplicatedOwnerId
+  maxStateBytes: number
+  maxStateDepth: number
+  maxCollectionItems: number
+}>
+
+export type ReplicatedOwnerRegistryLimits = Readonly<{
+  maxRegisteredOwners: number
+  maxDeltaBlockChanges: number
+  maxSnapshotBlockReads: number
+  maxDepth: number
+  maxCollectionItems: number
+  maxDeltaFrameBytes: number
+  maxSnapshotFrameBytes: number
+  ownerStates: ReadonlyArray<ReplicatedOwnerStateBounds>
+}>
+
+type ReplicatedOwnerRegistryEntry = Readonly<{
+  schemas: ReadonlyMap<ReplicatedOwnerId, OwnerStateCodec>
+  bounds: ReadonlyMap<ReplicatedOwnerId, ReplicatedOwnerStateBounds>
+  limits: ReplicatedOwnerRegistryLimits
+}>
 
 export type ReplicatedFrameTag =
   | 'ReplicatedWorldDelta'
@@ -99,7 +194,7 @@ export type ReplicatedFrameTag =
 type OwnerStateCodec = Schema.Codec<any, any>
 const ownerSchemasByRegistry = new WeakMap<
   ReplicatedOwnerRegistry,
-  ReadonlyMap<ReplicatedOwnerId, OwnerStateCodec>
+  ReplicatedOwnerRegistryEntry
 >()
 
 const malformedFrame = (detail: string): ProtocolError =>
@@ -108,52 +203,131 @@ const malformedFrame = (detail: string): ProtocolError =>
 const frameTooLarge = (detail: string): ProtocolError =>
   new ProtocolError({ detail, reason: 'frame-too-large' })
 
-/** Build the finite owner-to-state-schema table used by C4 frame codecs. */
-export const createReplicatedOwnerRegistry = (
-  registrations: ReadonlyArray<ReplicatedOwnerRegistration>,
-): Result.Result<ReplicatedOwnerRegistry, ProtocolError> => {
-  const schemas = new Map<ReplicatedOwnerId, OwnerStateCodec>()
+const isPositiveSafeInteger = (value: number): boolean => Number.isSafeInteger(value) && value > ZERO
+const isNonNegativeSafeInteger = (value: number): boolean => Number.isSafeInteger(value) && value >= ZERO
 
-  for (const registration of registrations) {
-    const decodedOwnerId = Schema.decodeUnknownResult(ReplicatedOwnerIdSchema, strictParseOptions)(registration.ownerId)
-    if (Result.isFailure(decodedOwnerId)) {
-      return Result.fail(malformedFrame('owner registration contains an invalid owner ID'))
+const hasValidRegistryLimits = (limits: ReplicatedOwnerRegistryLimits, registrationCount: number): boolean =>
+  isNonNegativeSafeInteger(limits.maxRegisteredOwners) &&
+  registrationCount <= limits.maxRegisteredOwners &&
+  isNonNegativeSafeInteger(limits.maxDeltaBlockChanges) &&
+  isNonNegativeSafeInteger(limits.maxSnapshotBlockReads) &&
+  isPositiveSafeInteger(limits.maxDepth) &&
+  limits.maxDepth <= MAX_JSON_DEPTH &&
+  isPositiveSafeInteger(limits.maxCollectionItems) &&
+  limits.maxCollectionItems <= MAX_JSON_COLLECTION_ITEMS &&
+  isPositiveSafeInteger(limits.maxDeltaFrameBytes) &&
+  limits.maxDeltaFrameBytes <= MAX_FRAME_UTF8_BYTES &&
+  isPositiveSafeInteger(limits.maxSnapshotFrameBytes)
+
+const buildOwnerBounds = (
+  ownerStates: ReplicatedOwnerRegistryLimits['ownerStates'],
+): Map<ReplicatedOwnerId, ReplicatedOwnerStateBounds> | undefined => {
+  const bounds = new Map<ReplicatedOwnerId, ReplicatedOwnerStateBounds>()
+  for (const ownerBounds of ownerStates) {
+    const isValid = isPositiveSafeInteger(ownerBounds.maxStateBytes) &&
+      isPositiveSafeInteger(ownerBounds.maxStateDepth) &&
+      isPositiveSafeInteger(ownerBounds.maxCollectionItems) &&
+      !bounds.has(ownerBounds.ownerId)
+    if (!isValid) {
+      return undefined
     }
-
-    const ownerId = decodedOwnerId.success
-    if (schemas.has(ownerId)) {
-      return Result.fail(malformedFrame(`duplicate replicated owner registration: ${ownerId}`))
-    }
-
-    schemas.set(ownerId, registration.schema)
+    bounds.set(ownerBounds.ownerId, ownerBounds)
   }
+  return bounds
+}
 
+type OwnerSchemaBuildContext = Readonly<{
+  bounds: ReadonlyMap<ReplicatedOwnerId, ReplicatedOwnerStateBounds>
+  schemas: Map<ReplicatedOwnerId, OwnerStateCodec>
+}>
+
+const addOwnerSchema = (
+  registration: ReplicatedOwnerRegistration,
+  context: OwnerSchemaBuildContext,
+): Result.Result<void, ProtocolError> => {
+  const decodedOwnerId = Schema.decodeUnknownResult(ReplicatedOwnerIdSchema, strictParseOptions)(registration.ownerId)
+  if (Result.isFailure(decodedOwnerId)) {
+    return Result.fail(malformedFrame('owner registration contains an invalid owner ID'))
+  }
+  const ownerId = decodedOwnerId.success
+  if (context.schemas.has(ownerId)) {
+    return Result.fail(malformedFrame(`duplicate replicated owner registration: ${ownerId}`))
+  }
+  if (!context.bounds.has(ownerId)) {
+    return Result.fail(malformedFrame(`missing replicated owner state limits: ${ownerId}`))
+  }
+  context.schemas.set(ownerId, registration.schema)
+  return Result.succeed(undefined)
+}
+
+const buildOwnerSchemas = (
+  registrations: ReadonlyArray<ReplicatedOwnerRegistration>,
+  bounds: ReadonlyMap<ReplicatedOwnerId, ReplicatedOwnerStateBounds>,
+): Result.Result<Map<ReplicatedOwnerId, OwnerStateCodec>, ProtocolError> => {
+  const context: OwnerSchemaBuildContext = { bounds, schemas: new Map() }
+  for (const registration of registrations) {
+    const result = addOwnerSchema(registration, context)
+    if (Result.isFailure(result)) {
+      return Result.fail(result.failure)
+    }
+  }
+  return Result.succeed(context.schemas)
+}
+
+const createOwnerRegistry = (
+  registrations: ReadonlyArray<ReplicatedOwnerRegistration>,
+  limits: ReplicatedOwnerRegistryLimits,
+  bounds: ReadonlyMap<ReplicatedOwnerId, ReplicatedOwnerStateBounds>,
+): Result.Result<ReplicatedOwnerRegistry, ProtocolError> => {
+  const schemaResult = buildOwnerSchemas(registrations, bounds)
+  if (Result.isFailure(schemaResult)) {
+    return Result.fail(schemaResult.failure)
+  }
+  const schemas = schemaResult.success
+  if (bounds.size !== schemas.size) {
+    return Result.fail(malformedFrame('replicated owner state limits do not match registrations'))
+  }
   const registry: ReplicatedOwnerRegistry = { [ownerRegistryBrand]: true }
   Object.freeze(registry)
-  ownerSchemasByRegistry.set(registry, schemas)
+  ownerSchemasByRegistry.set(registry, { bounds, limits, schemas })
   return Result.succeed(registry)
 }
 
-const utf8ByteLength = (text: string): number => {
-  let bytes = 0
-  for (let index = 0; index < text.length; index += 1) {
-    const codeUnit = text.charCodeAt(index)
-    if (codeUnit <= 0x7f) {
-      bytes += 1
-    } else if (codeUnit <= 0x7ff) {
-      bytes += 2
-    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff && index + 1 < text.length) {
-      const next = text.charCodeAt(index + 1)
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        bytes += 4
-        index += 1
-      } else {
-        bytes += 3
-      }
-    } else {
-      bytes += 3
-    }
+/** Build the finite owner-to-state-schema table used by C4 frame codecs. */
+export const createReplicatedOwnerRegistry = (
+  registrations: ReadonlyArray<ReplicatedOwnerRegistration>,
+  limits: ReplicatedOwnerRegistryLimits,
+): Result.Result<ReplicatedOwnerRegistry, ProtocolError> => {
+  if (!hasValidRegistryLimits(limits, registrations.length)) {
+    return Result.fail(malformedFrame('replicated owner limits contain an invalid bound'))
+  }
+  const bounds = buildOwnerBounds(limits.ownerStates)
+  if (bounds === undefined) {
+    return Result.fail(malformedFrame('replicated owner state limits contain an invalid or duplicate bound'))
+  }
+  return createOwnerRegistry(registrations, limits, bounds)
+}
 
+const utf8ByteLength = (text: string): number => {
+  let bytes = ZERO
+  for (let index = ZERO; index < text.length; index += ONE) {
+    const codeUnit = text.charCodeAt(index)
+    if (codeUnit <= UTF8_CODE_UNIT_LIMITS.ascii) {
+      bytes += ONE
+    } else if (codeUnit <= UTF8_CODE_UNIT_LIMITS.twoByte) {
+      bytes += TWO
+    } else if (
+      codeUnit >= UNICODE_SURROGATE.highStart &&
+      codeUnit <= UNICODE_SURROGATE.highEnd &&
+      index + ONE < text.length &&
+      text.charCodeAt(index + ONE) >= UNICODE_SURROGATE.lowStart &&
+      text.charCodeAt(index + ONE) <= UNICODE_SURROGATE.lowEnd
+    ) {
+      bytes += FOUR
+      index += ONE
+    } else {
+      bytes += THREE
+    }
   }
   return bytes
 }
@@ -167,23 +341,137 @@ type JsonScanContainer = {
   key: string | undefined
   root: boolean
   rootMessageBody: boolean
+  entries: number
 }
 
-const isJsonWhitespace = (codeUnit: number): boolean =>
-  codeUnit === 0x20 || codeUnit === 0x09 || codeUnit === 0x0a || codeUnit === 0x0d
+type JsonScanMetrics = { maxDepth: number; maxCollectionItems: number; exceeded: boolean }
+type JsonScanState = { messageTag: string | undefined }
+type JsonScanContext = Readonly<{
+  metrics: JsonScanMetrics
+  stack: Array<JsonScanContainer>
+  state: JsonScanState
+  text: string
+}>
 
 const skipJsonWhitespace = (text: string, start: number): number => {
   let index = start
   while (index < text.length && isJsonWhitespace(text.charCodeAt(index))) {
-    index += 1
+    index += ONE
   }
   return index
 }
 
 const hexDigitValue = (codeUnit: number): number | undefined => {
-  if (codeUnit >= 0x30 && codeUnit <= 0x39) return codeUnit - 0x30
-  if (codeUnit >= 0x41 && codeUnit <= 0x46) return codeUnit - 0x41 + 10
-  if (codeUnit >= 0x61 && codeUnit <= 0x66) return codeUnit - 0x61 + 10
+  if (codeUnit >= HEX_CHAR.digitZero && codeUnit <= HEX_CHAR.digitNine) {
+    return codeUnit - HEX_CHAR.digitZero
+  }
+  if (codeUnit >= HEX_CHAR.upperA && codeUnit <= HEX_CHAR.upperF) {
+    return codeUnit - HEX_CHAR.upperA + TEN
+  }
+  if (codeUnit >= HEX_CHAR.lowerA && codeUnit <= HEX_CHAR.lowerF) {
+    return codeUnit - HEX_CHAR.lowerA + TEN
+  }
+  return undefined
+}
+
+type JsonStringRead = Readonly<{ end: number; value: string | undefined }>
+type JsonStringStep = Readonly<{ addition: string | undefined; closed: boolean; end: number }>
+
+const simpleJsonEscape = (codeUnit: number): string | undefined => {
+  switch (codeUnit) {
+    case JSON_CHAR.quote:
+      return '"'
+    case JSON_CHAR.backslash:
+      return '\\'
+    case JSON_CHAR.escapeSlash:
+      return '/'
+    case JSON_CHAR.escapeBackspace:
+      return '\b'
+    case JSON_CHAR.escapeFormFeed:
+      return '\f'
+    case JSON_CHAR.escapeLineFeed:
+      return '\n'
+    case JSON_CHAR.escapeReturn:
+      return '\r'
+    case JSON_CHAR.escapeTab:
+      return '\t'
+    default:
+      return undefined
+  }
+}
+
+const readUnicodeEscape = (text: string, start: number): string | undefined => {
+  const first = hexDigitValue(text.charCodeAt(start + TWO))
+  const second = hexDigitValue(text.charCodeAt(start + THREE))
+  const third = hexDigitValue(text.charCodeAt(start + FOUR))
+  const fourth = hexDigitValue(text.charCodeAt(start + FIVE))
+  if (first === undefined || second === undefined || third === undefined || fourth === undefined) {
+    return undefined
+  }
+  const codeUnit = first * UNICODE_HEX_SHIFTS.fourThousandNinetySix +
+    second * UNICODE_HEX_SHIFTS.twoHundredFiftySix +
+    third * UNICODE_HEX_SHIFTS.sixteen +
+    fourth * UNICODE_HEX_SHIFTS.one
+  return String.fromCharCode(codeUnit)
+}
+
+const readJsonEscape = (text: string, start: number): JsonStringStep | undefined => {
+  const escape = text.charCodeAt(start + ONE)
+  if (escape === JSON_CHAR.escapeUnicode) {
+    const addition = readUnicodeEscape(text, start)
+    if (addition === undefined) {
+      return undefined
+    }
+    return { addition, closed: false, end: start + SIX }
+  }
+  const addition = simpleJsonEscape(escape)
+  if (addition === undefined) {
+    return undefined
+  }
+  return { addition, closed: false, end: start + TWO }
+}
+
+const readJsonStringStep = (text: string, index: number): JsonStringStep | undefined => {
+  const codeUnit = text.charCodeAt(index)
+  if (codeUnit === JSON_CHAR.quote) {
+    return { addition: undefined, closed: true, end: index + ONE }
+  }
+  if (codeUnit < JSON_CHAR.space) {
+    return undefined
+  }
+  if (codeUnit === JSON_CHAR.backslash) {
+    return readJsonEscape(text, index)
+  }
+  return { addition: text[index], closed: false, end: index + ONE }
+}
+
+const finishJsonStringRead = (step: JsonStringStep, value: string, captureValue: boolean): JsonStringRead => {
+  if (captureValue) {
+    return { end: step.end, value }
+  }
+  return { end: step.end, value: undefined }
+}
+
+const appendJsonStringStep = (value: string, step: JsonStringStep, captureValue: boolean): string => {
+  if (captureValue && step.addition !== undefined) {
+    return value + step.addition
+  }
+  return value
+}
+
+const readJsonStringBody = (text: string, start: number, captureValue: boolean): JsonStringRead | undefined => {
+  const cursor = { index: start, value: '' }
+  while (cursor.index < text.length) {
+    const step = readJsonStringStep(text, cursor.index)
+    if (step === undefined) {
+      return undefined
+    }
+    if (step.closed) {
+      return finishJsonStringRead(step, cursor.value, captureValue)
+    }
+    cursor.value = appendJsonStringStep(cursor.value, step, captureValue)
+    cursor.index = step.end
+  }
   return undefined
 }
 
@@ -191,265 +479,398 @@ const readJsonString = (
   text: string,
   start: number,
   captureValue: boolean,
-): { readonly value: string | undefined; readonly end: number } | undefined => {
-  if (text.charCodeAt(start) !== 0x22) return undefined
-
-  let value = ''
-  let index = start + 1
-  while (index < text.length) {
-    const codeUnit = text.charCodeAt(index)
-    if (codeUnit === 0x22) {
-      return { value: captureValue ? value : undefined, end: index + 1 }
-    }
-    if (codeUnit < 0x20) return undefined
-
-    if (codeUnit !== 0x5c) {
-      if (captureValue) value += text[index]
-      index += 1
-      continue
-    }
-
-    index += 1
-    const escape = text.charCodeAt(index)
-    const escaped = escape === 0x22 || escape === 0x5c || escape === 0x2f
-      ? String.fromCharCode(escape)
-      : escape === 0x62
-        ? '\b'
-        : escape === 0x66
-          ? '\f'
-          : escape === 0x6e
-            ? '\n'
-            : escape === 0x72
-              ? '\r'
-              : escape === 0x74
-                ? '\t'
-                : undefined
-    if (escaped !== undefined) {
-      if (captureValue) value += escaped
-      index += 1
-      continue
-    }
-    if (escape !== 0x75 || index + 4 >= text.length) return undefined
-
-    const first = hexDigitValue(text.charCodeAt(index + 1))
-    const second = hexDigitValue(text.charCodeAt(index + 2))
-    const third = hexDigitValue(text.charCodeAt(index + 3))
-    const fourth = hexDigitValue(text.charCodeAt(index + 4))
-    if (first === undefined || second === undefined || third === undefined || fourth === undefined) return undefined
-    if (captureValue) value += String.fromCharCode(first * 0x1000 + second * 0x100 + third * 0x10 + fourth)
-    index += 5
-  }
-
-  return undefined
-}
-
-const readJsonNumberEnd = (text: string, start: number): number | undefined => {
-  let index = start
-  if (text.charCodeAt(index) === 0x2d) index += 1
-
-  const firstDigit = text.charCodeAt(index)
-  if (firstDigit === 0x30) {
-    index += 1
-    const next = text.charCodeAt(index)
-    if (next >= 0x30 && next <= 0x39) return undefined
-  } else if (firstDigit >= 0x31 && firstDigit <= 0x39) {
-    index += 1
-    while (text.charCodeAt(index) >= 0x30 && text.charCodeAt(index) <= 0x39) index += 1
-  } else {
+): JsonStringRead | undefined => {
+  if (text.charCodeAt(start) !== JSON_CHAR.quote) {
     return undefined
   }
+  return readJsonStringBody(text, start + ONE, captureValue)
+}
 
-  if (text.charCodeAt(index) === 0x2e) {
-    index += 1
-    const fractionStart = index
-    while (text.charCodeAt(index) >= 0x30 && text.charCodeAt(index) <= 0x39) index += 1
-    if (index === fractionStart) return undefined
+const isDecimalDigit = (codeUnit: number): boolean =>
+  codeUnit >= JSON_CHAR.digitZero && codeUnit <= JSON_CHAR.digitNine
+
+const readDecimalDigitsEnd = (text: string, start: number): number => {
+  let index = start
+  while (isDecimalDigit(text.charCodeAt(index))) {
+    index += ONE
   }
-
-  const exponent = text.charCodeAt(index)
-  if (exponent === 0x65 || exponent === 0x45) {
-    index += 1
-    const sign = text.charCodeAt(index)
-    if (sign === 0x2b || sign === 0x2d) index += 1
-    const exponentStart = index
-    while (text.charCodeAt(index) >= 0x30 && text.charCodeAt(index) <= 0x39) index += 1
-    if (index === exponentStart) return undefined
-  }
-
   return index
 }
 
-// This bounded lexical pass finds the envelope tag without constructing the parsed payload.
-const scanRootMessageTag = (text: string): string | undefined => {
-  let index = skipJsonWhitespace(text, 0)
-  if (text.charCodeAt(index) !== 0x7b) return undefined
-  index += 1
-
-  const stack: Array<JsonScanContainer> = [{
-    kind: 'object',
-    state: 'key-or-end',
-    key: undefined,
-    root: true,
-    rootMessageBody: false,
-  }]
-  let messageTag: string | undefined
-
-  while (stack.length > 0) {
-    index = skipJsonWhitespace(text, index)
-    if (index >= text.length) return undefined
-
-    const container = stack[stack.length - 1]
-    if (container === undefined) return undefined
-    const codeUnit = text.charCodeAt(index)
-
-    if (container.kind === 'object' && (container.state === 'key-or-end' || container.state === 'key')) {
-      if (container.state === 'key-or-end' && codeUnit === 0x7d) {
-        stack.pop()
-        index += 1
-        if (stack.length === 0) return skipJsonWhitespace(text, index) === text.length ? messageTag : undefined
-        continue
-      }
-      const key = readJsonString(text, index, true)
-      if (key === undefined || key.value === undefined) return undefined
-      container.key = key.value
-      container.state = 'colon'
-      index = key.end
-      continue
+const readJsonIntegerDigitsEnd = (text: string, start: number): number | undefined => {
+  const firstDigit = text.charCodeAt(start)
+  if (firstDigit === JSON_CHAR.digitZero) {
+    const next = text.charCodeAt(start + ONE)
+    if (isDecimalDigit(next)) {
+      return undefined
     }
-
-    if (container.kind === 'object' && container.state === 'colon') {
-      if (codeUnit !== 0x3a) return undefined
-      container.state = 'value'
-      index += 1
-      continue
-    }
-
-    if (container.kind === 'object' && container.state === 'value') {
-      const isRootMessageValue = container.root && container.key === 'message'
-      const isMessageTagValue = container.rootMessageBody && container.key === '_tag'
-      if (isRootMessageValue || isMessageTagValue) messageTag = undefined
-      container.state = 'comma-or-end'
-      container.key = undefined
-
-      if (codeUnit === 0x7b) {
-        stack.push({
-          kind: 'object',
-          state: 'key-or-end',
-          key: undefined,
-          root: false,
-          rootMessageBody: isRootMessageValue,
-        })
-        index += 1
-        continue
-      }
-      if (codeUnit === 0x5b) {
-        stack.push({
-          kind: 'array',
-          state: 'value-or-end',
-          key: undefined,
-          root: false,
-          rootMessageBody: false,
-        })
-        index += 1
-        continue
-      }
-      if (codeUnit === 0x22) {
-        const value = readJsonString(text, index, isMessageTagValue)
-        if (value === undefined) return undefined
-        if (isMessageTagValue) messageTag = value.value
-        index = value.end
-        continue
-      }
-      const literal = text.startsWith('true', index)
-        ? 'true'
-        : text.startsWith('false', index)
-          ? 'false'
-          : text.startsWith('null', index)
-            ? 'null'
-            : undefined
-      if (literal !== undefined) {
-        index += literal.length
-        continue
-      }
-      const numberEnd = readJsonNumberEnd(text, index)
-      if (numberEnd === undefined) return undefined
-      index = numberEnd
-      continue
-    }
-
-    if (container.kind === 'array' && (container.state === 'value-or-end' || container.state === 'value')) {
-      if (container.state === 'value-or-end' && codeUnit === 0x5d) {
-        stack.pop()
-        index += 1
-        if (stack.length === 0) return skipJsonWhitespace(text, index) === text.length ? messageTag : undefined
-        continue
-      }
-      container.state = 'comma-or-end'
-      if (codeUnit === 0x7b) {
-        stack.push({ kind: 'object', state: 'key-or-end', key: undefined, root: false, rootMessageBody: false })
-        index += 1
-        continue
-      }
-      if (codeUnit === 0x5b) {
-        stack.push({ kind: 'array', state: 'value-or-end', key: undefined, root: false, rootMessageBody: false })
-        index += 1
-        continue
-      }
-      if (codeUnit === 0x22) {
-        const value = readJsonString(text, index, false)
-        if (value === undefined) return undefined
-        index = value.end
-        continue
-      }
-      const literal = text.startsWith('true', index)
-        ? 'true'
-        : text.startsWith('false', index)
-          ? 'false'
-          : text.startsWith('null', index)
-            ? 'null'
-            : undefined
-      if (literal !== undefined) {
-        index += literal.length
-        continue
-      }
-      const numberEnd = readJsonNumberEnd(text, index)
-      if (numberEnd === undefined) return undefined
-      index = numberEnd
-      continue
-    }
-
-    if (container.state === 'comma-or-end') {
-      if (container.kind === 'object' && codeUnit === 0x7d || container.kind === 'array' && codeUnit === 0x5d) {
-        stack.pop()
-        index += 1
-        if (stack.length === 0) return skipJsonWhitespace(text, index) === text.length ? messageTag : undefined
-        continue
-      }
-      if (codeUnit !== 0x2c) return undefined
-      container.state = container.kind === 'object' ? 'key' : 'value'
-      index += 1
-      continue
-    }
-
-    return undefined
+    return start + ONE
+  } else if (firstDigit >= JSON_CHAR.digitOne && firstDigit <= JSON_CHAR.digitNine) {
+    return readDecimalDigitsEnd(text, start)
   }
-
   return undefined
 }
 
-const globalFrameSizeFailure = (text: string): ProtocolError | undefined => {
-  if (text.length > MAX_FRAME_CODE_UNITS) {
-    return frameTooLarge(`frame UTF-16 code units ${text.length} exceed limit ${MAX_FRAME_CODE_UNITS}`)
+const readJsonIntegerEnd = (text: string, start: number): number | undefined => {
+  if (text.charCodeAt(start) === JSON_CHAR.minus) {
+    return readJsonIntegerDigitsEnd(text, start + ONE)
+  }
+  return readJsonIntegerDigitsEnd(text, start)
+}
+
+const readJsonFractionEnd = (text: string, start: number): number | undefined => {
+  if (text.charCodeAt(start) !== JSON_CHAR.decimalPoint) {
+    return start
+  }
+  const index = start + ONE
+  if (!isDecimalDigit(text.charCodeAt(index))) {
+    return undefined
+  }
+  return readDecimalDigitsEnd(text, index)
+}
+
+const readJsonExponentEnd = (text: string, start: number): number | undefined => {
+  const exponent = text.charCodeAt(start)
+  if (exponent !== JSON_CHAR.exponentLower && exponent !== JSON_CHAR.exponentUpper) {
+    return start
+  }
+  let index = start + ONE
+  const sign = text.charCodeAt(index)
+  if (sign === JSON_CHAR.plus || sign === JSON_CHAR.minus) {
+    index += ONE
+  }
+  if (!isDecimalDigit(text.charCodeAt(index))) {
+    return undefined
+  }
+  return readDecimalDigitsEnd(text, index)
+}
+
+const readJsonNumberEnd = (text: string, start: number): number | undefined => {
+  const integerEnd = readJsonIntegerEnd(text, start)
+  if (integerEnd === undefined) {
+    return undefined
+  }
+  const fractionEnd = readJsonFractionEnd(text, integerEnd)
+  if (fractionEnd === undefined) {
+    return undefined
+  }
+  return readJsonExponentEnd(text, fractionEnd)
+}
+
+const createJsonContainer = (container: JsonScanContainer): JsonScanContainer => container
+
+const recordCollectionEntry = (container: JsonScanContainer, metrics: JsonScanMetrics): boolean => {
+  container.entries += ONE
+  metrics.maxCollectionItems = Math.max(metrics.maxCollectionItems, container.entries)
+  if (container.entries > MAX_JSON_COLLECTION_ITEMS) {
+    metrics.exceeded = true
+    return false
+  }
+  return true
+}
+
+const pushJsonContainer = (
+  context: JsonScanContext,
+  kind: JsonScanContainer['kind'],
+  rootMessageBody: boolean,
+): boolean => {
+  const { metrics, stack } = context
+  if (kind === 'object') {
+    stack.push(createJsonContainer({
+      entries: ZERO,
+      key: undefined,
+      kind,
+      root: false,
+      rootMessageBody,
+      state: 'key-or-end',
+    }))
+  } else {
+    stack.push(createJsonContainer({
+      entries: ZERO,
+      key: undefined,
+      kind,
+      root: false,
+      rootMessageBody,
+      state: 'value-or-end',
+    }))
+  }
+  metrics.maxDepth = Math.max(metrics.maxDepth, stack.length)
+  if (stack.length > MAX_JSON_DEPTH) {
+    metrics.exceeded = true
+    return false
+  }
+  return true
+}
+
+const readObjectKeyText = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  const { metrics, text } = context
+  const key = readJsonString(text, index, true)
+  if (key === undefined || key.value === undefined || !recordCollectionEntry(container, metrics)) {
+    return undefined
+  }
+  container.key = key.value
+  container.state = 'colon'
+  return key.end
+}
+
+const readObjectKey = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  const codeUnit = context.text.charCodeAt(index)
+  if (container.state === 'key-or-end' && codeUnit === JSON_CHAR.closeBrace) {
+    context.stack.pop()
+    return index + ONE
+  }
+  return readObjectKeyText(context, index, container)
+}
+
+const readObjectColon = (index: number, codeUnit: number, container: JsonScanContainer): number | undefined => {
+  if (codeUnit !== JSON_CHAR.colon) {
+    return undefined
+  }
+  container.state = 'value'
+  return index + ONE
+}
+
+const readJsonPrimitiveEnd = (text: string, index: number): number | undefined => {
+  if (text.charCodeAt(index) === JSON_CHAR.quote) {
+    const parsedString = readJsonString(text, index, false)
+    if (parsedString === undefined) {
+      return undefined
+    }
+    return parsedString.end
+  }
+  for (const literal of ['true', 'false', 'null']) {
+    if (text.startsWith(literal, index)) {
+      return index + literal.length
+    }
+  }
+  return readJsonNumberEnd(text, index)
+}
+
+const readNestedContainerEnd = (
+  context: JsonScanContext,
+  index: number,
+  container: JsonScanContainer,
+): number | null | undefined => {
+  const codeUnit = context.text.charCodeAt(index)
+  const rootMessageBody = container.kind === 'object' && container.root && container.key === 'message'
+  switch (codeUnit) {
+    case JSON_CHAR.openBrace:
+      if (!pushJsonContainer(context, 'object', rootMessageBody)) {
+        return null
+      }
+      return index + ONE
+    case JSON_CHAR.openBracket:
+      if (!pushJsonContainer(context, 'array', false)) {
+        return null
+      }
+      return index + ONE
+    default:
+      return undefined
+  }
+}
+
+const readObjectStringValue = (context: JsonScanContext, index: number, isMessageTagValue: boolean): number | undefined => {
+  const value = readJsonString(context.text, index, isMessageTagValue)
+  if (value === undefined) {
+    return undefined
+  }
+  if (isMessageTagValue) {
+    context.state.messageTag = value.value
+  }
+  return value.end
+}
+
+const readJsonValueContent = (context: JsonScanContext, index: number, isMessageTagValue: boolean): number | undefined => {
+  if (context.text.charCodeAt(index) === JSON_CHAR.quote) {
+    return readObjectStringValue(context, index, isMessageTagValue)
+  }
+  return readJsonPrimitiveEnd(context.text, index)
+}
+
+const readObjectValueContent = (
+  context: JsonScanContext,
+  index: number,
+  container: JsonScanContainer,
+): number | undefined => {
+  const isRootMessageValue = container.root && container.key === 'message'
+  const isMessageTagValue = container.rootMessageBody && container.key === '_tag'
+  if (isRootMessageValue || isMessageTagValue) {
+    context.state.messageTag = undefined
+  }
+  const nestedEnd = readNestedContainerEnd(context, index, container)
+  if (nestedEnd === null) {
+    return undefined
+  }
+  if (nestedEnd !== undefined) {
+    return nestedEnd
+  }
+  return readJsonValueContent(context, index, isMessageTagValue)
+}
+
+const readObjectValue = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  container.state = 'comma-or-end'
+  const result = readObjectValueContent(context, index, container)
+  container.key = undefined
+  return result
+}
+
+const readArrayValueContent = (
+  context: JsonScanContext,
+  index: number,
+  container: JsonScanContainer,
+): number | undefined => {
+  const nestedEnd = readNestedContainerEnd(context, index, container)
+  if (nestedEnd === null) {
+    return undefined
+  }
+  if (nestedEnd !== undefined) {
+    return nestedEnd
+  }
+  return readJsonPrimitiveEnd(context.text, index)
+}
+
+const readArrayValue = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  const { metrics, stack, text } = context
+  const codeUnit = text.charCodeAt(index)
+  if (container.state === 'value-or-end' && codeUnit === JSON_CHAR.closeBracket) {
+    stack.pop()
+    return index + ONE
+  }
+  if (!recordCollectionEntry(container, metrics)) {
+    return undefined
+  }
+  container.state = 'comma-or-end'
+  return readArrayValueContent(context, index, container)
+}
+
+const isContainerClose = (container: JsonScanContainer, codeUnit: number): boolean => {
+  if (container.kind === 'object') {
+    return codeUnit === JSON_CHAR.closeBrace
+  }
+  return codeUnit === JSON_CHAR.closeBracket
+}
+
+const setContainerValueAfterComma = (container: JsonScanContainer): void => {
+  if (container.kind === 'object') {
+    container.state = 'key'
+  } else {
+    container.state = 'value'
+  }
+}
+
+const readCommaOrEnd = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  const codeUnit = context.text.charCodeAt(index)
+  if (isContainerClose(container, codeUnit)) {
+    context.stack.pop()
+    return index + ONE
+  }
+  if (codeUnit !== JSON_CHAR.comma) {
+    return undefined
+  }
+  setContainerValueAfterComma(container)
+  return index + ONE
+}
+
+const advanceJsonObject = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  switch (container.state) {
+    case 'key-or-end':
+    case 'key':
+      return readObjectKey(context, index, container)
+    case 'colon':
+      return readObjectColon(index, context.text.charCodeAt(index), container)
+    case 'value':
+      return readObjectValue(context, index, container)
+    case 'comma-or-end':
+      return readCommaOrEnd(context, index, container)
+    default:
+      return undefined
+  }
+}
+
+const advanceJsonArray = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  switch (container.state) {
+    case 'value-or-end':
+    case 'value':
+      return readArrayValue(context, index, container)
+    case 'comma-or-end':
+      return readCommaOrEnd(context, index, container)
+    default:
+      return undefined
+  }
+}
+
+const advanceJsonContainer = (context: JsonScanContext, index: number, container: JsonScanContainer): number | undefined => {
+  if (container.kind === 'object') {
+    return advanceJsonObject(context, index, container)
+  }
+  return advanceJsonArray(context, index, container)
+}
+
+const scanJsonStep = (context: JsonScanContext, index: number): number | undefined => {
+  const nextIndex = skipJsonWhitespace(context.text, index)
+  if (nextIndex >= context.text.length) {
+    return undefined
+  }
+  const container = context.stack[context.stack.length - ONE]
+  if (container === undefined) {
+    return undefined
+  }
+  return advanceJsonContainer(context, nextIndex, container)
+}
+
+const scanJsonBody = (context: JsonScanContext, start: number): string | undefined => {
+  let index = start
+  while (context.stack.length > ZERO) {
+    const nextIndex = scanJsonStep(context, index)
+    if (nextIndex === undefined) {
+      return undefined
+    }
+    index = nextIndex
+  }
+  if (skipJsonWhitespace(context.text, index) === context.text.length) {
+    return context.state.messageTag
+  }
+  return undefined
+}
+
+// This bounded lexical pass finds the envelope tag without constructing the parsed payload.
+const scanRootMessageTag = (
+  text: string,
+  metrics: JsonScanMetrics = { exceeded: false, maxCollectionItems: ZERO, maxDepth: ONE },
+): string | undefined => {
+  let index = skipJsonWhitespace(text, ZERO)
+  if (text.charCodeAt(index) !== JSON_CHAR.openBrace) {
+    return undefined
+  }
+  index += ONE
+  const stack: Array<JsonScanContainer> = [createJsonContainer({
+    entries: ZERO,
+    key: undefined,
+    kind: 'object',
+    root: true,
+    rootMessageBody: false,
+    state: 'key-or-end',
+  })]
+  const state: JsonScanState = { messageTag: undefined }
+  const context: JsonScanContext = { metrics, stack, state, text }
+  return scanJsonBody(context, index)
+}
+
+const globalFrameSizeFailure = (text: string, maxCodeUnits = MAX_FRAME_CODE_UNITS, maxUtf8Bytes = MAX_FRAME_UTF8_BYTES): ProtocolError | undefined => {
+  if (text.length > maxCodeUnits) {
+    return frameTooLarge(`frame UTF-16 code units ${text.length} exceed limit ${maxCodeUnits}`)
   }
   const bytes = utf8ByteLength(text)
-  if (bytes > MAX_FRAME_UTF8_BYTES) {
-    return frameTooLarge(`frame UTF-8 bytes ${bytes} exceed limit ${MAX_FRAME_UTF8_BYTES}`)
+  if (bytes > maxUtf8Bytes) {
+    return frameTooLarge(`frame UTF-8 bytes ${bytes} exceed limit ${maxUtf8Bytes}`)
   }
   return undefined
 }
 
 const legacyFrameSizeFailure = (text: string, tag: string | undefined): ProtocolError | undefined => {
-  if (tag === undefined) return undefined
+  if (tag === undefined) {
+    return undefined
+  }
   const bytes = utf8ByteLength(text)
   const limits = legacyFrameLimits.get(tag)
   if (limits !== undefined && bytes > limits.utf8Bytes) {
@@ -461,47 +882,267 @@ const legacyFrameSizeFailure = (text: string, tag: string | undefined): Protocol
   return undefined
 }
 
-const frameSizeFailure = (text: string): ProtocolError | undefined => {
-  const globalFailure = globalFrameSizeFailure(text)
-  if (globalFailure !== undefined) return globalFailure
-  const tag = scanRootMessageTag(text)
-  return legacyFrameSizeFailure(text, tag)
+type JsonFrameShape = Readonly<{ metrics: JsonScanMetrics; tag: string | undefined }>
+
+const scanJsonFrameShape = (text: string): Result.Result<JsonFrameShape, ProtocolError> => {
+  const metrics: JsonScanMetrics = { exceeded: false, maxCollectionItems: ZERO, maxDepth: ONE }
+  const tag = scanRootMessageTag(text, metrics)
+  const globalShapeExceeded = metrics.exceeded ||
+    metrics.maxDepth > MAX_JSON_DEPTH ||
+    metrics.maxCollectionItems > MAX_JSON_COLLECTION_ITEMS
+  if (globalShapeExceeded) {
+    return Result.fail(frameTooLarge('frame exceeds JSON depth or collection count limit'))
+  }
+  return Result.succeed({ metrics, tag })
+}
+
+type FrameSizeRequest = Readonly<{
+  limits: ReplicatedOwnerRegistryLimits | undefined
+  maxFrameBytes: number
+  maxCodeUnits: number
+  text: string
+}>
+
+type FrameSizeContext = FrameSizeRequest & Readonly<{
+  metrics: JsonScanMetrics
+  tag: string | undefined
+}>
+
+type ConfiguredFrameLimit = Readonly<{ byteLimit: number; tag: string }>
+
+const configuredReplicatedFrameSizeFailure = (
+  context: FrameSizeContext,
+  configured: ConfiguredFrameLimit,
+): ProtocolError | undefined => {
+  if (context.tag !== configured.tag || context.limits === undefined) {
+    return undefined
+  }
+  const byteLimit = Math.min(configured.byteLimit, context.maxFrameBytes)
+  if (utf8ByteLength(context.text) > byteLimit) {
+    return frameTooLarge(`${configured.tag} frame UTF-8 bytes exceed limit ${byteLimit}`)
+  }
+  if (context.metrics.maxDepth > context.limits.maxDepth || context.metrics.maxCollectionItems > context.limits.maxCollectionItems) {
+    return frameTooLarge(`${configured.tag} exceeds configured depth or collection count limit`)
+  }
+  return undefined
+}
+
+const replicatedFrameSizeFailure = (context: FrameSizeContext): ProtocolError | undefined => {
+  if (context.limits === undefined) {
+    return undefined
+  }
+  const deltaFailure = configuredReplicatedFrameSizeFailure(context, {
+    byteLimit: context.limits.maxDeltaFrameBytes,
+    tag: 'ReplicatedWorldDelta',
+  })
+  if (deltaFailure !== undefined) {
+    return deltaFailure
+  }
+  return configuredReplicatedFrameSizeFailure(context, {
+    byteLimit: context.limits.maxSnapshotFrameBytes,
+    tag: 'ReplicatedWorldSnapshot',
+  })
+}
+
+const registryEntryFor = (owners: ReplicatedOwnerRegistry | undefined): ReplicatedOwnerRegistryEntry | undefined => {
+  if (owners === undefined) {
+    return undefined
+  }
+  return ownerSchemasByRegistry.get(owners)
+}
+
+const frameSizeContext = (request: FrameSizeRequest, shape: JsonFrameShape): FrameSizeContext => ({
+  ...request,
+  metrics: shape.metrics,
+  tag: shape.tag,
+})
+
+const checkFrameContentSize = (request: FrameSizeRequest): ProtocolError | undefined => {
+  const shape = scanJsonFrameShape(request.text)
+  if (Result.isFailure(shape)) {
+    return shape.failure
+  }
+  const context = frameSizeContext(request, shape.success)
+  const replicatedFailure = replicatedFrameSizeFailure(context)
+  if (replicatedFailure !== undefined) {
+    return replicatedFailure
+  }
+  return legacyFrameSizeFailure(request.text, shape.success.tag)
+}
+
+const checkFrameSize = (request: FrameSizeRequest): ProtocolError | undefined => {
+  const globalFailure = globalFrameSizeFailure(request.text, request.maxCodeUnits, request.maxFrameBytes)
+  if (globalFailure !== undefined) {
+    return globalFailure
+  }
+  return checkFrameContentSize(request)
+}
+
+const frameSizeFailure = (
+  text: string,
+  owners?: ReplicatedOwnerRegistry,
+  transferredSnapshotMaxBytes?: number,
+): ProtocolError | undefined => {
+  const maxFrameBytes = transferredSnapshotMaxBytes ?? MAX_FRAME_UTF8_BYTES
+  let maxCodeUnits = MAX_FRAME_CODE_UNITS
+  if (transferredSnapshotMaxBytes !== undefined) {
+    maxCodeUnits = transferredSnapshotMaxBytes
+  }
+  return checkFrameSize({
+    limits: registryEntryFor(owners)?.limits,
+    maxCodeUnits,
+    maxFrameBytes,
+    text,
+  })
+}
+
+type PendingShapeValue = Readonly<{ depth: number; value: unknown }>
+type PendingNestedShapeValue = Readonly<{ depth: number; value: object }>
+type ValueShape = Readonly<{ maxCollectionItems: number; maxDepth: number }>
+
+const shapeValues = (value: object): ReadonlyArray<unknown> => {
+  if (Array.isArray(value)) {
+    return value
+  }
+  return Object.values(value)
+}
+
+const measureNestedShape = (current: PendingNestedShapeValue, pending: Array<PendingShapeValue>): ValueShape => {
+  const entries = shapeValues(current.value)
+  let maxDepth = current.depth
+  for (const value of entries) {
+    const depth = current.depth + ONE
+    maxDepth = Math.max(maxDepth, depth)
+    pending.push({ depth, value })
+  }
+  return { maxCollectionItems: entries.length, maxDepth }
+}
+
+const measureValueShape = (value: unknown): ValueShape => {
+  const pending: Array<PendingShapeValue> = [{ depth: ONE, value }]
+  let maxDepth = ONE
+  let maxCollectionItems = ZERO
+  while (pending.length > ZERO) {
+    const current = pending.pop()
+    if (current !== undefined && typeof current.value === 'object' && current.value !== null) {
+      const shape = measureNestedShape({ depth: current.depth, value: current.value }, pending)
+      maxDepth = Math.max(maxDepth, shape.maxDepth)
+      maxCollectionItems = Math.max(maxCollectionItems, shape.maxCollectionItems)
+    }
+  }
+  return { maxCollectionItems, maxDepth }
+}
+
+type OwnerChangeContext = Readonly<{
+  direction: 'decode' | 'encode'
+  registryEntry: ReplicatedOwnerRegistryEntry
+  seen: Set<ReplicatedOwnerId>
+}>
+
+const decodeOrEncodeOwnerState = (
+  schema: OwnerStateCodec,
+  value: unknown,
+  direction: 'decode' | 'encode',
+): Result.Result<unknown, Schema.SchemaError> => {
+  if (direction === 'decode') {
+    return Schema.decodeUnknownResult(schema, strictParseOptions)(value)
+  }
+  return Schema.encodeUnknownResult(schema, strictParseOptions)(value)
+}
+
+const validateOwnerStatePayload = (
+  change: ReplicatedOwnerChange,
+  state: unknown,
+  bounds: ReplicatedOwnerStateBounds,
+): Result.Result<ReplicatedOwnerChange, ProtocolError> => {
+  const stateText = JSON.stringify(state)
+  const stateShape = measureValueShape(state)
+  const exceedsBounds = stateText === undefined ||
+    utf8ByteLength(stateText) > bounds.maxStateBytes ||
+    stateShape.maxDepth > bounds.maxStateDepth ||
+    stateShape.maxCollectionItems > bounds.maxCollectionItems
+  if (exceedsBounds) {
+    return Result.fail(malformedFrame(`state for replicated owner ${change.owner} exceeds configured limits`))
+  }
+  return Result.succeed({ owner: change.owner, state })
+}
+
+const validateRegisteredOwnerChange = (
+  change: ReplicatedOwnerChange,
+  context: OwnerChangeContext,
+): Result.Result<ReplicatedOwnerChange, ProtocolError> => {
+  const schema = context.registryEntry.schemas.get(change.owner)
+  const bounds = context.registryEntry.bounds.get(change.owner)
+  if (schema === undefined || bounds === undefined) {
+    return Result.fail(malformedFrame(`unknown replicated owner: ${change.owner}`))
+  }
+  const state = decodeOrEncodeOwnerState(schema, change.state, context.direction)
+  if (Result.isFailure(state)) {
+    return Result.fail(malformedFrame(`invalid state for replicated owner ${change.owner}: ${state.failure.message}`))
+  }
+  return validateOwnerStatePayload(change, state.success, bounds)
+}
+
+const validateOwnerChange = (
+  change: ReplicatedOwnerChange,
+  context: OwnerChangeContext,
+): Result.Result<ReplicatedOwnerChange, ProtocolError> => {
+  if (context.seen.has(change.owner)) {
+    return Result.fail(malformedFrame(`duplicate owner change in C4 group: ${change.owner}`))
+  }
+  context.seen.add(change.owner)
+  return validateRegisteredOwnerChange(change, context)
+}
+
+const validateOwnerChangeList = (
+  changes: ReadonlyArray<ReplicatedOwnerChange>,
+  context: OwnerChangeContext,
+): Result.Result<ReadonlyArray<ReplicatedOwnerChange>, ProtocolError> => {
+  const validated: Array<ReplicatedOwnerChange> = []
+  for (const change of changes) {
+    const result = validateOwnerChange(change, context)
+    if (Result.isFailure(result)) {
+      return Result.fail(result.failure)
+    }
+    validated.push(result.success)
+  }
+  return Result.succeed(validated)
 }
 
 const validateOwnerChanges = (
   changes: ReadonlyArray<ReplicatedOwnerChange>,
-  registry: ReplicatedOwnerRegistry | undefined,
+  registryEntry: ReplicatedOwnerRegistryEntry,
   direction: 'decode' | 'encode',
 ): Result.Result<ReadonlyArray<ReplicatedOwnerChange>, ProtocolError> => {
-  const schemas = registry === undefined ? undefined : ownerSchemasByRegistry.get(registry)
-  if (schemas === undefined) {
-    return Result.fail(malformedFrame('C4 owner state requires a replicated owner registry'))
+  if (changes.length > registryEntry.limits.maxRegisteredOwners) {
+    return Result.fail(malformedFrame('C4 owner change count exceeds configured limit'))
   }
+  const context: OwnerChangeContext = { direction, registryEntry, seen: new Set() }
+  return validateOwnerChangeList(changes, context)
+}
 
-  const seen = new Set<ReplicatedOwnerId>()
-  const validated: Array<ReplicatedOwnerChange> = []
-  for (const change of changes) {
-    if (seen.has(change.owner)) {
-      return Result.fail(malformedFrame(`duplicate owner change in C4 group: ${change.owner}`))
-    }
-    seen.add(change.owner)
-
-    const schema = schemas.get(change.owner)
-    if (schema === undefined) {
-      return Result.fail(malformedFrame(`unknown replicated owner: ${change.owner}`))
-    }
-
-    const state = direction === 'decode'
-      ? Schema.decodeUnknownResult(schema, strictParseOptions)(change.state)
-      : Schema.encodeUnknownResult(schema, strictParseOptions)(change.state)
-    if (Result.isFailure(state)) {
-      return Result.fail(malformedFrame(`invalid state for replicated owner ${change.owner}: ${state.failure.message}`))
-    }
-
-    validated.push({ owner: change.owner, state: state.success })
+const validateReplicatedDelta = (
+  message: Extract<NetworkMessageType, { _tag: 'ReplicatedWorldDelta' }>,
+  registry: ReplicatedOwnerRegistry | undefined,
+  direction: 'decode' | 'encode',
+): Result.Result<NetworkMessageType, ProtocolError> => {
+  const registryEntry = registryEntryFor(registry)
+  if (registryEntry === undefined || message.blockChanges.length > registryEntry.limits.maxDeltaBlockChanges) {
+    return Result.fail(malformedFrame('C4 block change count exceeds configured limit'))
   }
+  return Result.map(validateOwnerChanges(message.changes, registryEntry, direction), (changes) => ({ ...message, changes }))
+}
 
-  return Result.succeed(validated)
+const validateReplicatedSnapshot = (
+  message: Extract<NetworkMessageType, { _tag: 'ReplicatedWorldSnapshot' }>,
+  registry: ReplicatedOwnerRegistry | undefined,
+  direction: 'decode' | 'encode',
+): Result.Result<NetworkMessageType, ProtocolError> => {
+  const registryEntry = registryEntryFor(registry)
+  if (registryEntry === undefined || message.blocks.length > registryEntry.limits.maxSnapshotBlockReads) {
+    return Result.fail(malformedFrame('C4 snapshot block count exceeds configured limit'))
+  }
+  return Result.map(validateOwnerChanges(message.owners, registryEntry, direction), (owners) => ({ ...message, owners }))
 }
 
 const validateOwnerStates = (
@@ -510,10 +1151,10 @@ const validateOwnerStates = (
   direction: 'decode' | 'encode',
 ): Result.Result<NetworkMessageType, ProtocolError> => {
   if (message._tag === 'ReplicatedWorldDelta') {
-    return Result.map(validateOwnerChanges(message.changes, registry, direction), (changes) => ({ ...message, changes }))
+    return validateReplicatedDelta(message, registry, direction)
   }
   if (message._tag === 'ReplicatedWorldSnapshot') {
-    return Result.map(validateOwnerChanges(message.owners, registry, direction), (owners) => ({ ...message, owners }))
+    return validateReplicatedSnapshot(message, registry, direction)
   }
   return Result.succeed(message)
 }
@@ -568,21 +1209,11 @@ const unsupportedProtocolVersion = (protocolVersion: number): ProtocolError =>
   })
 
 /** Identify a v10 C4 tag before its body is decoded, for resync classification. */
-export const inspectReplicatedFrameTag = (
+const inspectEnvelopeTag = (
   text: WireText,
+  rootTag: string | undefined,
+  envelope: { readonly message: unknown; readonly protocolVersion: number },
 ): Result.Result<ReplicatedFrameTag | undefined, ProtocolError> => {
-  const globalSizeFailure = globalFrameSizeFailure(text)
-  if (globalSizeFailure !== undefined) {
-    return Result.fail(globalSizeFailure)
-  }
-
-  const rootTag = scanRootMessageTag(text)
-  const envelopeResult = decodeWireEnvelope(text)
-  if (Result.isFailure(envelopeResult)) {
-    return Result.fail(malformedFrame(envelopeResult.failure.message))
-  }
-
-  const envelope = envelopeResult.success
   if (envelope.protocolVersion !== PROTOCOL_VERSION) {
     return Result.fail(unsupportedProtocolVersion(envelope.protocolVersion))
   }
@@ -600,9 +1231,27 @@ export const inspectReplicatedFrameTag = (
       return Result.succeed(envelope.message['_tag'])
     default: {
       const sizeFailure = legacyFrameSizeFailure(text, rootTag)
-      return sizeFailure === undefined ? Result.succeed(undefined) : Result.fail(sizeFailure)
+      if (sizeFailure !== undefined) {
+        return Result.fail(sizeFailure)
+      }
+      return Result.succeed(undefined)
     }
   }
+}
+
+export const inspectReplicatedFrameTag = (
+  text: WireText,
+): Result.Result<ReplicatedFrameTag | undefined, ProtocolError> => {
+  const globalSizeFailure = globalFrameSizeFailure(text)
+  if (globalSizeFailure !== undefined) {
+    return Result.fail(globalSizeFailure)
+  }
+  const rootTag = scanRootMessageTag(text)
+  const envelopeResult = decodeWireEnvelope(text)
+  if (Result.isFailure(envelopeResult)) {
+    return Result.fail(malformedFrame(envelopeResult.failure.message))
+  }
+  return inspectEnvelopeTag(text, rootTag, envelopeResult.success)
 }
 
 /**
@@ -612,29 +1261,51 @@ export const inspectReplicatedFrameTag = (
  * speak — the only way to prove the version check actually rejects rather than
  * best-effort parses. Production code calls `encodeFrame`.
  */
-export const encodeFrameAsVersion = (
-  protocolVersion: number,
-  message: unknown,
-  owners?: ReplicatedOwnerRegistry,
+type VersionedFrameEncodeOptions = Readonly<{
+  maxFrameBytes?: number
+  message: unknown
+  owners?: ReplicatedOwnerRegistry | undefined
+  protocolVersion: number
+}>
+
+const finishEncodedFrame = (
+  encoded: WireText,
+  owners: ReplicatedOwnerRegistry | undefined,
+  maxFrameBytes: number | undefined,
 ): Result.Result<WireText, ProtocolError> => {
-  const decoded = Schema.decodeUnknownResult(NetworkMessage, strictParseOptions)(message)
+  const sizeFailure = frameSizeFailure(encoded, owners, maxFrameBytes)
+  if (sizeFailure !== undefined) {
+    return Result.fail(sizeFailure)
+  }
+  return Result.succeed(encoded)
+}
+
+const encodeFrameAsVersionWithByteLimit = (
+  options: VersionedFrameEncodeOptions,
+): Result.Result<WireText, ProtocolError> => {
+  const decoded = Schema.decodeUnknownResult(NetworkMessage, strictParseOptions)(options.message)
   if (Result.isFailure(decoded)) {
     return Result.fail(new ProtocolError({ detail: decoded.failure.message, reason: 'unencodable-message' }))
   }
 
-  const ownerEncoded = validateOwnerStates(decoded.success, owners, 'encode')
+  const ownerEncoded = validateOwnerStates(decoded.success, options.owners, 'encode')
   if (Result.isFailure(ownerEncoded)) {
     return Result.fail(new ProtocolError({ detail: ownerEncoded.failure.message, reason: 'unencodable-message' }))
   }
 
-  const encoded = encodeWireFrame({ message: ownerEncoded.success, protocolVersion })
+  const encoded = encodeWireFrame({ message: ownerEncoded.success, protocolVersion: options.protocolVersion })
   if (Result.isFailure(encoded)) {
     return Result.fail(new ProtocolError({ detail: encoded.failure.message, reason: 'unencodable-message' }))
   }
 
-  const sizeFailure = frameSizeFailure(encoded.success)
-  return sizeFailure === undefined ? Result.succeed(encoded.success) : Result.fail(sizeFailure)
+  return finishEncodedFrame(encoded.success, options.owners, options.maxFrameBytes)
 }
+
+export const encodeFrameAsVersion = (
+  protocolVersion: number,
+  message: unknown,
+  owners?: ReplicatedOwnerRegistry,
+): Result.Result<WireText, ProtocolError> => encodeFrameAsVersionWithByteLimit({ message, owners, protocolVersion })
 
 /** Encode a runtime value into a frame at this build's protocol version. */
 export const encodeFrame = (
@@ -642,6 +1313,31 @@ export const encodeFrame = (
   owners?: ReplicatedOwnerRegistry,
 ): Result.Result<WireText, ProtocolError> =>
   encodeFrameAsVersion(PROTOCOL_VERSION, message, owners)
+
+/** Encode one complete snapshot for bounded chunk transfer, above the ordinary frame cap if configured. */
+export const encodeTransferredSnapshotFrame = (
+  message: unknown,
+  owners: ReplicatedOwnerRegistry,
+  maxTotalBytes: number,
+): Result.Result<WireText, ProtocolError> => {
+  if (!isPositiveSafeInteger(maxTotalBytes)) {
+    return Result.fail(new ProtocolError({ detail: 'snapshot transfer byte limit is invalid', reason: 'unencodable-message' }))
+  }
+  const result = encodeFrameAsVersionWithByteLimit({
+    maxFrameBytes: maxTotalBytes,
+    message,
+    owners,
+    protocolVersion: PROTOCOL_VERSION,
+  })
+  if (Result.isFailure(result)) {
+    return result
+  }
+  const tag = scanRootMessageTag(result.success)
+  if (tag !== 'ReplicatedWorldSnapshot') {
+    return Result.fail(new ProtocolError({ detail: 'snapshot transfer accepts only ReplicatedWorldSnapshot', reason: 'unencodable-message' }))
+  }
+  return result
+}
 
 /**
  * Decode a frame.
@@ -658,11 +1354,12 @@ export const encodeFrame = (
  * that version's message schema. Only a supported version reaches the
  * `NetworkMessage` decoder.
  */
-export const decodeFrame = (
+const decodeFrameWithByteLimit = (
   text: WireText,
   owners?: ReplicatedOwnerRegistry,
+  maxFrameBytes?: number,
 ): Result.Result<NetworkMessageType, ProtocolError> => {
-  const sizeFailure = frameSizeFailure(text)
+  const sizeFailure = frameSizeFailure(text, owners, maxFrameBytes)
   if (sizeFailure !== undefined) {
     return Result.fail(sizeFailure)
   }
@@ -678,4 +1375,28 @@ export const decodeFrame = (
   }
 
   return decodeNetworkMessage(envelope.message, owners)
+}
+
+export const decodeFrame = (
+  text: WireText,
+  owners?: ReplicatedOwnerRegistry,
+): Result.Result<NetworkMessageType, ProtocolError> => decodeFrameWithByteLimit(text, owners)
+
+/** Decode one fully reassembled snapshot under the transfer's declared total-byte bound. */
+export const decodeTransferredSnapshotFrame = (
+  text: WireText,
+  owners: ReplicatedOwnerRegistry,
+  maxTotalBytes: number,
+): Result.Result<NetworkMessageType, ProtocolError> => {
+  if (!isPositiveSafeInteger(maxTotalBytes)) {
+    return Result.fail(malformedFrame('snapshot transfer byte limit is invalid'))
+  }
+  const result = decodeFrameWithByteLimit(text, owners, maxTotalBytes)
+  if (Result.isFailure(result)) {
+    return result
+  }
+  if (result.success._tag !== 'ReplicatedWorldSnapshot') {
+    return Result.fail(malformedFrame('snapshot transfer contains a non-snapshot frame'))
+  }
+  return result
 }

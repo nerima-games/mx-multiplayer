@@ -19,8 +19,9 @@ import {
   decodeFrame,
   encodeFrame,
   encodeFrameAsVersion,
+  type ReplicatedOwnerRegistryLimits,
 } from '../src/domain/codec'
-import { AuthoritativeClientState, SnapshotTransferReceiver } from '../src/domain/authoritative-sync'
+import { AuthoritativeClientState, sha256Hex, SnapshotTransferReceiver } from '../src/domain/authoritative-sync'
 import { type ConnectionState, canSend } from '../src/domain/connection'
 import {
   DeltaTimeSecs,
@@ -34,11 +35,14 @@ import {
 } from '@nerima-games/mc-kernel'
 import {
   BlockPlace,
+  Base64Schema,
   Chat,
+  LowercaseHexSha256Schema,
   type NetworkMessage,
   PROTOCOL_VERSION,
   PlayerId,
   PlayerMove,
+  TransferIdSchema,
   WorldId,
 } from '../src/domain/protocol'
 import {
@@ -52,7 +56,9 @@ import {
   NO_NETWORK_FRAMES,
   makeMultiplayerFrameState,
   makeMultiplayerHost,
+  makeMultiplayerHostWithClientSync,
   makeMultiplayerStages,
+  makeMultiplayerStagesForClientPreview,
   makeMultiplayerStagesForPreview,
   multiplayerModule,
   multiplayerStages,
@@ -64,6 +70,20 @@ import {
   OWN_STAGE_PREFIX,
   UPSTREAM_STAGE_IDS,
 } from '../src/stages/stage-ids'
+
+const MAXIMUM_FRAME_JSON_DEPTH = 13
+const MAXIMUM_FRAME_COLLECTION_ITEMS = 31_149
+
+const EMPTY_C4_OWNER_LIMITS: ReplicatedOwnerRegistryLimits = {
+  maxRegisteredOwners: 0,
+  maxDeltaBlockChanges: 256,
+  maxSnapshotBlockReads: MAXIMUM_FRAME_COLLECTION_ITEMS,
+  maxDepth: MAXIMUM_FRAME_JSON_DEPTH,
+  maxCollectionItems: MAXIMUM_FRAME_COLLECTION_ITEMS,
+  maxDeltaFrameBytes: 1_048_576,
+  maxSnapshotFrameBytes: 8_388_608,
+  ownerStates: [],
+}
 
 const ZERO_DT = DeltaTimeSecs(0)
 const ONE_FRAME = DeltaTimeSecs(1 / 60)
@@ -82,6 +102,69 @@ const connected: ConnectionState = {
   player: alice,
   world: WorldId.make('overworld'),
 }
+
+const makeClientSync = (maxQueuedDeltaCount = 8): MultiplayerClientSync => ({
+  owners: Result.getOrThrow(createReplicatedOwnerRegistry([], EMPTY_C4_OWNER_LIMITS)),
+  state: new AuthoritativeClientState(),
+  transfers: Result.getOrThrow(SnapshotTransferReceiver.make({
+    maxChunkBytes: 4096,
+    maxChunkCount: 64,
+    maxQueuedDeltaBytes: 8192,
+    maxQueuedDeltaCount,
+    maxTotalBytes: 65536,
+  })),
+})
+
+const snapshotForRevision = (revision: number): NetworkMessage => ({
+  _tag: 'ReplicatedWorldSnapshot',
+  blocks: [],
+  owners: [],
+  revision: Schema.decodeUnknownSync(WorldRevisionSchema)(revision),
+  world: connected.world,
+})
+
+const deltaForRevision = (revision: number): NetworkMessage => ({
+  _tag: 'ReplicatedWorldDelta',
+  blockChanges: [],
+  changes: [],
+  revision: Schema.decodeUnknownSync(WorldRevisionSchema)(revision),
+  world: connected.world,
+})
+
+const encodeForSync = (message: NetworkMessage, sync: MultiplayerClientSync): string =>
+  Result.getOrThrow(encodeFrame(message, sync.owners))
+
+const snapshotTransferFor = (sync: MultiplayerClientSync, revision: number): ReadonlyArray<NetworkMessage> => {
+  const snapshot = snapshotForRevision(revision)
+  const snapshotFrame = encodeForSync(snapshot, sync)
+  const bytes = Buffer.from(snapshotFrame, 'utf8')
+  const transferId = Schema.decodeUnknownSync(TransferIdSchema)(`transfer-${revision}`)
+  return [
+    {
+      _tag: 'ReplicatedWorldSnapshotStart',
+      chunkCount: 1,
+      revision: Schema.decodeUnknownSync(WorldRevisionSchema)(revision),
+      sha256: Schema.decodeUnknownSync(LowercaseHexSha256Schema)(sha256Hex(bytes)),
+      totalBytes: bytes.length,
+      transferId,
+      world: connected.world,
+    },
+    {
+      _tag: 'ReplicatedWorldSnapshotChunk',
+      data: Schema.decodeUnknownSync(Base64Schema)(bytes.toString('base64')),
+      index: 0,
+      transferId,
+    },
+    { _tag: 'ReplicatedWorldSnapshotEnd', transferId },
+  ]
+}
+
+const sendMessages = (
+  peer: TransportService,
+  messages: ReadonlyArray<NetworkMessage>,
+  sync: MultiplayerClientSync,
+) =>
+  Effect.forEach(messages, (message) => peer.send(encodeForSync(message, sync)), { discard: true })
 
 /**
  * A registered pair of stages plus both ends of the wire.
@@ -226,6 +309,22 @@ describe('§2.3-3 the total order belongs to mc-compose', () => {
       expect(DeltaTimeSecs(0)).toBe(0)
     }),
   )
+
+  it.effect('builds client-preview stages with the supplied sync state', () =>
+    Effect.gen(function* () {
+      const [transport] = yield* makeLoopbackPair
+      const sync = makeClientSync()
+      const preview = yield* makeMultiplayerStagesForClientPreview(sync).pipe(
+        Effect.provideService(TransportPort, transport),
+      )
+
+      expect(preview.stages.map((stage) => stage.id)).toStrictEqual([
+        MULTIPLAYER_STAGE_IDS.inbound,
+        MULTIPLAYER_STAGE_IDS.outbound,
+      ])
+      expect(preview.state).not.toBe(sync.state)
+    }),
+  )
 })
 
 describe('multiplayer:inbound — decode, do not interpret', () => {
@@ -333,7 +432,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       const [local, peer] = yield* makeLoopbackPair
       const state = yield* makeMultiplayerFrameState
       const sync: MultiplayerClientSync = {
-        owners: Result.getOrThrow(createReplicatedOwnerRegistry([])),
+        owners: Result.getOrThrow(createReplicatedOwnerRegistry([], EMPTY_C4_OWNER_LIMITS)),
         state: new AuthoritativeClientState(),
         transfers: Result.getOrThrow(SnapshotTransferReceiver.make({
           maxChunkBytes: 4096,
@@ -381,7 +480,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       const [local, peer] = yield* makeLoopbackPair
       const state = yield* makeMultiplayerFrameState
       const sync: MultiplayerClientSync = {
-        owners: Result.getOrThrow(createReplicatedOwnerRegistry([])),
+        owners: Result.getOrThrow(createReplicatedOwnerRegistry([], EMPTY_C4_OWNER_LIMITS)),
         state: new AuthoritativeClientState(),
         transfers: Result.getOrThrow(SnapshotTransferReceiver.make({
           maxChunkBytes: 4096,
@@ -403,6 +502,250 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
         world: connected.world,
       }])
       expect(yield* countersOf(state)).toMatchObject({ malformed: 1, resyncRequested: 1 })
+    }),
+  )
+
+  it.effect('applies a valid snapshot and its next delta before exposing them to the host', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const snapshot = snapshotForRevision(3)
+      const delta = deltaForRevision(4)
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [snapshot, delta], sync)
+      yield* runStage(stages[0])
+
+      expect(sync.state.world(connected.world)?.revision).toBe(Schema.decodeUnknownSync(WorldRevisionSchema)(4))
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([snapshot, delta])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([])
+    }),
+  )
+
+  it.effect('queues a live delta during transfer and applies the snapshot group atomically', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const [start, chunk, end] = snapshotTransferFor(sync, 3)
+      if (start === undefined || chunk === undefined || end === undefined) {
+        throw new Error('snapshot transfer fixture did not contain all three frames')
+      }
+      const snapshot = snapshotForRevision(3)
+      const delta = deltaForRevision(4)
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [start, delta, chunk, end], sync)
+      yield* runStage(stages[0])
+
+      expect(sync.state.world(connected.world)?.revision).toBe(Schema.decodeUnknownSync(WorldRevisionSchema)(4))
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([snapshot, delta])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([])
+      expect(sync.transfers.isReceiving).toBe(false)
+    }),
+  )
+
+  it.effect('rejects a stale snapshot without replacing the applied projection', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const current = snapshotForRevision(3)
+      const stale = snapshotForRevision(2)
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [current, stale], sync)
+      yield* runStage(stages[0])
+
+      expect(sync.state.world(connected.world)?.revision).toBe(Schema.decodeUnknownSync(WorldRevisionSchema)(3))
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([current])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        lastKnownRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(3),
+        world: connected.world,
+      }])
+    }),
+  )
+
+  it.effect('requests resync when a delta exceeds the transfer queue bound', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync(0)
+      const stages = multiplayerStages(state, local, sync)
+      const [start] = snapshotTransferFor(sync, 3)
+      if (start === undefined) {
+        throw new Error('snapshot transfer fixture did not contain its start frame')
+      }
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [start, deltaForRevision(4)], sync)
+      yield* runStage(stages[0])
+
+      expect(sync.transfers.isReceiving).toBe(false)
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        world: connected.world,
+      }])
+    }),
+  )
+
+  it.effect('does not request resync when an uncorrelated transfer end arrives while disconnected', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const transfer = snapshotTransferFor(sync, 3)
+      const end = transfer[2]
+      if (end === undefined) {
+        throw new Error('snapshot transfer fixture did not contain its end frame')
+      }
+
+      yield* peer.send(encodeForSync(end, sync))
+      yield* runStage(stages[0])
+
+      expect(yield* Ref.get(state.connection)).toStrictEqual({ _tag: 'Disconnected' })
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([])
+      expect((yield* countersOf(state)).resyncRequested).toBe(0)
+    }),
+  )
+
+  it.effect('discards an active transfer and requests the last applied revision after a malformed C4 frame', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const baseline = snapshotForRevision(3)
+      const [start] = snapshotTransferFor(sync, 4)
+      if (start === undefined) {
+        throw new Error('snapshot transfer fixture did not contain its start frame')
+      }
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [baseline, start], sync)
+      yield* peer.send('{"protocolVersion":10,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":4,"changes":[]}}')
+      yield* runStage(stages[0])
+
+      expect(sync.transfers.isReceiving).toBe(false)
+      expect(sync.state.world(connected.world)?.revision).toBe(Schema.decodeUnknownSync(WorldRevisionSchema)(3))
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([baseline])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        lastKnownRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(3),
+        world: connected.world,
+      }])
+    }),
+  )
+
+  it.effect('drops malformed and unknown frames without scheduling a C4 resync', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+
+      yield* Ref.set(state.connection, connected)
+      yield* peer.send('{not json')
+      yield* peer.send(JSON.stringify({ protocolVersion: PROTOCOL_VERSION, message: { _tag: 'FutureUnknown' } }))
+      yield* runStage(stages[0])
+
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([])
+      expect((yield* countersOf(state)).malformed).toBe(2)
+    }),
+  )
+
+  it.effect('passes ordinary protocol messages through the client-sync stage', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+
+      yield* sendMessages(peer, [chat], sync)
+      yield* runStage(stages[0])
+
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([chat])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([])
+    }),
+  )
+
+  it.effect('rejects a stale transferred snapshot and keeps the current world projection', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const baseline = snapshotForRevision(5)
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [baseline, ...snapshotTransferFor(sync, 4)], sync)
+      yield* runStage(stages[0])
+
+      expect(sync.state.world(connected.world)?.revision).toBe(Schema.decodeUnknownSync(WorldRevisionSchema)(5))
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([baseline])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        lastKnownRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(5),
+        world: connected.world,
+      }])
+      expect(sync.transfers.isReceiving).toBe(false)
+    }),
+  )
+
+  it.effect('rejects a second snapshot transfer start and requests a fresh snapshot', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const [start] = snapshotTransferFor(sync, 3)
+      if (start === undefined) {
+        throw new Error('snapshot transfer fixture did not contain its start frame')
+      }
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [start, start], sync)
+      yield* runStage(stages[0])
+
+      expect(sync.transfers.isReceiving).toBe(false)
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        world: connected.world,
+      }])
+      expect((yield* countersOf(state)).resyncRequested).toBe(1)
+    }),
+  )
+
+  it.effect('rejects an out-of-order transfer chunk and requests a fresh snapshot', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const state = yield* makeMultiplayerFrameState
+      const sync = makeClientSync()
+      const stages = multiplayerStages(state, local, sync)
+      const [start, chunk] = snapshotTransferFor(sync, 3)
+      if (start === undefined || chunk === undefined || chunk._tag !== 'ReplicatedWorldSnapshotChunk') {
+        throw new Error('snapshot transfer fixture did not contain its first chunk')
+      }
+      const outOfOrderChunk: NetworkMessage = { ...chunk, index: 1 }
+
+      yield* Ref.set(state.connection, connected)
+      yield* sendMessages(peer, [start, outOfOrderChunk], sync)
+      yield* runStage(stages[0])
+
+      expect(sync.transfers.isReceiving).toBe(false)
+      expect(yield* Ref.get(state.inbound)).toStrictEqual([])
+      expect(yield* Ref.get(state.outbox)).toStrictEqual([{
+        _tag: 'AuthoritativeResyncRequest',
+        world: connected.world,
+      }])
     }),
   )
 })
@@ -583,6 +926,24 @@ describe('the stages are re-entrant and hold nothing globally', () => {
 })
 
 describe('production host integration seam', () => {
+  it.effect('builds the host with C4 state application enabled', () =>
+    Effect.gen(function* () {
+      const [local, peer] = yield* makeLoopbackPair
+      const sync = makeClientSync()
+      const host = yield* makeMultiplayerHostWithClientSync(sync).pipe(
+        Effect.provideService(TransportPort, local),
+      )
+      const snapshot = snapshotForRevision(3)
+
+      yield* peer.send(encodeForSync(snapshot, sync))
+      const inbound = host.stages.find((stage) => stage.id === MULTIPLAYER_STAGE_IDS.inbound)
+      yield* runStage(inbound)
+
+      expect(sync.state.world(connected.world)?.revision).toBe(Schema.decodeUnknownSync(WorldRevisionSchema)(3))
+      expect(yield* host.drainInbound).toStrictEqual([snapshot])
+    }),
+  )
+
   it('shares inbound state across separate Effect runtimes', () => {
     const [left, peer] = Effect.runSync(makeLoopbackPair)
     const host = Effect.runSync(makeMultiplayerHost.pipe(

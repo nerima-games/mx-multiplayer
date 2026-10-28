@@ -40,6 +40,16 @@
  * the transport boundary explicit for the preview and its contract tests.
  */
 import {
+  AuthoritativeClientState,
+  type ClientSyncTransition,
+  type SnapshotTransferFailure,
+  SnapshotTransferReceiver,
+} from '../domain/authoritative-sync.js'
+import type {
+  AuthoritativeResyncRequest,
+  NetworkMessage,
+} from '../domain/protocol.js'
+import {
   type ConnectionEvent,
   type ConnectionState,
   canSend,
@@ -49,24 +59,14 @@ import {
 import { Effect, Layer, Queue, Ref, Result } from 'effect'
 import type { GameModule, StageRegistration } from '@nerima-games/mc-kernel'
 import { MULTIPLAYER_STAGE_IDS, UPSTREAM_STAGE_IDS } from './stage-ids.js'
-import { TransportPort, type TransportService } from '../domain/transport.js'
 import {
+  type ReplicatedOwnerRegistry,
   decodeFrame,
   encodeFrame,
   inspectReplicatedFrameTag,
   wireFrameByteLength,
-  type ReplicatedOwnerRegistry,
 } from '../domain/codec.js'
-import {
-  AuthoritativeClientState,
-  SnapshotTransferReceiver,
-  type ClientSyncTransition,
-  type SnapshotTransferFailure,
-} from '../domain/authoritative-sync.js'
-import type {
-  AuthoritativeResyncRequest,
-  NetworkMessage,
-} from '../domain/protocol.js'
+import { TransportPort, type TransportService } from '../domain/transport.js'
 import type { ProtocolError } from '../domain/errors.js'
 
 /**
@@ -167,10 +167,7 @@ export type MultiplayerClientSync = Readonly<{
 const appendInbound = (
   state: MultiplayerFrameState,
   messages: ReadonlyArray<NetworkMessage>,
-): Effect.Effect<void> =>
-  messages.length === 0
-    ? Effect.void
-    : Ref.update(state.inbound, (pending) => [...pending, ...messages])
+): Effect.Effect<void> => Ref.update(state.inbound, (pending) => [...pending, ...messages])
 
 const enqueueResync = (
   state: MultiplayerFrameState,
@@ -185,8 +182,12 @@ const enqueueResync = (
     ),
   )
 
-const syncRejection = (transition: ClientSyncTransition): AuthoritativeResyncRequest | undefined =>
-  transition.accepted ? undefined : transition.request
+const syncRejection = (syncTransition: ClientSyncTransition): AuthoritativeResyncRequest | undefined => {
+  if (syncTransition.accepted) {
+    return undefined
+  }
+  return syncTransition.request
+}
 
 const resyncForConnection = (
   state: MultiplayerFrameState,
@@ -198,95 +199,158 @@ const resyncForConnection = (
       return
     }
     const revision = sync.state.world(connection.world)?.revision
-    const request: AuthoritativeResyncRequest = revision === undefined
-      ? { _tag: 'AuthoritativeResyncRequest', world: connection.world }
-      : { _tag: 'AuthoritativeResyncRequest', lastKnownRevision: revision, world: connection.world }
-    yield* enqueueResync(state, request)
+    if (revision === undefined) {
+      yield* enqueueResync(state, { _tag: 'AuthoritativeResyncRequest', world: connection.world })
+      return
+    }
+    yield* enqueueResync(state, {
+      _tag: 'AuthoritativeResyncRequest',
+      lastKnownRevision: revision,
+      world: connection.world,
+    })
   })
 
 const resyncForTransferFailure = (
   state: MultiplayerFrameState,
   sync: MultiplayerClientSync,
   failure: SnapshotTransferFailure,
-): Effect.Effect<void> =>
-  failure.request === undefined
-    ? resyncForConnection(state, sync)
-    : enqueueResync(state, failure.request)
+): Effect.Effect<void> => {
+  if (failure.request === undefined) {
+    return resyncForConnection(state, sync)
+  }
+  return enqueueResync(state, failure.request)
+}
 
-const applyC4Message = (
+type C4ApplyContext = Readonly<{
   state: MultiplayerFrameState,
   sync: MultiplayerClientSync,
-  message: NetworkMessage,
   frame: string,
+}>
+
+const applySnapshotMessage = (
+  context: C4ApplyContext,
+  message: Extract<NetworkMessage, { readonly _tag: 'ReplicatedWorldSnapshot' }>,
+): Effect.Effect<void> => {
+  const syncTransition = context.sync.state.applySnapshot(message)
+  const request = syncRejection(syncTransition)
+  if (request !== undefined) {
+    return enqueueResync(context.state, request)
+  }
+  return appendInbound(context.state, [message])
+}
+
+const queueDeltaForTransfer = (
+  context: C4ApplyContext,
+  message: Extract<NetworkMessage, { readonly _tag: 'ReplicatedWorldDelta' }>,
+): Effect.Effect<void> | undefined => {
+  if (!context.sync.transfers.isReceiving) {
+    return undefined
+  }
+  const queued = context.sync.transfers.queueDelta(message, wireFrameByteLength(context.frame))
+  if (!queued.accepted) {
+    return resyncForTransferFailure(context.state, context.sync, queued)
+  }
+  return Effect.void
+}
+
+const applyDeltaMessage = (
+  context: C4ApplyContext,
+  message: Extract<NetworkMessage, { readonly _tag: 'ReplicatedWorldDelta' }>,
+): Effect.Effect<void> => {
+  const queueResult = queueDeltaForTransfer(context, message)
+  if (queueResult !== undefined) {
+    return queueResult
+  }
+  const syncTransition = context.sync.state.applyDelta(message)
+  const request = syncRejection(syncTransition)
+  if (request !== undefined) {
+    return enqueueResync(context.state, request)
+  }
+  return appendInbound(context.state, [message])
+}
+
+const beginSnapshotTransfer = (
+  context: C4ApplyContext,
+  message: Extract<NetworkMessage, { readonly _tag: 'ReplicatedWorldSnapshotStart' }>,
+): Effect.Effect<void> => {
+  const revision = context.sync.state.world(message.world)?.revision
+  const result = context.sync.transfers.begin(message, revision)
+  if (result.accepted) {
+    return Effect.void
+  }
+  return resyncForTransferFailure(context.state, context.sync, result)
+}
+
+const appendSnapshotTransferChunk = (
+  context: C4ApplyContext,
+  message: Extract<NetworkMessage, { readonly _tag: 'ReplicatedWorldSnapshotChunk' }>,
+): Effect.Effect<void> => {
+  const result = context.sync.transfers.append(message)
+  if (result.accepted) {
+    return Effect.void
+  }
+  return resyncForTransferFailure(context.state, context.sync, result)
+}
+
+const finishSnapshotTransfer = (
+  context: C4ApplyContext,
+  message: Extract<NetworkMessage, { readonly _tag: 'ReplicatedWorldSnapshotEnd' }>,
+): Effect.Effect<void> => {
+  const result = context.sync.transfers.finish(message)
+  if (!result.accepted) {
+    return resyncForTransferFailure(context.state, context.sync, result)
+  }
+  const syncTransition = context.sync.state.applyTransfer(result.completion, context.sync.owners)
+  if (!syncTransition.accepted) {
+    return enqueueResync(context.state, syncTransition.request)
+  }
+  return appendInbound(context.state, syncTransition.appliedMessages)
+}
+
+const applyC4Message = (
+  context: C4ApplyContext,
+  message: NetworkMessage,
 ): Effect.Effect<void> => {
   switch (message._tag) {
-    case 'ReplicatedWorldSnapshot': {
-      const transition = sync.state.applySnapshot(message)
-      const request = syncRejection(transition)
-      return request === undefined
-        ? appendInbound(state, [message])
-        : enqueueResync(state, request)
-    }
-    case 'ReplicatedWorldDelta': {
-      if (sync.transfers.isReceiving) {
-        const queued = sync.transfers.queueDelta(message, wireFrameByteLength(frame))
-        if (!queued.accepted) {
-          return resyncForTransferFailure(state, sync, queued)
-        }
-        if (queued.queued === true) {
-          return Effect.void
-        }
-      }
-      const transition = sync.state.applyDelta(message)
-      const request = syncRejection(transition)
-      return request === undefined
-        ? appendInbound(state, [message])
-        : enqueueResync(state, request)
-    }
-    case 'ReplicatedWorldSnapshotStart': {
-      const revision = sync.state.world(message.world)?.revision
-      const result = sync.transfers.begin(message, revision)
-      return result.accepted
-        ? Effect.void
-        : resyncForTransferFailure(state, sync, result)
-    }
-    case 'ReplicatedWorldSnapshotChunk': {
-      const result = sync.transfers.append(message)
-      return result.accepted
-        ? Effect.void
-        : resyncForTransferFailure(state, sync, result)
-    }
-    case 'ReplicatedWorldSnapshotEnd': {
-      const result = sync.transfers.finish(message)
-      if (!result.accepted) {
-        return resyncForTransferFailure(state, sync, result)
-      }
-      const transition = sync.state.applyTransfer(result.completion, sync.owners)
-      return transition.accepted
-        ? appendInbound(state, transition.appliedMessages)
-        : enqueueResync(state, transition.request)
-    }
+    case 'ReplicatedWorldSnapshot':
+      return applySnapshotMessage(context, message)
+    case 'ReplicatedWorldDelta':
+      return applyDeltaMessage(context, message)
+    case 'ReplicatedWorldSnapshotStart':
+      return beginSnapshotTransfer(context, message)
+    case 'ReplicatedWorldSnapshotChunk':
+      return appendSnapshotTransferChunk(context, message)
+    case 'ReplicatedWorldSnapshotEnd':
+      return finishSnapshotTransfer(context, message)
     default:
-      return appendInbound(state, [message])
+      return appendInbound(context.state, [message])
   }
+}
+
+type DecodedFrameContext = Readonly<{
+  readonly sync: MultiplayerClientSync | undefined
+  readonly frame: string
+  readonly message: NetworkMessage
+}>
+
+const applyDecodedFrame = (
+  state: MultiplayerFrameState,
+  decoded: DecodedFrameContext,
+): Effect.Effect<void> => {
+  if (decoded.sync === undefined) {
+    return appendInbound(state, [decoded.message])
+  }
+  return applyC4Message({ frame: decoded.frame, state, sync: decoded.sync }, decoded.message)
 }
 
 const handleDecodedFrame = (
   state: MultiplayerFrameState,
-  sync: MultiplayerClientSync | undefined,
-  frame: string,
-  message: NetworkMessage,
+  decoded: DecodedFrameContext,
 ): Effect.Effect<void> =>
   Ref.update(state.counters, (current) => ({
     ...current,
     received: current.received + COUNTER_INCREMENT,
-  })).pipe(
-    Effect.andThen(
-      sync === undefined
-        ? appendInbound(state, [message])
-        : applyC4Message(state, sync, message, frame),
-    ),
-  )
+  })).pipe(Effect.andThen(applyDecodedFrame(state, decoded)))
 
 const resyncMalformedC4Frame = (
   state: MultiplayerFrameState,
@@ -385,7 +449,7 @@ export const multiplayerStages = (
               ),
               // The transport seam. The host/session adapter drains this queue
               // And applies the message through mc-sim and mx-gameplay.
-              onSuccess: (message) => handleDecodedFrame(state, sync, frame, message),
+              onSuccess: (message) => handleDecodedFrame(state, { frame, message, sync }),
             }),
           { discard: true },
         )

@@ -14,10 +14,18 @@ import type {
 import {
   AuthoritativeClientState,
   SnapshotTransferReceiver,
+  applyReplicatedWorldDelta,
+  decodeUtf8Frame,
   sha256Hex,
+  type CompletedSnapshotTransfer,
   type SnapshotTransferLimits,
 } from '../src/domain/authoritative-sync'
-import { createReplicatedOwnerRegistry, encodeFrame } from '../src/domain/codec'
+import {
+  createReplicatedOwnerRegistry,
+  encodeFrame,
+  encodeTransferredSnapshotFrame,
+  type ReplicatedOwnerRegistryLimits,
+} from '../src/domain/codec'
 import {
   AuthoritativeRevisionTracker,
   PlayerId,
@@ -63,11 +71,11 @@ const ownerId = (value: string): ReplicatedOwnerId => Schema.decodeUnknownSync(R
 
 const ownerChange = (owner: string, state: unknown): ReplicatedOwnerChange => ({ owner: ownerId(owner), state })
 
-const blockPosition = (x: number): BlockPosition => Schema.decodeUnknownSync(BlockPositionSchema)({ x, y: 64, z: 0 })
+const blockPosition = (x: number, y = 64, z = 0): BlockPosition => Schema.decodeUnknownSync(BlockPositionSchema)({ x, y, z })
 
-const blockRead = (x: number, block: number): WorldBlockRead => ({
+const blockRead = (x: number, block: number, y = 64, z = 0): WorldBlockRead => ({
   dimension: 'overworld',
-  position: blockPosition(x),
+  position: blockPosition(x, y, z),
   reading: { _tag: 'Block', block: Schema.decodeUnknownSync(BlockIdSchema)(block) },
 })
 
@@ -104,8 +112,76 @@ const replicatedDelta = (
 
 const asciiBytes = (text: string): Uint8Array => Uint8Array.from(text, (character) => character.charCodeAt(0))
 
+const MAXIMUM_FRAME_JSON_DEPTH = 13
+const MAXIMUM_FRAME_COLLECTION_ITEMS = 31_149
+const MAXIMUM_AOI_PROFILE_OWNER_COUNT = 3
+const MAXIMUM_AOI_PROFILE_DELTA_BLOCK_CHANGES = 256
+const MAXIMUM_AOI_PROFILE_SNAPSHOT_BLOCK_READS = 15_000
+const MAXIMUM_AOI_OWNER_IDS = [
+  ownerId('owner:maximum-1'),
+  ownerId('owner:maximum-2'),
+  ownerId('owner:maximum-3'),
+  ownerId('owner:maximum-4'),
+]
+const MAXIMUM_AOI_OWNER_STATE_SCHEMA = Schema.Struct({ labels: Schema.Array(Schema.String) })
+const MAXIMUM_AOI_OWNER_STATE_SAMPLE = { labels: ['x'.repeat(34), 'y'.repeat(34)] }
+const MAXIMUM_AOI_OWNER_STATE_BYTES = new TextEncoder().encode(JSON.stringify(MAXIMUM_AOI_OWNER_STATE_SAMPLE)).length
+const MAXIMUM_AOI_OWNER_STATE_LIMIT_BYTES = Math.ceil(MAXIMUM_AOI_OWNER_STATE_BYTES * 1.25)
+const MAXIMUM_AOI_OWNER_STATE_EMPTY_COLLECTION = { labels: ['', '', ''] }
+const MAXIMUM_AOI_OWNER_STATE = {
+  labels: [
+    'x'.repeat(MAXIMUM_AOI_OWNER_STATE_LIMIT_BYTES - new TextEncoder().encode(JSON.stringify(MAXIMUM_AOI_OWNER_STATE_EMPTY_COLLECTION)).length),
+    '',
+    '',
+  ],
+}
+const MAXIMUM_AOI_BLOCK_BEFORE = 65_535
+const MAXIMUM_AOI_BLOCK_AFTER = 65_534
+const MAXIMUM_AOI_BLOCK_READ = 65_535
+const MAXIMUM_AOI_BLOCK_AXIS = Number.MIN_SAFE_INTEGER
+const maximumAoiBlockPosition = (index: number): BlockPosition => blockPosition(
+  MAXIMUM_AOI_BLOCK_AXIS + index,
+  MAXIMUM_AOI_BLOCK_AXIS,
+  MAXIMUM_AOI_BLOCK_AXIS,
+)
+const maximumAoiBlockRead = (index: number): WorldBlockRead => blockRead(
+  MAXIMUM_AOI_BLOCK_AXIS + index,
+  MAXIMUM_AOI_BLOCK_READ,
+  MAXIMUM_AOI_BLOCK_AXIS,
+  MAXIMUM_AOI_BLOCK_AXIS,
+)
+const maximumAoiBlockChange = (index: number): ReplicatedBlockChange => ({
+  before: Schema.decodeUnknownSync(BlockIdSchema)(MAXIMUM_AOI_BLOCK_BEFORE),
+  dimension: 'overworld',
+  position: maximumAoiBlockPosition(index),
+  after: Schema.decodeUnknownSync(BlockIdSchema)(MAXIMUM_AOI_BLOCK_AFTER),
+})
+const MAXIMUM_AOI_OWNER_CHANGES = MAXIMUM_AOI_OWNER_IDS.map((owner) => ({ owner, state: MAXIMUM_AOI_OWNER_STATE }))
+const MAXIMUM_AOI_OWNER_REGISTRATIONS = MAXIMUM_AOI_OWNER_IDS.map((registeredOwnerId) => ({
+  ownerId: registeredOwnerId,
+  schema: MAXIMUM_AOI_OWNER_STATE_SCHEMA,
+  initialState: MAXIMUM_AOI_OWNER_STATE_SAMPLE,
+}))
+const MAXIMUM_AOI_OWNER_STATE_BOUNDS: ReplicatedOwnerRegistryLimits['ownerStates'] = MAXIMUM_AOI_OWNER_IDS.map((registeredOwnerId) => ({
+  ownerId: registeredOwnerId,
+  maxStateBytes: MAXIMUM_AOI_OWNER_STATE_LIMIT_BYTES,
+  maxStateDepth: 4,
+  maxCollectionItems: 3,
+}))
+
+const EMPTY_OWNER_REGISTRY_LIMITS = {
+  maxRegisteredOwners: 0,
+  maxDeltaBlockChanges: 256,
+  maxSnapshotBlockReads: MAXIMUM_FRAME_COLLECTION_ITEMS,
+  maxDepth: MAXIMUM_FRAME_JSON_DEPTH,
+  maxCollectionItems: MAXIMUM_FRAME_COLLECTION_ITEMS,
+  maxDeltaFrameBytes: 1_048_576,
+  maxSnapshotFrameBytes: 8_388_608,
+  ownerStates: [],
+} satisfies ReplicatedOwnerRegistryLimits
+
 const makeEmptyOwnerRegistry = () => {
-  const result = createReplicatedOwnerRegistry([])
+  const result = createReplicatedOwnerRegistry([], EMPTY_OWNER_REGISTRY_LIMITS)
   if (Result.isFailure(result)) {
     throw result.failure
   }
@@ -120,11 +196,21 @@ const encodeBase64 = (bytes: Uint8Array): Base64 => {
     const first = bytes[offset] ?? 0
     const second = bytes[offset + 1]
     const third = bytes[offset + 2]
-    encoded += base64Alphabet.charAt(first >> 2)
-    encoded += base64Alphabet.charAt(((first & 0x03) << 4) | ((second ?? 0) >> 4))
-    encoded += second === undefined
-      ? '=='
-      : `${base64Alphabet.charAt(((second & 0x0f) << 2) | ((third ?? 0) >> 6))}${third === undefined ? '=' : base64Alphabet.charAt(third & 0x3f)}`
+    const firstIndex = Math.floor(first / 4)
+    const secondIndex = (first % 4) * 16 + Math.floor((second ?? 0) / 16)
+    encoded += base64Alphabet.charAt(firstIndex)
+    encoded += base64Alphabet.charAt(secondIndex)
+    if (second === undefined) {
+      encoded += '=='
+    } else {
+      const thirdIndex = (second % 16) * 4 + Math.floor((third ?? 0) / 64)
+      encoded += base64Alphabet.charAt(thirdIndex)
+      if (third === undefined) {
+        encoded += '='
+      } else {
+        encoded += base64Alphabet.charAt(third % 64)
+      }
+    }
   }
   return Schema.decodeUnknownSync(Base64Schema)(encoded)
 }
@@ -194,6 +280,27 @@ const makeTransferReceiver = (limits: SnapshotTransferLimits): SnapshotTransferR
     throw result.failure
   }
   return result.success
+}
+const measureJsonShape = (root: unknown): Readonly<{ maxDepth: number; maxCollectionItems: number }> => {
+  const pending: Array<Readonly<{ depth: number; value: unknown }>> = [{ depth: 1, value: root }]
+  let maxDepth = 1
+  let maxCollectionItems = 0
+
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (current === undefined || typeof current.value !== 'object' || current.value === null) {
+      continue
+    }
+    const entries = Array.isArray(current.value) ? current.value : Object.values(current.value)
+    maxCollectionItems = Math.max(maxCollectionItems, entries.length)
+    for (const value of entries) {
+      const depth = current.depth + 1
+      maxDepth = Math.max(maxDepth, depth)
+      pending.push({ depth, value })
+    }
+  }
+
+  return { maxDepth, maxCollectionItems }
 }
 
 describe('authoritative world revision admission', () => {
@@ -281,6 +388,97 @@ describe('authoritative world revision admission', () => {
 })
 
 describe('C4 authoritative client sync', () => {
+  it.effect('requests a snapshot before applying a delta without a world baseline', () =>
+    Effect.sync(() => {
+      const before = new Map()
+      const transition = applyReplicatedWorldDelta(before, replicatedDelta(1))
+
+      expect(transition).toMatchObject({
+        accepted: false,
+        reason: 'snapshot-required',
+        request: { world: overworld },
+      })
+      expect(transition.state).toBe(before)
+    }),
+  )
+
+  it.effect('rejects duplicate members in snapshots without replacing the current projection', () =>
+    Effect.sync(() => {
+      const subject = new AuthoritativeClientState()
+      subject.applySnapshot(replicatedSnapshot(10, [ownerChange('owner:prior', { value: 'retained' })], [blockRead(0, 1)]))
+      const before = subject.snapshot
+      const beforeWorld = subject.world(overworld)
+      if (beforeWorld === undefined) {
+        throw new Error('baseline fixture did not establish a world state')
+      }
+
+      expect(subject.applySnapshot(replicatedSnapshot(11, [
+        ownerChange('owner:duplicate', { value: 'first' }),
+        ownerChange('owner:duplicate', { value: 'second' }),
+      ]))).toMatchObject({ accepted: false, reason: 'duplicate-owner' })
+      expect(subject.snapshot).toBe(before)
+      expect(subject.world(overworld)).toBe(beforeWorld)
+
+      expect(subject.applySnapshot(replicatedSnapshot(11, [], [blockRead(1, 2), blockRead(1, 3)])))
+        .toMatchObject({ accepted: false, reason: 'duplicate-block' })
+      expect(subject.snapshot).toBe(before)
+      expect(subject.world(overworld)).toBe(beforeWorld)
+      expect(beforeWorld.revision).toBe(replicatedRevision(10))
+      expect(beforeWorld.owners.get(ownerId('owner:prior'))).toStrictEqual({ value: 'retained' })
+      expect([...beforeWorld.blocks.values()]).toStrictEqual([blockRead(0, 1)])
+    }),
+  )
+
+  it.effect('rejects stale snapshots and a duplicate revision at the safe integer ceiling', () =>
+    Effect.sync(() => {
+      const subject = new AuthoritativeClientState()
+      subject.applySnapshot(replicatedSnapshot(10))
+      const before = subject.snapshot
+      const beforeWorld = subject.world(overworld)
+
+      expect(subject.applySnapshot(replicatedSnapshot(9))).toMatchObject({
+        accepted: false,
+        reason: 'duplicate-or-stale',
+        request: { lastKnownRevision: replicatedRevision(10), world: overworld },
+      })
+      expect(subject.snapshot).toBe(before)
+      expect(subject.world(overworld)).toBe(beforeWorld)
+
+      const maximumRevision = Number.MAX_SAFE_INTEGER
+      const maxedState = new AuthoritativeClientState()
+      maxedState.applySnapshot(replicatedSnapshot(maximumRevision))
+      const maxedBefore = maxedState.snapshot
+      expect(maxedState.applyDelta(replicatedDelta(maximumRevision))).toMatchObject({
+        accepted: false,
+        reason: 'duplicate-or-stale',
+        request: { lastKnownRevision: replicatedRevision(maximumRevision), world: overworld },
+      })
+      expect(maxedState.snapshot).toBe(maxedBefore)
+    }),
+  )
+
+  it.effect('disconnects one projected world or clears the complete client projection', () =>
+    Effect.sync(() => {
+      const subject = new AuthoritativeClientState()
+      subject.applySnapshot(replicatedSnapshot(10))
+      subject.applySnapshot({ ...replicatedSnapshot(20), world: nether })
+      const beforeDisconnect = subject.snapshot
+
+      subject.disconnect(nether)
+      expect(subject.snapshot).not.toBe(beforeDisconnect)
+      expect(subject.world(nether)).toBeUndefined()
+      expect(subject.world(overworld)?.revision).toBe(replicatedRevision(10))
+
+      const afterWorldRemoval = subject.snapshot
+      subject.disconnect(WorldId.make('end'))
+      expect(subject.snapshot).toBe(afterWorldRemoval)
+
+      subject.disconnect()
+      expect(subject.snapshot.size).toBe(0)
+      expect(subject.world(overworld)).toBeUndefined()
+    }),
+  )
+
   it.effect('rejects a duplicate owner member without publishing any part of the group', () =>
     Effect.sync(() => {
       const subject = new AuthoritativeClientState()
@@ -486,6 +684,240 @@ describe('C4 authoritative client sync', () => {
 })
 
 describe('C4 snapshot transfer receiver', () => {
+  it.effect('rejects invalid limits and frames outside an active transfer', () =>
+    Effect.sync(() => {
+      const bytes = snapshotFrameBytes(20)
+      const limits = transferLimits(bytes, bytes.length)
+      const invalidLimits: Array<SnapshotTransferLimits> = [
+        { ...limits, maxTotalBytes: 0 },
+        { ...limits, maxChunkCount: Number.NaN },
+        { ...limits, maxChunkBytes: Number.POSITIVE_INFINITY },
+        { ...limits, maxQueuedDeltaCount: -1 },
+        { ...limits, maxQueuedDeltaBytes: 0.5 },
+      ]
+      for (const candidate of invalidLimits) {
+        expect(Result.isFailure(SnapshotTransferReceiver.make(candidate))).toBe(true)
+      }
+
+      const receiver = makeTransferReceiver(limits)
+      expect(receiver.append(transferChunks(bytes, 'idle-append', bytes.length)[0] ?? {
+        _tag: 'ReplicatedWorldSnapshotChunk',
+        data: encodeBase64(Uint8Array.of(1)),
+        index: 0,
+        transferId: Schema.decodeUnknownSync(TransferIdSchema)('idle-append'),
+      })).toMatchObject({ accepted: false, reason: 'unexpected-transfer-frame' })
+      expect(receiver.finish(transferEnd('idle-finish'))).toMatchObject({
+        accepted: false,
+        reason: 'unexpected-transfer-frame',
+      })
+      expect(receiver.queueDelta(replicatedDelta(21), 1)).toStrictEqual({ accepted: true, queued: false })
+
+      const invalidDeclaration = { ...transferStart(bytes, 'invalid-declaration', 20, bytes.length), chunkCount: 0 }
+      expect(receiver.begin(invalidDeclaration, replicatedRevision(19))).toMatchObject({
+        accepted: false,
+        reason: 'invalid-declaration',
+        request: { lastKnownRevision: replicatedRevision(19), world: overworld },
+      })
+
+      const alreadyActive = makeTransferReceiver(limits)
+      expect(alreadyActive.begin(transferStart(bytes, 'first-active', 20, bytes.length), replicatedRevision(19)))
+        .toStrictEqual({ accepted: true })
+      expect(alreadyActive.begin(transferStart(bytes, 'second-active', 21, bytes.length), replicatedRevision(20)))
+        .toMatchObject({
+          accepted: false,
+          reason: 'transfer-already-active',
+          request: { lastKnownRevision: replicatedRevision(19), world: overworld },
+        })
+      expect(alreadyActive.isReceiving).toBe(false)
+
+      const wrongChunkReceiver = makeTransferReceiver(limits)
+      expect(wrongChunkReceiver.begin(transferStart(bytes, 'expected-id', 20, bytes.length), replicatedRevision(19)))
+        .toStrictEqual({ accepted: true })
+      const foreignChunk = transferChunks(bytes, 'foreign-id', bytes.length)[0]
+      if (foreignChunk === undefined) {
+        throw new Error('foreign transfer fixture was empty')
+      }
+      expect(wrongChunkReceiver.append(foreignChunk)).toMatchObject({
+        accepted: false,
+        reason: 'wrong-transfer-id',
+        request: { lastKnownRevision: replicatedRevision(19), world: overworld },
+      })
+      expect(wrongChunkReceiver.isReceiving).toBe(false)
+
+      for (const data of ['', '!!!!'] as const) {
+        const malformedReceiver = makeTransferReceiver(limits)
+        expect(malformedReceiver.begin(
+          transferStart(bytes, `malformed-${data.length}`, 20, bytes.length),
+          replicatedRevision(19),
+        )).toStrictEqual({ accepted: true })
+        const validChunk = transferChunks(bytes, `malformed-${data.length}`, bytes.length)[0]
+        if (validChunk === undefined) {
+          throw new Error('malformed chunk fixture did not contain its chunk')
+        }
+        const malformedChunk = { ...validChunk }
+        expect(Reflect.set(malformedChunk, 'data', data)).toBe(true)
+        expect(malformedReceiver.append(malformedChunk)).toMatchObject({
+          accepted: false,
+          reason: 'chunk-too-large',
+        })
+        expect(malformedReceiver.isReceiving).toBe(false)
+      }
+
+      const wrongEndReceiver = makeTransferReceiver(limits)
+      expect(wrongEndReceiver.begin(transferStart(bytes, 'expected-end', 20, bytes.length), replicatedRevision(19)))
+        .toStrictEqual({ accepted: true })
+      expect(wrongEndReceiver.finish(transferEnd('foreign-end'))).toMatchObject({
+        accepted: false,
+        reason: 'wrong-transfer-id',
+        request: { lastKnownRevision: replicatedRevision(19), world: overworld },
+      })
+
+      const incompleteReceiver = makeTransferReceiver(transferLimits(bytes, Math.floor(bytes.length / 2)))
+      expect(incompleteReceiver.begin(
+        transferStart(bytes, 'incomplete-end', 20, Math.floor(bytes.length / 2)),
+        replicatedRevision(19),
+      )).toStrictEqual({ accepted: true })
+      expect(incompleteReceiver.finish(transferEnd('incomplete-end'))).toMatchObject({
+        accepted: false,
+        reason: 'incomplete-transfer',
+      })
+      incompleteReceiver.discard()
+      expect(incompleteReceiver.isReceiving).toBe(false)
+    }),
+  )
+
+  it.effect('decodes all base64 padding forms and rejects non-canonical unused bits', () =>
+    Effect.sync(() => {
+      const fragments = [
+        { bytes: asciiBytes('A'), transfer: 'one-byte-fragment' },
+        { bytes: asciiBytes('AB'), transfer: 'two-byte-fragment' },
+        { bytes: asciiBytes('ABC'), transfer: 'three-byte-fragment' },
+      ]
+      for (const { bytes, transfer } of fragments) {
+        const receiver = makeTransferReceiver(transferLimits(bytes, bytes.length))
+        expect(receiver.begin(transferStart(bytes, transfer, 20, bytes.length))).toStrictEqual({ accepted: true })
+        const chunk = transferChunks(bytes, transfer, bytes.length)[0]
+        if (chunk === undefined) {
+          throw new Error('base64 fragment fixture was empty')
+        }
+        expect(receiver.append(chunk)).toStrictEqual({ accepted: true })
+        const completion = receiver.finish(transferEnd(transfer))
+        if (!completion.accepted) {
+          throw new Error('base64 fragment transfer did not complete')
+        }
+        expect(completion.completion.frameBytes).toStrictEqual(bytes)
+      }
+
+      const paddedCases = [
+        { data: 'QR==', byteCount: 1, transfer: 'invalid-two-padding-bits' },
+        { data: 'AAB=', byteCount: 2, transfer: 'invalid-one-padding-bits' },
+      ]
+      for (const { data, byteCount, transfer } of paddedCases) {
+        const bytes = Uint8Array.from({ length: byteCount }, () => 0)
+        const receiver = makeTransferReceiver(transferLimits(bytes, byteCount))
+        expect(receiver.begin(transferStart(bytes, transfer, 20, byteCount))).toStrictEqual({ accepted: true })
+        expect(receiver.append({
+          _tag: 'ReplicatedWorldSnapshotChunk',
+          data: Schema.decodeUnknownSync(Base64Schema)(data),
+          index: 0,
+          transferId: Schema.decodeUnknownSync(TransferIdSchema)(transfer),
+        })).toMatchObject({ accepted: false, reason: 'chunk-too-large' })
+      }
+    }),
+  )
+
+  it.effect('decodes valid UTF-8 and rejects truncated, overlong, surrogate, and out-of-range sequences', () =>
+    Effect.sync(() => {
+      expect(decodeUtf8Frame(Uint8Array.of(0x41, 0xc2, 0xa2, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x8c, 0x8d)))
+        .toBe('A¢€🌍')
+
+      const malformedSequences = [
+        Uint8Array.of(0x80),
+        Uint8Array.of(0xc0, 0x80),
+        Uint8Array.of(0xc2),
+        Uint8Array.of(0xc2, 0x41),
+        Uint8Array.of(0xe0, 0x9f, 0xbf),
+        Uint8Array.of(0xe2, 0x82),
+        Uint8Array.of(0xed, 0xa0, 0x80),
+        Uint8Array.of(0xf0, 0x8f, 0xbf, 0xbf),
+        Uint8Array.of(0xf0, 0x9f, 0x8c),
+        Uint8Array.of(0xf4, 0x90, 0x80, 0x80),
+        Uint8Array.of(0xf5, 0x80, 0x80, 0x80),
+      ]
+      for (const bytes of malformedSequences) {
+        expect(decodeUtf8Frame(bytes)).toBeUndefined()
+      }
+    }),
+  )
+
+  it.effect('keeps the client projection when transferred frame bytes or metadata are invalid', () =>
+    Effect.sync(() => {
+      const validFrameBytes = snapshotFrameBytes(20)
+      const malformedCases: Array<Readonly<{ readonly bytes: Uint8Array; readonly maxBytes: number; readonly revision: number }>> = [
+        { bytes: validFrameBytes, maxBytes: validFrameBytes.length - 1, revision: 20 },
+        { bytes: Uint8Array.of(0xc2), maxBytes: 1, revision: 20 },
+        { bytes: asciiBytes('{'), maxBytes: 1, revision: 20 },
+        { bytes: validFrameBytes, maxBytes: validFrameBytes.length, revision: 21 },
+      ]
+
+      for (const { bytes, maxBytes, revision } of malformedCases) {
+        const subject = new AuthoritativeClientState()
+        subject.applySnapshot(replicatedSnapshot(19, [ownerChange('owner:retained', { value: true })]))
+        const before = subject.snapshot
+        const beforeWorld = subject.world(overworld)
+        const completion: CompletedSnapshotTransfer = {
+          frameBytes: bytes,
+          lastKnownRevision: replicatedRevision(19),
+          maxTotalBytes: maxBytes,
+          queuedDeltas: [],
+          revision: replicatedRevision(revision),
+          world: overworld,
+        }
+
+        expect(subject.applyTransfer(completion, makeEmptyOwnerRegistry())).toMatchObject({
+          accepted: false,
+          reason: 'invalid-snapshot',
+          request: { lastKnownRevision: replicatedRevision(19), world: overworld },
+        })
+        expect(subject.snapshot).toBe(before)
+        expect(subject.world(overworld)).toBe(beforeWorld)
+        expect(beforeWorld?.owners.get(ownerId('owner:retained'))).toStrictEqual({ value: true })
+      }
+    }),
+  )
+
+  it.effect('rejects a queued delta from another world without publishing the transferred snapshot', () =>
+    Effect.sync(() => {
+      const owners = makeEmptyOwnerRegistry()
+      const netherSnapshot = { ...replicatedSnapshot(20), world: nether }
+      const encodedFrame = encodeTransferredSnapshotFrame(netherSnapshot, owners, 1024)
+      if (Result.isFailure(encodedFrame)) {
+        throw encodedFrame.failure
+      }
+      const frameBytes = asciiBytes(encodedFrame.success)
+      const completion: CompletedSnapshotTransfer = {
+        frameBytes,
+        lastKnownRevision: undefined,
+        maxTotalBytes: frameBytes.length,
+        queuedDeltas: [{ delta: replicatedDelta(21), frameBytes: 1 }],
+        revision: replicatedRevision(20),
+        world: nether,
+      }
+      const subject = new AuthoritativeClientState()
+      subject.applySnapshot(replicatedSnapshot(10))
+      const before = subject.snapshot
+
+      expect(subject.applyTransfer(completion, owners)).toMatchObject({
+        accepted: false,
+        reason: 'invalid-snapshot',
+        request: { _tag: 'AuthoritativeResyncRequest', world: nether },
+      })
+      expect(subject.snapshot).toBe(before)
+      expect(subject.world(overworld)?.revision).toBe(replicatedRevision(10))
+      expect(subject.world(nether)).toBeUndefined()
+    }),
+  )
+
   it.effect('verifies a complete SHA-256 transfer and rejects a mismatched digest', () =>
     Effect.sync(() => {
       const bytes = snapshotFrameBytes(20)
@@ -567,6 +999,7 @@ describe('C4 snapshot transfer receiver', () => {
   it.effect('enforces total byte, chunk count, fragment, observed byte, and queued delta bounds', () =>
     Effect.sync(() => {
       const bytes = snapshotFrameBytes(20)
+      const limits = transferLimits(bytes, bytes.length)
       const transfer = 'snapshot-bounds'
       const chunkBytes = Math.floor(bytes.length / 2)
       const chunks = transferChunks(bytes, transfer, chunkBytes)
@@ -635,6 +1068,21 @@ describe('C4 snapshot transfer receiver', () => {
       expect(bytesQueue.begin(transferStart(bytes, bytesQueueTransfer, 20, bytes.length))).toStrictEqual({ accepted: true })
       expect(bytesQueue.queueDelta(replicatedDelta(21), 4)).toStrictEqual({ accepted: true, queued: true })
       expect(bytesQueue.queueDelta(replicatedDelta(22), 4)).toMatchObject({
+        accepted: false,
+        reason: 'delta-queue-overflow',
+      })
+
+      const worldQueue = makeTransferReceiver(limits)
+      expect(worldQueue.begin(transferStart(bytes, 'snapshot-queue-world', 20, bytes.length))).toStrictEqual({ accepted: true })
+      expect(worldQueue.queueDelta({ ...replicatedDelta(21), world: nether }, 4)).toMatchObject({
+        accepted: false,
+        reason: 'world-mismatch',
+      })
+
+      const invalidBytesQueue = makeTransferReceiver(limits)
+      expect(invalidBytesQueue.begin(transferStart(bytes, 'snapshot-queue-invalid-bytes', 20, bytes.length)))
+        .toStrictEqual({ accepted: true })
+      expect(invalidBytesQueue.queueDelta(replicatedDelta(21), 0)).toMatchObject({
         accepted: false,
         reason: 'delta-queue-overflow',
       })
@@ -717,6 +1165,148 @@ describe('C4 snapshot transfer receiver', () => {
       expect(subject.world(overworld)).toBe(beforeWorld)
       expect(beforeWorld.revision).toBe(replicatedRevision(19))
       expect(beforeWorld.owners.get(ownerId('owner:prior'))).toStrictEqual({ value: 'retained' })
+    }),
+  )
+
+  it.effect('accepts fixture-derived maximum AOI snapshot chunks and queued deltas within configured bounds', () =>
+    Effect.sync(() => {
+      const snapshotBlockLimit = Math.ceil(MAXIMUM_AOI_PROFILE_SNAPSHOT_BLOCK_READS * 1.25)
+      const deltaBlockLimit = Math.ceil(MAXIMUM_AOI_PROFILE_DELTA_BLOCK_CHANGES * 1.25)
+      const ownerCountLimit = Math.ceil(MAXIMUM_AOI_PROFILE_OWNER_COUNT * 1.25)
+      const queuedDeltaCount = 64
+      const fixtureChunkBytes = 512 * 1024
+      const maxChunkBytes = Math.ceil(fixtureChunkBytes * 1.25)
+      const blocks = Array.from({ length: snapshotBlockLimit }, (_, index) => maximumAoiBlockRead(index))
+      const maximumSnapshot = replicatedSnapshot(20, MAXIMUM_AOI_OWNER_CHANGES, blocks)
+      const queuedDeltas = Array.from({ length: queuedDeltaCount }, (_, deltaIndex) =>
+        replicatedDelta(
+          21 + deltaIndex,
+          MAXIMUM_AOI_OWNER_CHANGES,
+          Array.from(
+            { length: deltaBlockLimit },
+            (_arrayValue, blockIndex) => maximumAoiBlockChange(snapshotBlockLimit + deltaIndex * deltaBlockLimit + blockIndex),
+          ),
+        ),
+      )
+      const maximumDelta = queuedDeltas[queuedDeltas.length - 1]
+      if (maximumDelta === undefined) {
+        throw new Error('maximum delta fixture was empty')
+      }
+      const snapshotShape = measureJsonShape({ message: maximumSnapshot, protocolVersion: 10 })
+      const deltaShape = measureJsonShape({ message: maximumDelta, protocolVersion: 10 })
+      const sizingLimits: ReplicatedOwnerRegistryLimits = {
+        maxRegisteredOwners: ownerCountLimit,
+        maxDeltaBlockChanges: deltaBlockLimit,
+        maxSnapshotBlockReads: snapshotBlockLimit,
+        maxDepth: 13,
+        maxCollectionItems: snapshotBlockLimit,
+        maxDeltaFrameBytes: 1_048_576,
+        maxSnapshotFrameBytes: 8 * 1024 * 1024,
+        ownerStates: MAXIMUM_AOI_OWNER_STATE_BOUNDS,
+      }
+      const sizingOwners = Result.getOrThrow(createReplicatedOwnerRegistry(MAXIMUM_AOI_OWNER_REGISTRATIONS, sizingLimits))
+      const sizedSnapshotFrame = Result.getOrThrow(
+        encodeTransferredSnapshotFrame(maximumSnapshot, sizingOwners, sizingLimits.maxSnapshotFrameBytes),
+      )
+      const sizedSnapshotBytes = new TextEncoder().encode(sizedSnapshotFrame)
+      const sizedDeltaByteCounts = queuedDeltas.map((delta) =>
+        new TextEncoder().encode(Result.getOrThrow(encodeFrame(delta, sizingOwners))).length,
+      )
+      const snapshotLimit = Math.ceil(sizedSnapshotBytes.length * 1.25)
+      const deltaLimit = Math.ceil(Math.max(...sizedDeltaByteCounts) * 1.25)
+      const fixtureShapeDepth = Math.max(snapshotShape.maxDepth, deltaShape.maxDepth)
+      const fixtureShapeItems = Math.max(snapshotShape.maxCollectionItems, deltaShape.maxCollectionItems)
+      const ownerLimits: ReplicatedOwnerRegistryLimits = {
+        ...sizingLimits,
+        maxCollectionItems: Math.ceil(fixtureShapeItems * 1.25),
+        maxDepth: Math.ceil(fixtureShapeDepth * 1.25),
+        maxDeltaFrameBytes: deltaLimit,
+        maxSnapshotFrameBytes: snapshotLimit,
+      }
+      Result.getOrThrow(createReplicatedOwnerRegistry(MAXIMUM_AOI_OWNER_REGISTRATIONS, ownerLimits))
+      const snapshotBytes = sizedSnapshotBytes
+      const deltaFrameBytes = sizedDeltaByteCounts
+      const queueBurstBytes = deltaFrameBytes.reduce((sum, frameBytes) => sum + frameBytes, 0)
+
+      expect(snapshotBytes.length).toBeGreaterThan(1_048_576)
+      expect(deltaFrameBytes).toHaveLength(queuedDeltaCount)
+
+      const transfer = 'snapshot-maximum-aoi'
+      const chunks = transferChunks(snapshotBytes, transfer, fixtureChunkBytes)
+      const maximumTransferLimits: SnapshotTransferLimits = {
+        maxTotalBytes: snapshotLimit,
+        maxChunkCount: Math.ceil(chunks.length * 1.25),
+        maxChunkBytes,
+        maxQueuedDeltaCount: Math.ceil(queuedDeltaCount * 1.25),
+        maxQueuedDeltaBytes: Math.ceil(queueBurstBytes * 1.25),
+      }
+      expect({
+        blockLimit: snapshotBlockLimit,
+        ownerCountLimit: sizingLimits.maxRegisteredOwners,
+        maxDeltaBlockChanges: sizingLimits.maxDeltaBlockChanges,
+        maxSnapshotBlockReads: sizingLimits.maxSnapshotBlockReads,
+        measuredChunkBytes: fixtureChunkBytes,
+        chunkBytes: maximumTransferLimits.maxChunkBytes,
+        measuredChunkCount: chunks.length,
+        chunkCountLimit: maximumTransferLimits.maxChunkCount,
+        collectionLimit: ownerLimits.maxCollectionItems,
+        measuredCollectionItems: fixtureShapeItems,
+        measuredDepth: fixtureShapeDepth,
+        depthLimit: ownerLimits.maxDepth,
+        deltaByteLimit: ownerLimits.maxDeltaFrameBytes,
+        measuredDeltaBytes: Math.max(...deltaFrameBytes),
+        maxQueueBytes: maximumTransferLimits.maxQueuedDeltaBytes,
+        maxQueueCount: maximumTransferLimits.maxQueuedDeltaCount,
+        measuredQueueBurstBytes: queueBurstBytes,
+        maxSnapshotBytes: ownerLimits.maxSnapshotFrameBytes,
+        measuredSnapshotBytes: snapshotBytes.length,
+      }).toMatchInlineSnapshot(`
+        {
+          "blockLimit": 18750,
+          "chunkBytes": 655360,
+          "chunkCountLimit": 8,
+          "collectionLimit": 23438,
+          "deltaByteLimit": 54484,
+          "depthLimit": 9,
+          "maxDeltaBlockChanges": 320,
+          "maxQueueBytes": 3486960,
+          "maxQueueCount": 80,
+          "maxSnapshotBlockReads": 18750,
+          "maxSnapshotBytes": 3422754,
+          "measuredChunkBytes": 524288,
+          "measuredChunkCount": 6,
+          "measuredCollectionItems": 18750,
+          "measuredDeltaBytes": 43587,
+          "measuredDepth": 7,
+          "measuredQueueBurstBytes": 2789568,
+          "measuredSnapshotBytes": 2738203,
+          "ownerCountLimit": 4,
+        }
+      `)
+      const receiver = makeTransferReceiver(maximumTransferLimits)
+      expect(receiver.begin(transferStart(snapshotBytes, transfer, 20, fixtureChunkBytes, '0'.repeat(64)), replicatedRevision(19)))
+        .toStrictEqual({ accepted: true })
+      const firstChunk = chunks[0]
+      if (firstChunk === undefined) {
+        throw new Error('maximum snapshot fixture produced no chunks')
+      }
+      const firstChunkFrame = Result.getOrThrow(encodeFrame(firstChunk))
+      expect(new TextEncoder().encode(firstChunkFrame).length).toBeLessThanOrEqual(1_048_576)
+      for (const chunk of chunks) {
+        expect(receiver.append(chunk)).toStrictEqual({ accepted: true })
+      }
+      for (let index = 0; index < queuedDeltas.length; index += 1) {
+        const delta = queuedDeltas[index]
+        const frameBytes = deltaFrameBytes[index]
+        if (delta === undefined || frameBytes === undefined) {
+          throw new Error('maximum queue burst fixture lost a delta')
+        }
+        expect(receiver.queueDelta(delta, frameBytes)).toStrictEqual({ accepted: true, queued: true })
+      }
+
+      expect(maximumTransferLimits.maxQueuedDeltaCount).toBe(Math.ceil(queuedDeltaCount * 1.25))
+      expect(maximumTransferLimits.maxQueuedDeltaBytes).toBe(Math.ceil(queueBurstBytes * 1.25))
+      expect(maximumTransferLimits.maxTotalBytes).toBe(Math.ceil(snapshotBytes.length * 1.25))
     }),
   )
 })
