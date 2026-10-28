@@ -1,8 +1,8 @@
 import {
-  LowercaseHexSha256Schema,
   type AuthoritativeResyncRequest,
   type Base64,
   type LowercaseHexSha256,
+  LowercaseHexSha256Schema,
   type NetworkMessage as NetworkMessageType,
   type ReplicatedWorldDeltaMessage,
   type ReplicatedWorldSnapshot,
@@ -12,16 +12,16 @@ import {
   type WorldId,
   type WorldSnapshot,
 } from './protocol.js'
-import { ProtocolError, SnapshotTransferConfigError } from './errors.js'
-import type { ReplicatedBlockChange, ReplicatedOwnerChange, WorldBlockRead } from '@nerima-games/mc-sim'
 import {
   NonNegativeSafeIntegerSchema,
-  PositiveSafeIntegerSchema,
-  decodeTransferredSnapshotFrame,
   type PositiveSafeInteger,
+  PositiveSafeIntegerSchema,
   type ReplicatedOwnerRegistry,
   type WireText,
+  decodeTransferredSnapshotFrame,
 } from './codec.js'
+import { ProtocolError, SnapshotTransferConfigError } from './errors.js'
+import type { ReplicatedBlockChange, ReplicatedOwnerChange, WorldBlockRead } from '@nerima-games/mc-sim'
 import { Result, Schema } from 'effect'
 import type { WorldRevision } from '@nerima-games/mc-kernel'
 
@@ -619,17 +619,17 @@ export const decodeUtf8Frame = (bytes: Uint8Array): WireText | undefined => {
 }
 
 export const SnapshotTransferLimitsSchema: Schema.Struct<{
-  maxTotalBytes: typeof PositiveSafeIntegerSchema
-  maxChunkCount: typeof PositiveSafeIntegerSchema
   maxChunkBytes: typeof PositiveSafeIntegerSchema
-  maxQueuedDeltaCount: typeof NonNegativeSafeIntegerSchema
+  maxChunkCount: typeof PositiveSafeIntegerSchema
   maxQueuedDeltaBytes: typeof NonNegativeSafeIntegerSchema
+  maxQueuedDeltaCount: typeof NonNegativeSafeIntegerSchema
+  maxTotalBytes: typeof PositiveSafeIntegerSchema
 }> = Schema.Struct({
-  maxTotalBytes: PositiveSafeIntegerSchema,
-  maxChunkCount: PositiveSafeIntegerSchema,
   maxChunkBytes: PositiveSafeIntegerSchema,
-  maxQueuedDeltaCount: NonNegativeSafeIntegerSchema,
+  maxChunkCount: PositiveSafeIntegerSchema,
   maxQueuedDeltaBytes: NonNegativeSafeIntegerSchema,
+  maxQueuedDeltaCount: NonNegativeSafeIntegerSchema,
+  maxTotalBytes: PositiveSafeIntegerSchema,
 })
 export type SnapshotTransferLimits = typeof SnapshotTransferLimitsSchema.Type
 
@@ -829,18 +829,12 @@ export class SnapshotTransferReceiver {
     if (active === undefined) {
       return { accepted: true, queued: false }
     }
-    const frameBytesResult = Schema.decodeUnknownResult(PositiveSafeIntegerSchema)(frameBytes)
+    const frameBytesResult = this.#prepareQueuedDeltaFrameBytes(active, delta, frameBytes)
     if (Result.isFailure(frameBytesResult)) {
-      return this.#rejectActive(active, 'delta-queue-overflow')
+      return this.#rejectActive(active, frameBytesResult.failure)
     }
-    const validFrameBytes = frameBytesResult.success
-    const failure = this.#queuedDeltaFailure(active, delta, validFrameBytes)
-    if (failure !== undefined) {
-      return this.#rejectActive(active, failure)
-    }
-
-    active.queuedDeltas.push({ delta, frameBytes: validFrameBytes })
-    active.queuedDeltaBytes += validFrameBytes
+    active.queuedDeltas.push({ delta, frameBytes: frameBytesResult.success })
+    active.queuedDeltaBytes += frameBytesResult.success
     return { accepted: true, queued: true }
   }
 
@@ -872,21 +866,26 @@ export class SnapshotTransferReceiver {
     this.#active = undefined
   }
 
-  #queuedDeltaFailure(
+  #prepareQueuedDeltaFrameBytes(
     active: ActiveSnapshotTransfer,
     delta: ReplicatedWorldDeltaMessage,
-    frameBytes: PositiveSafeInteger,
-  ): SnapshotTransferFailureReason | undefined {
+    frameBytes: unknown,
+  ): Result.Result<PositiveSafeInteger, SnapshotTransferFailureReason> {
     if (delta.world !== active.start.world) {
-      return 'world-mismatch'
+      return Result.fail('world-mismatch')
     }
+    const frameBytesResult = Schema.decodeUnknownResult(PositiveSafeIntegerSchema)(frameBytes)
+    if (Result.isFailure(frameBytesResult)) {
+      return Result.fail('delta-queue-overflow')
+    }
+    const validFrameBytes = frameBytesResult.success
     if (
       active.queuedDeltas.length >= this.#limits.maxQueuedDeltaCount ||
-      frameBytes > this.#limits.maxQueuedDeltaBytes - active.queuedDeltaBytes
+      validFrameBytes > this.#limits.maxQueuedDeltaBytes - active.queuedDeltaBytes
     ) {
-      return 'delta-queue-overflow'
+      return Result.fail('delta-queue-overflow')
     }
-    return undefined
+    return Result.succeed(validFrameBytes)
   }
 
   #rejectActive(active: ActiveSnapshotTransfer, reason: SnapshotTransferFailureReason): SnapshotTransferFailure {
@@ -1004,7 +1003,9 @@ export type ClientSyncTransition =
     }
 
 const blockAddress = (block: Pick<WorldBlockRead, 'dimension' | 'position'>): ReplicatedBlockKey =>
-  JSON.stringify([block.dimension, block.position.x, block.position.y, block.position.z]) as ReplicatedBlockKey
+  Schema.decodeUnknownSync(ReplicatedBlockKeySchema)(
+    JSON.stringify([block.dimension, block.position.x, block.position.y, block.position.z]),
+  )
 
 type ClientRejectionContext = Readonly<{
   readonly world: WorldId

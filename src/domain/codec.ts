@@ -178,34 +178,34 @@ const ownerRegistryBrand: unique symbol = Symbol('ReplicatedOwnerRegistry')
 export type ReplicatedOwnerRegistry = Readonly<{ [ownerRegistryBrand]: true }>
 
 export const ReplicatedOwnerStateBoundsSchema: Schema.Struct<{
-  ownerId: typeof ReplicatedOwnerIdSchema
+  maxCollectionItems: typeof PositiveSafeIntegerSchema
   maxStateBytes: typeof PositiveSafeIntegerSchema
   maxStateDepth: typeof PositiveSafeIntegerSchema
-  maxCollectionItems: typeof PositiveSafeIntegerSchema
+  ownerId: typeof ReplicatedOwnerIdSchema
 }> = Schema.Struct({
-  ownerId: ReplicatedOwnerIdSchema,
+  maxCollectionItems: PositiveSafeIntegerSchema,
   maxStateBytes: PositiveSafeIntegerSchema,
   maxStateDepth: PositiveSafeIntegerSchema,
-  maxCollectionItems: PositiveSafeIntegerSchema,
+  ownerId: ReplicatedOwnerIdSchema,
 })
 export type ReplicatedOwnerStateBounds = typeof ReplicatedOwnerStateBoundsSchema.Type
 
 export const ReplicatedOwnerRegistryLimitsSchema: Schema.Struct<{
-  maxRegisteredOwners: typeof NonNegativeSafeIntegerSchema
-  maxDeltaBlockChanges: typeof NonNegativeSafeIntegerSchema
-  maxSnapshotBlockReads: typeof NonNegativeSafeIntegerSchema
-  maxDepth: typeof PositiveSafeIntegerSchema
   maxCollectionItems: typeof PositiveSafeIntegerSchema
+  maxDeltaBlockChanges: typeof NonNegativeSafeIntegerSchema
   maxDeltaFrameBytes: typeof PositiveSafeIntegerSchema
+  maxDepth: typeof PositiveSafeIntegerSchema
+  maxRegisteredOwners: typeof NonNegativeSafeIntegerSchema
+  maxSnapshotBlockReads: typeof NonNegativeSafeIntegerSchema
   maxSnapshotFrameBytes: typeof PositiveSafeIntegerSchema
   ownerStates: Schema.$Array<typeof ReplicatedOwnerStateBoundsSchema>
 }> = Schema.Struct({
-  maxRegisteredOwners: NonNegativeSafeIntegerSchema,
-  maxDeltaBlockChanges: NonNegativeSafeIntegerSchema,
-  maxSnapshotBlockReads: NonNegativeSafeIntegerSchema,
-  maxDepth: PositiveSafeIntegerSchema,
   maxCollectionItems: PositiveSafeIntegerSchema,
+  maxDeltaBlockChanges: NonNegativeSafeIntegerSchema,
   maxDeltaFrameBytes: PositiveSafeIntegerSchema,
+  maxDepth: PositiveSafeIntegerSchema,
+  maxRegisteredOwners: NonNegativeSafeIntegerSchema,
+  maxSnapshotBlockReads: NonNegativeSafeIntegerSchema,
   maxSnapshotFrameBytes: PositiveSafeIntegerSchema,
   ownerStates: Schema.Array(ReplicatedOwnerStateBoundsSchema),
 })
@@ -372,7 +372,7 @@ const utf8ByteLength = (text: string): number => {
 
 /** Count UTF-8 bytes, matching the byte accounting used by frame validation. */
 export const wireFrameByteLength = (text: WireText): NonNegativeSafeInteger =>
-  utf8ByteLength(text) as NonNegativeSafeInteger
+  Schema.decodeUnknownSync(NonNegativeSafeIntegerSchema)(utf8ByteLength(text))
 
 type JsonScanContainerBase = {
   root: boolean
@@ -829,16 +829,16 @@ type JsonArrayScanStep = (
 ) => number | undefined
 
 const JSON_OBJECT_SCAN_STEPS: Record<JsonScanObjectContainer['state'], JsonObjectScanStep> = {
-  'key-or-end': readObjectKey,
-  key: readObjectKey,
   colon: (context, index, container) => readObjectColon(index, context.text.charCodeAt(index), container),
-  value: readObjectValue,
   'comma-or-end': readCommaOrEnd,
+  key: readObjectKey,
+  'key-or-end': readObjectKey,
+  value: readObjectValue,
 }
 const JSON_ARRAY_SCAN_STEPS: Record<JsonScanArrayContainer['state'], JsonArrayScanStep> = {
-  'value-or-end': readArrayValue,
-  value: readArrayValue,
   'comma-or-end': readCommaOrEnd,
+  value: readArrayValue,
+  'value-or-end': readArrayValue,
 }
 
 const advanceJsonObject = (context: JsonScanContext, index: number, container: JsonScanObjectContainer): number | undefined =>
