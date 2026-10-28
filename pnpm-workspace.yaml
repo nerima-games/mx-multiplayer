@@ -2,18 +2,22 @@
 allowBuilds:
   esbuild: true
 overrides:
-  # GHSA-xp26-3454-mjgp affects 4.1.11; 4.1.12 is the patched release.
-  '@vitest/mocker': '4.1.12'
+  # Keep Vitest 5's mocker aligned with vitest@5.0.5.
+  '@vitest/mocker': '5.0.5'
+  launch-editor: 2.14.2
   # GHSA-2v37-7h3g-55p8: nanoid <3.3.18 custom generators can loop
   # indefinitely when size is zero. Pulled in transitively by
   # vitest/@vitest/coverage-v8 -> vite -> postcss -> nanoid (Wave 0
   # toolchain freeze); no direct dependency on nanoid exists in this repo.
   # Keep the override on patched 3.x releases to avoid a major-version jump.
   nanoid: '^3.3.18'
+  shell-quote: 1.11.0
+  source-map-js: 1.2.2
+  vite: 7.3.7
 minimumReleaseAgeExclude:
-  - '@nerima-games/mc-kernel@0.2.8 || 0.2.9 || 0.2.17 || 0.2.18 || 0.5.1 || 0.7.0'
-  - '@nerima-games/mc-sim@0.1.24 || 0.1.25 || 0.1.39 || 0.1.40 || 0.1.41 || 0.4.1 || 0.4.2 || 0.5.0'
+  - '@nerima-games/mc-kernel@0.2.8 || 0.2.9 || 0.2.17 || 0.2.18 || 0.5.1 || 0.7.0 || 0.11.0'
+  - '@nerima-games/mc-sim@0.1.24 || 0.1.25 || 0.1.39 || 0.1.40 || 0.1.41 || 0.4.1 || 0.4.2 || 0.5.0 || 0.6.0'
   - '@nerima-games/mc-noise@0.2.0 || 0.3.1'
   - '@nerima-games/mc-physics@0.1.7 || 0.2.2'
-  - '@nerima-games/mc-worldgen@0.1.14 || 0.3.1 || 0.3.2 || 0.5.0'
+  - '@nerima-games/mc-worldgen@0.1.14 || 0.3.1 || 0.3.2 || 0.5.0 || 0.7.0'
   - '@nerima-games/mc-save@0.4.1'
