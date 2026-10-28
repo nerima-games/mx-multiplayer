@@ -2258,6 +2258,25 @@ describe('legacy frame ceilings', () => {
     }),
   )
 
+  it.effect('rejects a PlayerDamageCommand above its UTF-8 byte ceiling before its code-unit ceiling', () =>
+    Effect.sync(() => {
+      const withCommandId = (id: string): string => JSON.stringify({
+        message: { ...SAMPLES.PlayerDamageCommand, commandId: id },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      const emptyIdFrame = withCommandId('')
+      const requiredBytes = 4_097 - wireFrameByteLength(emptyIdFrame)
+      const overLimit = withCommandId('世'.repeat(Math.ceil(requiredBytes / 3)))
+
+      expect(wireFrameByteLength(overLimit)).toBeGreaterThan(4_096)
+      expect(overLimit.length).toBeGreaterThan(1_024)
+      expect(overLimit.length).toBeLessThan(GLOBAL_FRAME_CODE_UNIT_LIMIT)
+      const tooLarge = failure(decodeFrame(overLimit))
+      expect(tooLarge?.reason).toBe('frame-too-large')
+      expect(tooLarge?.detail).toContain('UTF-8 bytes')
+    }),
+  )
+
   it.effect('uses only the root message tag and returns no scanner tag for malformed JSON', () =>
     Effect.sync(() => {
       const nestedSpoof = JSON.stringify({
