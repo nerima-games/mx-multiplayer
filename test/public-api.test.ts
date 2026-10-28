@@ -1,8 +1,82 @@
 import { describe, expect, it } from '@effect/vitest'
+import { expectTypeOf } from 'vitest'
 import { Effect } from 'effect'
 import * as multiplayer from '../src/index'
 import { decodeFrame, encodeFrame } from '../src/domain/codec'
 import { MESSAGE_TAGS, PROTOCOL_VERSION } from '../src/domain/protocol'
+import type {
+  AreaOfInterest,
+  AreaOfInterestInputErrorReason,
+  BrowserTransportFault,
+  BrowserWebSocketTransport,
+  BrowserWebSocketTransportOptions,
+  ChunkCoordinate,
+  ChunkInterestKey,
+  CommandApplicationFailure,
+  CommandApplicationOutcome,
+  CommandDecision,
+  CommandNotWritable,
+  ChunkInterest,
+  ConnectionRateLimitConfig,
+  ConnectionRateLimitConfigField,
+  ConnectionRateLimitFailure,
+  ConnectionRateLimiter,
+  DeltaProjectionErrorReason,
+  DeltaProjectionOutcome,
+  DeltaProjectionRecipient,
+  FrameTag,
+  HungerIntent,
+  HungerRejectionReason,
+  InboundFrameInspection,
+  NonNegativeSafeInteger,
+  PositiveSafeInteger,
+  RateLimitConfigurationErrorReason,
+  RateLimitExceededReason,
+  RateLimitInputErrorReason,
+  ServerConnectionIdentity,
+  SurvivalAuthorityResult,
+  SurvivalCommandResult,
+  SurvivalIntent,
+  TransportService,
+  WireText,
+} from '../src/index'
+
+type NewPublicTypes = {
+  area: AreaOfInterest
+  areaErrorReason: AreaOfInterestInputErrorReason
+  browserTransportFault: BrowserTransportFault
+  browserWebSocketTransport: BrowserWebSocketTransport
+  browserWebSocketTransportOptions: BrowserWebSocketTransportOptions
+  chunkCoordinate: ChunkCoordinate
+  chunkInterestKey: ChunkInterestKey
+  chunk: ChunkInterest
+  commandApplicationFailure: CommandApplicationFailure
+  commandApplicationOutcome: CommandApplicationOutcome
+  commandDecision: CommandDecision
+  commandNotWritable: CommandNotWritable
+  connectionIdentity: ServerConnectionIdentity
+  hungerIntent: HungerIntent
+  hungerRejectionReason: HungerRejectionReason
+  frameTag: FrameTag
+  inboundFrameInspection: InboundFrameInspection
+  limitConfig: ConnectionRateLimitConfig
+  limitConfigField: ConnectionRateLimitConfigField
+  limitFailure: ConnectionRateLimitFailure
+  limiter: ConnectionRateLimiter
+  nonNegativeSafeInteger: NonNegativeSafeInteger
+  positiveSafeInteger: PositiveSafeInteger
+  projectionErrorReason: DeltaProjectionErrorReason
+  projectionOutcome: DeltaProjectionOutcome
+  projectionRecipient: DeltaProjectionRecipient
+  rateConfigurationErrorReason: RateLimitConfigurationErrorReason
+  rateExceededReason: RateLimitExceededReason
+  rateInputErrorReason: RateLimitInputErrorReason
+  survivalAuthorityResult: SurvivalAuthorityResult
+  survivalCommandResult: SurvivalCommandResult
+  survivalIntent: SurvivalIntent
+  transportService: TransportService
+  wireText: WireText
+}
 
 describe('public API surface', () => {
   // The barrel is what mc-compose imports. A re-export dropped here is
@@ -11,6 +85,28 @@ describe('public API surface', () => {
   it.effect('re-exports every value a consumer is expected to import', () =>
     Effect.sync(() => {
       const expected = [
+        // Per-recipient scale projection
+        'AreaOfInterestInputError',
+        'chunkInterestKeyForBlockChange',
+        'createAreaOfInterest',
+        'isAreaOfInterest',
+        'areaOfInterestIncludesOwner',
+        'areaOfInterestIncludesChunkKey',
+        'areaOfInterestIncludesBlockChange',
+        'areaOfInterestExpanded',
+        'MAX_C4_DELTA_FRAME_BYTES',
+        'DeltaProjectionError',
+        'projectReplicatedWorldDelta',
+        'CONNECTION_RATE_LIMITS',
+        'RateLimitConfigurationError',
+        'RateLimitInputError',
+        'RateLimitExceeded',
+        'createConnectionRateLimiter',
+        // Transport safety and liveness
+        'makeBrowserWebSocketTransport',
+        'validateMultiplayerUrl',
+        'frameTag',
+        'inspectInboundFrame',
         // Protocol
         'PROTOCOL_VERSION',
         'PlayerId',
@@ -145,6 +241,12 @@ describe('public API surface', () => {
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
       expect(PROTOCOL_VERSION).toBe(10)
+    }),
+  )
+
+  it.effect('keeps the public type surface concrete', () =>
+    Effect.sync(() => {
+      expectTypeOf<NewPublicTypes>().toBeObject()
     }),
   )
 })

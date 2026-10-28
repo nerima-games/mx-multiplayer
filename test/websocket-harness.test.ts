@@ -8,7 +8,7 @@ import {
   makeBrowserWebSocketTransport,
   type BrowserWebSocketTransport,
 } from '../src/application/browser-transport'
-import { decodeFrame, encodeFrame } from '../src/domain/codec'
+import { PositiveSafeIntegerSchema, decodeFrame, encodeFrame } from '../src/domain/codec'
 import type { TransportError } from '../src/domain/errors'
 import { PlayerId } from '../src/domain/protocol'
 import { LoopbackTransportLayer, receiveMessage } from '../src/domain/transport'
@@ -20,6 +20,9 @@ const GLOBAL_FRAME_BYTE_LIMIT = 4_194_304
 const FRAME_RATE_BURST = 80
 const BYTE_RATE_BURST = 3_486_960
 const BYTE_RATE_TEST_FRAME_BYTES = 1_000_000
+const HIGH_BIT_VALUE = 128
+const OPCODE_NIBBLE_MODULUS = 16
+const BINARY_RADIX = 2
 
 type ClientTextFrame = {
   readonly masked: boolean
@@ -57,10 +60,29 @@ const readEnvelopeMessage = (text: string): unknown => {
   return envelope.message
 }
 
-const encodeServerFrame = (opcode: number, payload: Buffer): Buffer => {
+type ServerFrameOpcode = 0x1 | 0x8 | 0xa
+
+// Decode XOR by binary place value to keep bitwise operators out of the harness.
+const xorByteValues = (left: number, right: number): number => {
+  let leftRemainder = left
+  let rightRemainder = right
+  let placeValue = 1
+  let result = 0
+  while (leftRemainder > 0 || rightRemainder > 0) {
+    if (leftRemainder % BINARY_RADIX !== rightRemainder % BINARY_RADIX) {
+      result += placeValue
+    }
+    leftRemainder = Math.floor(leftRemainder / BINARY_RADIX)
+    rightRemainder = Math.floor(rightRemainder / BINARY_RADIX)
+    placeValue *= BINARY_RADIX
+  }
+  return result
+}
+
+const encodeServerFrame = (opcode: ServerFrameOpcode, payload: Buffer): Buffer => {
   const headerLength = payload.length < 126 ? 2 : payload.length <= 0xffff ? 4 : 10
   const frame = Buffer.allocUnsafe(headerLength + payload.length)
-  frame[0] = 0x80 | opcode
+  frame[0] = HIGH_BIT_VALUE + opcode
   if (headerLength === 2) {
     frame[1] = payload.length
   } else if (headerLength === 4) {
@@ -100,9 +122,9 @@ const makeServerPeer = (socket: Duplex, initialData: Buffer): ServerPeer => {
       if (first === undefined || second === undefined) {
         return
       }
-      const opcode = first & 0x0f
-      const masked = (second & 0x80) !== 0
-      const lengthCode = second & 0x7f
+      const opcode = first % OPCODE_NIBBLE_MODULUS
+      const masked = second >= HIGH_BIT_VALUE
+      const lengthCode = second % HIGH_BIT_VALUE
       let headerLength = 2
       let payloadLength = lengthCode
       if (lengthCode === 126) {
@@ -138,7 +160,7 @@ const makeServerPeer = (socket: Duplex, initialData: Buffer): ServerPeer => {
           const maskByte = mask[index % 4]
           const payloadByte = payload[index]
           if (maskByte !== undefined && payloadByte !== undefined) {
-            payload[index] = payloadByte ^ maskByte
+            payload[index] = xorByteValues(payloadByte, maskByte)
           }
         }
       }
@@ -300,9 +322,17 @@ const withWebSocketHarness = <A, E, R>(
     (harness) => Effect.promise(() => harness.close()),
   ).pipe(Effect.flatMap(use))
 
+type SessionOverrides = Omit<
+  Partial<Pick<Parameters<typeof makeBrowserWebSocketTransport>[0], 'heartbeatIntervalMs' | 'idleTimeoutMs' | 'inboundCapacity'>>,
+  'heartbeatIntervalMs' | 'idleTimeoutMs'
+> & {
+  readonly heartbeatIntervalMs?: number
+  readonly idleTimeoutMs?: number
+}
+
 const openSession = (
   harness: WebSocketHarness,
-  overrides: Partial<Pick<Parameters<typeof makeBrowserWebSocketTransport>[0], 'heartbeatIntervalMs' | 'idleTimeoutMs' | 'inboundCapacity'>> = {},
+  overrides: SessionOverrides = {},
 ): Effect.Effect<{
   readonly peer: ServerPeer
   readonly socket: WebSocket
@@ -310,13 +340,14 @@ const openSession = (
 }, TransportError, Scope.Scope> => Effect.gen(function* () {
   const socket = yield* Effect.sync(() => new WebSocket(harness.url))
   const opened = waitForOpen(socket)
+  const { heartbeatIntervalMs, idleTimeoutMs, ...otherOverrides } = overrides
   const transport = yield* Effect.acquireRelease(
     makeBrowserWebSocketTransport({
-      heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
-      idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
+      heartbeatIntervalMs: PositiveSafeIntegerSchema.make(heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS),
+      idleTimeoutMs: PositiveSafeIntegerSchema.make(idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS),
       socketFactory: () => socket,
       url: harness.url,
-      ...overrides,
+      ...otherOverrides,
     }),
     (current) => current.close,
   )
@@ -492,8 +523,8 @@ describe('real WebSocket transport harness', () => {
           const socket = new WebSocket(harness.url)
           const opened = waitForOpen(socket)
           const transport = await Effect.runPromise(makeBrowserWebSocketTransport({
-            heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
-            idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
+            heartbeatIntervalMs: PositiveSafeIntegerSchema.make(DEFAULT_HEARTBEAT_INTERVAL_MS),
+            idleTimeoutMs: PositiveSafeIntegerSchema.make(DEFAULT_IDLE_TIMEOUT_MS),
             socketFactory: () => socket,
             url: harness.url,
           }))

@@ -21,7 +21,7 @@
  * passes Node's real `URL` (which happens to satisfy this structural type
  * without a cast), a test passes a stand-in.
  */
-import { Schema } from 'effect'
+import { Data, Result, Schema } from 'effect'
 
 /** The `URL` members this file reads. A real `URL` instance satisfies this without a cast. */
 export type TransportSecurityUrlLike = {
@@ -65,16 +65,18 @@ export const TransportSecurityErrorReason: Schema.Literals<
 > = Schema.Literals(['empty-origin', 'invalid-origin', 'missing-tls-cert', 'missing-tls-key', 'no-allowed-origins'])
 export type TransportSecurityErrorReason = typeof TransportSecurityErrorReason.Type
 
-export class TransportSecurityError extends Error {
+const TransportSecurityError_base: ReturnType<typeof Data.TaggedError<'TransportSecurityError'>> =
+  Data.TaggedError('TransportSecurityError')
+
+export class TransportSecurityError extends TransportSecurityError_base<{
   readonly reason: TransportSecurityErrorReason
   readonly detail: string
+}> {}
 
-  constructor(reason: TransportSecurityErrorReason, detail: string) {
-    super(`invalid transport security configuration (${reason}): ${detail}`)
-    this.reason = reason
-    this.detail = detail
-  }
-}
+const securityFailure = (
+  reason: TransportSecurityErrorReason,
+  detail: string,
+): Result.Result<never, TransportSecurityError> => Result.fail(new TransportSecurityError({ detail, reason }))
 
 const isValidOriginUrl = (origin: string, parsed: TransportSecurityUrlLike): boolean =>
   parsed.protocol === 'https:'
@@ -85,36 +87,44 @@ const isValidOriginUrl = (origin: string, parsed: TransportSecurityUrlLike): boo
   && parsed.hash === ''
   && origin === parsed.origin
 
-const parseOriginUrl = (origin: string, UrlConstructor: UrlConstructorLike): TransportSecurityUrlLike => {
-  try {
-    return new UrlConstructor(origin)
-  } catch (cause) {
-    throw new TransportSecurityError('invalid-origin', `${origin} (${String(cause)})`)
-  }
-}
+const parseOriginUrl = (origin: string, UrlConstructor: UrlConstructorLike): Result.Result<TransportSecurityUrlLike, TransportSecurityError> =>
+  Result.try({
+    catch: (cause) => new TransportSecurityError({ detail: `${origin} (${String(cause)})`, reason: 'invalid-origin' }),
+    try: () => new UrlConstructor(origin),
+  })
 
-const validateOrigin = (origin: string, UrlConstructor: UrlConstructorLike): void => {
+const validateOrigin = (origin: string, UrlConstructor: UrlConstructorLike): Result.Result<void, TransportSecurityError> => {
   if (origin === '') {
-    throw new TransportSecurityError('empty-origin', 'an allowed origin was blank')
+    return securityFailure('empty-origin', 'an allowed origin was blank')
   }
   if (origin === 'null' || origin.includes('*')) {
-    throw new TransportSecurityError('invalid-origin', origin)
+    return securityFailure('invalid-origin', origin)
   }
   const parsed = parseOriginUrl(origin, UrlConstructor)
-  if (!isValidOriginUrl(origin, parsed)) {
-    throw new TransportSecurityError('invalid-origin', origin)
+  if (Result.isFailure(parsed)) {
+    return Result.fail(parsed.failure)
   }
+  if (!isValidOriginUrl(origin, parsed.success)) {
+    return securityFailure('invalid-origin', origin)
+  }
+  return Result.succeed(undefined)
 }
 
-const parseAllowedOrigins = (value: string | undefined, UrlConstructor: UrlConstructorLike): ReadonlySet<string> => {
+const parseAllowedOrigins = (
+  value: string | undefined,
+  UrlConstructor: UrlConstructorLike,
+): Result.Result<ReadonlySet<string>, TransportSecurityError> => {
   if (value === undefined) {
-    return new Set()
+    return Result.succeed(new Set())
   }
   const origins = value.split(',').map((origin) => origin.trim())
   for (const origin of origins) {
-    validateOrigin(origin, UrlConstructor)
+    const validated = validateOrigin(origin, UrlConstructor)
+    if (Result.isFailure(validated)) {
+      return Result.fail(validated.failure)
+    }
   }
-  return new Set(origins)
+  return Result.succeed(new Set(origins))
 }
 
 const resolveInsecureTransport = (): TransportSecurity => ({ allowedOrigins: new Set(), secure: false })
@@ -122,18 +132,26 @@ const resolveInsecureTransport = (): TransportSecurity => ({ allowedOrigins: new
 const resolveSecureTransport = (
   input: TransportSecurityInput,
   UrlConstructor: UrlConstructorLike,
-): TransportSecurity => {
+): Result.Result<TransportSecurity, TransportSecurityError> => {
   if (input.tlsCert === undefined || input.tlsCert === '') {
-    throw new TransportSecurityError('missing-tls-cert', 'tls-cert is required for secure multiplayer transport')
+    return securityFailure('missing-tls-cert', 'tls-cert is required for secure multiplayer transport')
   }
   if (input.tlsKey === undefined || input.tlsKey === '') {
-    throw new TransportSecurityError('missing-tls-key', 'tls-key is required for secure multiplayer transport')
+    return securityFailure('missing-tls-key', 'tls-key is required for secure multiplayer transport')
   }
   const allowedOrigins = parseAllowedOrigins(input.allowedOrigins, UrlConstructor)
-  if (allowedOrigins.size === EMPTY_SET_SIZE) {
-    throw new TransportSecurityError('no-allowed-origins', 'allowed-origins must contain at least one HTTPS origin')
+  if (Result.isFailure(allowedOrigins)) {
+    return Result.fail(allowedOrigins.failure)
   }
-  return { allowedOrigins, secure: true, tlsCert: input.tlsCert, tlsKey: input.tlsKey }
+  if (allowedOrigins.success.size === EMPTY_SET_SIZE) {
+    return securityFailure('no-allowed-origins', 'allowed-origins must contain at least one HTTPS origin')
+  }
+  return Result.succeed({
+    allowedOrigins: allowedOrigins.success,
+    secure: true,
+    tlsCert: input.tlsCert,
+    tlsKey: input.tlsKey,
+  })
 }
 
 const requiresSecureTransport = (input: TransportSecurityInput): boolean => {
@@ -151,9 +169,9 @@ const requiresSecureTransport = (input: TransportSecurityInput): boolean => {
 export const resolveTransportSecurity = (
   input: TransportSecurityInput,
   UrlConstructor: UrlConstructorLike,
-): TransportSecurity => {
+): Result.Result<TransportSecurity, TransportSecurityError> => {
   if (!requiresSecureTransport(input)) {
-    return resolveInsecureTransport()
+    return Result.succeed(resolveInsecureTransport())
   }
   return resolveSecureTransport(input, UrlConstructor)
 }

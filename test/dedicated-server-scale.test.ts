@@ -18,6 +18,7 @@ import {
   areaOfInterestIncludesBlockChange,
   areaOfInterestIncludesChunkKey,
   areaOfInterestIncludesOwner,
+  chunkInterestKeyForBlockChange,
   createAreaOfInterest,
   isAreaOfInterest,
   type AreaOfInterest,
@@ -366,7 +367,7 @@ describe('area of interest', () => {
   })
 
   it('does not match chunk keys for an unregistered interest object', () => {
-    expect(areaOfInterestIncludesChunkKey({}, '["overworld",0,0]')).toBe(false)
+    expect(areaOfInterestIncludesChunkKey({}, chunkInterestKeyForBlockChange(blockChange(0)))).toBe(false)
   })
 })
 

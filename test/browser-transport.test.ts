@@ -11,7 +11,7 @@ import {
   validateMultiplayerUrl,
 } from '../src/application/browser-transport'
 import type { TransportError } from '../src/domain/errors'
-import { decodeFrame, encodeFrame } from '../src/domain/codec'
+import { PositiveSafeIntegerSchema, decodeFrame, encodeFrame } from '../src/domain/codec'
 
 // ---------------------------------------------------------------------------
 // Test doubles for the platform surface this file structurally describes.
@@ -143,17 +143,26 @@ class FakeSocket implements WebSocketLike {
   }
 }
 
+type BrowserTransportTestOverrides = Omit<
+  Partial<BrowserWebSocketTransportOptions>,
+  'heartbeatIntervalMs' | 'idleTimeoutMs'
+> & {
+  readonly heartbeatIntervalMs?: number
+  readonly idleTimeoutMs?: number
+}
+
 const openTransport = (
-  overrides: Partial<BrowserWebSocketTransportOptions> = {},
+  overrides: BrowserTransportTestOverrides = {},
 ): Effect.Effect<{ readonly socket: FakeSocket; readonly transport: BrowserWebSocketTransport }, TransportError> =>
   Effect.gen(function* () {
     const socket = new FakeSocket()
+    const { heartbeatIntervalMs, idleTimeoutMs, ...otherOverrides } = overrides
     const transport = yield* makeBrowserWebSocketTransport({
-      heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
-      idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+      heartbeatIntervalMs: PositiveSafeIntegerSchema.make(heartbeatIntervalMs ?? TEST_HEARTBEAT_INTERVAL_MS),
+      idleTimeoutMs: PositiveSafeIntegerSchema.make(idleTimeoutMs ?? TEST_IDLE_TIMEOUT_MS),
       socketFactory: () => socket,
       url: 'ws://localhost:9000',
-      ...overrides,
+      ...otherOverrides,
     })
     return { socket, transport }
   })
@@ -230,8 +239,8 @@ describe('makeBrowserWebSocketTransport construction', () => {
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         makeBrowserWebSocketTransport({
-          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
-          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          heartbeatIntervalMs: PositiveSafeIntegerSchema.make(TEST_HEARTBEAT_INTERVAL_MS),
+          idleTimeoutMs: PositiveSafeIntegerSchema.make(TEST_IDLE_TIMEOUT_MS),
           inboundCapacity: 1.5,
           socketFactory: () => new FakeSocket(),
           url: 'ws://localhost',
@@ -245,8 +254,8 @@ describe('makeBrowserWebSocketTransport construction', () => {
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         makeBrowserWebSocketTransport({
-          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
-          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          heartbeatIntervalMs: PositiveSafeIntegerSchema.make(TEST_HEARTBEAT_INTERVAL_MS),
+          idleTimeoutMs: PositiveSafeIntegerSchema.make(TEST_IDLE_TIMEOUT_MS),
           inboundCapacity: 0,
           socketFactory: () => new FakeSocket(),
           url: 'ws://localhost',
@@ -260,8 +269,8 @@ describe('makeBrowserWebSocketTransport construction', () => {
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         makeBrowserWebSocketTransport({
-          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
-          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          heartbeatIntervalMs: PositiveSafeIntegerSchema.make(TEST_HEARTBEAT_INTERVAL_MS),
+          idleTimeoutMs: PositiveSafeIntegerSchema.make(TEST_IDLE_TIMEOUT_MS),
           inboundCapacity: 81,
           socketFactory: () => new FakeSocket(),
           url: 'ws://localhost',
@@ -271,28 +280,25 @@ describe('makeBrowserWebSocketTransport construction', () => {
     }),
   )
 
-  it.effect('requires positive integer heartbeat and idle intervals', () =>
-    Effect.gen(function* () {
-      const invalidHeartbeat = yield* Effect.exit(
-        makeBrowserWebSocketTransport({
-          heartbeatIntervalMs: 0,
-          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
-          socketFactory: () => new FakeSocket(),
-          url: 'ws://localhost',
-        }),
-      )
-      const invalidIdleTimeout = yield* Effect.exit(
-        makeBrowserWebSocketTransport({
-          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
-          idleTimeoutMs: 1.5,
-          socketFactory: () => new FakeSocket(),
-          url: 'ws://localhost',
-        }),
-      )
-      expect(invalidHeartbeat._tag).toBe('Failure')
-      expect(invalidIdleTimeout._tag).toBe('Failure')
-    }),
-  )
+  it('requires positive safe integer heartbeat and idle intervals', async () => {
+    expect(() => PositiveSafeIntegerSchema.make(0)).toThrow()
+    expect(() => PositiveSafeIntegerSchema.make(1.5)).toThrow()
+
+    const invalidHeartbeat = Reflect.apply(makeBrowserWebSocketTransport, undefined, [{
+      heartbeatIntervalMs: 0,
+      idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+      socketFactory: () => new FakeSocket(),
+      url: 'ws://localhost',
+    }])
+    const invalidIdleTimeout = Reflect.apply(makeBrowserWebSocketTransport, undefined, [{
+      heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
+      idleTimeoutMs: 1.5,
+      socketFactory: () => new FakeSocket(),
+      url: 'ws://localhost',
+    }])
+    await expect(Effect.runPromise(invalidHeartbeat)).rejects.toMatchObject({ reason: 'not-connected' })
+    await expect(Effect.runPromise(invalidIdleTimeout)).rejects.toMatchObject({ reason: 'not-connected' })
+  })
 
   it.effect('succeeds with the default inboundCapacity', () =>
     Effect.gen(function* () {
@@ -305,8 +311,8 @@ describe('makeBrowserWebSocketTransport construction', () => {
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         makeBrowserWebSocketTransport({
-          heartbeatIntervalMs: TEST_HEARTBEAT_INTERVAL_MS,
-          idleTimeoutMs: TEST_IDLE_TIMEOUT_MS,
+          heartbeatIntervalMs: PositiveSafeIntegerSchema.make(TEST_HEARTBEAT_INTERVAL_MS),
+          idleTimeoutMs: PositiveSafeIntegerSchema.make(TEST_IDLE_TIMEOUT_MS),
           socketFactory: () => {
             throw new Error('no socket available')
           },

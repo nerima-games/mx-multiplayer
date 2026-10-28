@@ -12,6 +12,9 @@ export type HungerCommand = Header & (
   | { readonly _tag: 'Eat'; readonly item: string }
   | { readonly _tag: 'Respawn' }
 )
+
+/** Validated gameplay command for downstream C2 processing; it does not commit owner state. */
+export type HungerIntent = HungerCommand
 export type HungerEvent =
   | { readonly _tag: 'HungerChanged'; readonly player: PlayerId; readonly state: HungerState }
   | { readonly _tag: 'FoodConsumed'; readonly player: PlayerId; readonly item: string; readonly remaining: number }
@@ -26,7 +29,9 @@ export type HungerRejectionReason =
   | 'cannot-eat'
   | 'invalid-elapsed-time'
   | 'authority-boundary-unsupported'
-export type HungerResult = { readonly accepted: false; readonly reason: HungerRejectionReason }
+export type HungerResult =
+  | { readonly accepted: true; readonly intent: HungerIntent }
+  | { readonly accepted: false; readonly reason: HungerRejectionReason }
 export type HungerAuthorityOptions = {
   readonly foods?: Readonly<Record<string, { readonly food: number; readonly saturation: number }>>
   readonly maximumActivityAmount?: number
@@ -88,8 +93,7 @@ export class HungerAuthority {
       return { accepted: false, reason: 'invalid-command' }
     }
 
-    // Mc-sim 0.6 service mutations cannot submit an atomic WCC-owned hunger update.
-    return { accepted: false, reason: 'authority-boundary-unsupported' }
+    return { accepted: true, intent: command }
   }
 
 }

@@ -1,11 +1,25 @@
 import { Data, Result, Schema } from 'effect'
+import { type NonNegativeSafeInteger, NonNegativeSafeIntegerSchema } from './codec.js'
 import { type ReplicatedBlockChange, type ReplicatedOwnerId, ReplicatedOwnerIdSchema } from '@nerima-games/mc-sim'
 import { DIMENSIONS } from '@nerima-games/mc-kernel'
 
+const ChunkCoordinateSchema: Schema.brand<typeof Schema.Number, 'ChunkCoordinate'> = Schema.Number.pipe(
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isGreaterThanOrEqualTo(-Number.MAX_SAFE_INTEGER)),
+  Schema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  Schema.brand('ChunkCoordinate'),
+)
+export type ChunkCoordinate = typeof ChunkCoordinateSchema.Type
+
+const ChunkInterestKeySchema: Schema.brand<typeof Schema.String, 'ChunkInterestKey'> = Schema.String.pipe(
+  Schema.brand('ChunkInterestKey'),
+)
+export type ChunkInterestKey = typeof ChunkInterestKeySchema.Type
+
 export type ChunkInterest = Readonly<{
   dimension: ReplicatedBlockChange['dimension']
-  x: number
-  z: number
+  x: ChunkCoordinate
+  z: ChunkCoordinate
 }>
 
 const areaOfInterestBrand: unique symbol = Symbol('AreaOfInterest')
@@ -13,8 +27,8 @@ const areaOfInterestBrandValue: true = true
 
 export type AreaOfInterest = Readonly<{
   [areaOfInterestBrand]: true
-  chunkCount: number
-  ownerCount: number
+  chunkCount: NonNegativeSafeInteger
+  ownerCount: NonNegativeSafeInteger
 }>
 
 export type AreaOfInterestInputErrorReason =
@@ -37,7 +51,7 @@ export class AreaOfInterestInputError extends AreaOfInterestInputError_base<{
 }> {}
 
 type AreaOfInterestState = Readonly<{
-  chunks: ReadonlySet<string>
+  chunks: ReadonlySet<ChunkInterestKey>
   owners: ReadonlySet<ReplicatedOwnerId>
 }>
 
@@ -132,7 +146,8 @@ const readArray = (input: unknown, path: string): Result.Result<ReadonlyArray<un
 const isChunkDimension = (value: unknown): value is ReplicatedBlockChange['dimension'] =>
   typeof value === 'string' && DIMENSIONS.some((dimension) => dimension === value)
 
-const chunkKey = (chunk: ChunkInterest): string => JSON.stringify([chunk.dimension, chunk.x, chunk.z])
+const chunkKey = (dimension: ReplicatedBlockChange['dimension'], x: number, z: number): ChunkInterestKey =>
+  Schema.decodeUnknownSync(ChunkInterestKeySchema)(JSON.stringify([dimension, x, z]))
 
 const areaInterestState = (input: unknown): AreaOfInterestState | undefined => {
   if (typeof input !== 'object' || input === null) {
@@ -157,12 +172,12 @@ const areaStateExpanded = (previous: AreaOfInterestState | undefined, current: A
   return hasSetExpansion(previous.owners, current.owners) || hasSetExpansion(previous.chunks, current.chunks)
 }
 
-export const chunkInterestKeyForBlockChange = (change: ReplicatedBlockChange): string =>
-  chunkKey({
-    dimension: change.dimension,
-    x: Math.floor(change.position.x / CHUNK_SIDE_BLOCKS),
-    z: Math.floor(change.position.z / CHUNK_SIDE_BLOCKS),
-  })
+export const chunkInterestKeyForBlockChange = (change: ReplicatedBlockChange): ChunkInterestKey =>
+  chunkKey(
+    change.dimension,
+    Math.floor(change.position.x / CHUNK_SIDE_BLOCKS),
+    Math.floor(change.position.z / CHUNK_SIDE_BLOCKS),
+  )
 
 const readInterestArrays = (
   input: unknown,
@@ -197,20 +212,37 @@ const decodeOwners = (input: ReadonlyArray<unknown>): Result.Result<ReadonlySet<
   return Result.succeed(owners)
 }
 
-const decodeChunk = (input: unknown, path: string): Result.Result<string, DecodeError> => {
+const decodeChunkCoordinates = (
+  x: unknown,
+  z: unknown,
+  path: string,
+): Result.Result<Readonly<{ x: ChunkCoordinate; z: ChunkCoordinate }>, DecodeError> => {
+  const decodedX = Schema.decodeUnknownResult(ChunkCoordinateSchema)(x)
+  const decodedZ = Schema.decodeUnknownResult(ChunkCoordinateSchema)(z)
+  if (Result.isFailure(decodedX) || Result.isFailure(decodedZ)) {
+    return fail('invalid-chunk', path)
+  }
+  return Result.succeed({ x: decodedX.success, z: decodedZ.success })
+}
+
+const decodeChunk = (input: unknown, path: string): Result.Result<ChunkInterestKey, DecodeError> => {
   const decoded = readRecord(input, ['dimension', 'x', 'z'], path)
   if (Result.isFailure(decoded)) {
     return Result.fail(decoded.failure)
   }
   const { dimension, x, z } = decoded.success
-  if (!isChunkDimension(dimension) || typeof x !== 'number' || !Number.isSafeInteger(x) || typeof z !== 'number' || !Number.isSafeInteger(z)) {
+  if (!isChunkDimension(dimension)) {
     return fail('invalid-chunk', path)
   }
-  return Result.succeed(chunkKey({ dimension, x, z }))
+  const coordinates = decodeChunkCoordinates(x, z, path)
+  if (Result.isFailure(coordinates)) {
+    return Result.fail(coordinates.failure)
+  }
+  return Result.succeed(chunkKey(dimension, coordinates.success.x, coordinates.success.z))
 }
 
-const decodeChunks = (input: ReadonlyArray<unknown>): Result.Result<ReadonlySet<string>, DecodeError> => {
-  const chunks = new Set<string>()
+const decodeChunks = (input: ReadonlyArray<unknown>): Result.Result<ReadonlySet<ChunkInterestKey>, DecodeError> => {
+  const chunks = new Set<ChunkInterestKey>()
   for (let index = ZERO; index < input.length; index += ONE) {
     const path = `interest.chunks[${index}]`
     const decoded = decodeChunk(input[index], path)
@@ -243,6 +275,13 @@ const decodeAreaOfInterestInput = (
   return Result.succeed({ chunks: chunks.success, owners: owners.success })
 }
 
+const areaInterestCounts = (
+  state: AreaOfInterestState,
+): Pick<AreaOfInterest, 'chunkCount' | 'ownerCount'> => ({
+  chunkCount: Schema.decodeUnknownSync(NonNegativeSafeIntegerSchema)(state.chunks.size),
+  ownerCount: Schema.decodeUnknownSync(NonNegativeSafeIntegerSchema)(state.owners.size),
+})
+
 export const createAreaOfInterest = (input: unknown): Result.Result<AreaOfInterest, AreaOfInterestInputError> => {
   const decoded = decodeAreaOfInterestInput(input)
   if (Result.isFailure(decoded)) {
@@ -250,8 +289,7 @@ export const createAreaOfInterest = (input: unknown): Result.Result<AreaOfIntere
   }
   const interest: AreaOfInterest = Object.freeze({
     [areaOfInterestBrand]: areaOfInterestBrandValue,
-    chunkCount: decoded.success.chunks.size,
-    ownerCount: decoded.success.owners.size,
+    ...areaInterestCounts(decoded.success),
   })
   states.set(interest, decoded.success)
   return Result.succeed(interest)
@@ -263,7 +301,7 @@ export const isAreaOfInterest = (input: unknown): input is AreaOfInterest =>
 export const areaOfInterestIncludesOwner = (interest: unknown, owner: ReplicatedOwnerId): boolean =>
   areaInterestState(interest)?.owners.has(owner) ?? false
 
-export const areaOfInterestIncludesChunkKey = (interest: unknown, key: string): boolean =>
+export const areaOfInterestIncludesChunkKey = (interest: unknown, key: ChunkInterestKey): boolean =>
   areaInterestState(interest)?.chunks.has(key) ?? false
 
 export const areaOfInterestIncludesBlockChange = (

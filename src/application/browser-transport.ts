@@ -48,11 +48,19 @@
  * issuance replaces `multiplayer-server/reconnect-auth.ts`; this file only
  * consumes it.
  */
-import { Clock, Deferred, Duration, Effect, Queue, Result } from 'effect'
+import { Clock, Deferred, Duration, Effect, Queue, Result, Schema } from 'effect'
+import {
+  type NonNegativeSafeInteger,
+  NonNegativeSafeIntegerSchema,
+  type PositiveSafeInteger,
+  type WireText,
+  decodeFrame,
+  encodeFrame,
+  wireFrameByteLength,
+} from '../domain/codec.js'
 import { ProtocolError, TransportError } from '../domain/errors.js'
-import type { TransportService } from '../domain/transport.js'
-import { type WireText, decodeFrame, encodeFrame, wireFrameByteLength } from '../domain/codec.js'
 import type { NetworkMessage } from '../domain/protocol.js'
+import type { TransportService } from '../domain/transport.js'
 
 const MAX_INBOUND_CAPACITY = 80
 const DEFAULT_INBOUND_CAPACITY = MAX_INBOUND_CAPACITY
@@ -66,6 +74,12 @@ const GLOBAL_FRAME_BYTE_LIMIT = 4_194_304
 const POLICY_VIOLATION_CODE = 4008
 const FRAME_TOO_LARGE_CODE = 4009
 const UNSUPPORTED_DATA_CODE = 4003
+const ZERO = 0
+const ONE = 1
+const ZERO_NANOS = 0n
+const NANOSECONDS_PER_SECOND = 1_000_000_000
+const NANOSECONDS_PER_MILLISECOND = 1_000_000
+const MAX_SAFE_INTEGER_SUCCESSOR = Number.MAX_SAFE_INTEGER + ONE
 
 type InboundQueueAccounting = { readonly frameBytes: Array<number>; queuedBytes: number }
 
@@ -73,7 +87,7 @@ const releaseTakenFrames = (accounting: InboundQueueAccounting, queuedFrames: nu
   if (accounting.frameBytes.length <= queuedFrames) {
     return
   }
-  const takenFrames = accounting.frameBytes.splice(0, accounting.frameBytes.length - queuedFrames)
+  const takenFrames = accounting.frameBytes.splice(ZERO, accounting.frameBytes.length - queuedFrames)
   for (const frameBytes of takenFrames) {
     accounting.queuedBytes -= frameBytes
   }
@@ -123,13 +137,14 @@ const NORMAL_CLOSURE_CODE = 1000
 
 /** A single JSON parse helper, reused everywhere this file reads an untrusted frame. */
 const JSON_PARSE_FAILED: unique symbol = Symbol('browser-transport/json-parse-failed')
+const JSON_UNKNOWN_SCHEMA = Schema.fromJsonString(Schema.Unknown)
 
 const tryParseJson = (text: string): unknown => {
-  try {
-    return JSON.parse(text)
-  } catch {
+  const parsed = Schema.decodeUnknownResult(JSON_UNKNOWN_SCHEMA)(text)
+  if (Result.isFailure(parsed)) {
     return JSON_PARSE_FAILED
   }
+  return parsed.success
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -147,11 +162,11 @@ const isLoopbackHostname = (hostname: string): boolean =>
   hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 
 const parseUrl = (value: string, UrlConstructor: UrlConstructorLike): UrlLike | undefined => {
-  try {
-    return new UrlConstructor(value)
-  } catch {
+  const parsed = Result.try(() => new UrlConstructor(value))
+  if (Result.isFailure(parsed)) {
     return undefined
   }
+  return parsed.success
 }
 
 const resolvePageUrl = (pageUrl: UrlLike | string, UrlConstructor: UrlConstructorLike): UrlLike | undefined => {
@@ -266,27 +281,29 @@ export type WebSocketTransportState = 'closed' | 'connecting' | 'open'
 export type BrowserTransportFault =
   | {
       readonly _tag: 'InboundQueueOverflow'
-      readonly maxBytes: number
-      readonly maxFrames: number
-      readonly observedBytes: number
-      readonly observedFrames: number
+      readonly maxBytes: NonNegativeSafeInteger
+      readonly maxFrames: NonNegativeSafeInteger
+      readonly observedBytes: NonNegativeSafeInteger
+      readonly observedFrames: NonNegativeSafeInteger
     }
   | {
       readonly _tag: 'FrameRateExceeded'
-      readonly burstFrames: number
-      readonly maxFramesPerSecond: number
-      readonly observedFrames: number
+      readonly burstFrames: NonNegativeSafeInteger
+      readonly maxFramesPerSecond: NonNegativeSafeInteger
+      readonly observedFrames: NonNegativeSafeInteger
     }
   | {
       readonly _tag: 'ByteRateExceeded'
-      readonly burstBytes: number
-      readonly maxBytesPerSecond: number
-      readonly observedBytes: number
+      readonly burstBytes: NonNegativeSafeInteger
+      readonly maxBytesPerSecond: NonNegativeSafeInteger
+      readonly observedBytes: NonNegativeSafeInteger
     }
-  | { readonly _tag: 'IdleTimeout'; readonly idleTimeoutMs: number }
-  | { readonly _tag: 'HeartbeatTimeout'; readonly nonce: number }
+  | { readonly _tag: 'IdleTimeout'; readonly idleTimeoutMs: NonNegativeSafeInteger }
+  | { readonly _tag: 'HeartbeatTimeout'; readonly nonce: NonNegativeSafeInteger }
   | { readonly _tag: 'NonTextFrame' }
   | ProtocolError
+
+const nonNegativeSafeInteger = (value: number): NonNegativeSafeInteger => NonNegativeSafeIntegerSchema.make(value)
 
 export type ReconnectAuthOptions = {
   readonly clearRegistrationToken?: () => void
@@ -298,9 +315,9 @@ export type ReconnectAuthOptions = {
 
 export type BrowserWebSocketTransportOptions = {
   /** Required positive integer interval for transport Ping frames and response deadlines. */
-  readonly heartbeatIntervalMs: number
+  readonly heartbeatIntervalMs: PositiveSafeInteger
   /** Required positive integer receive-idle deadline. */
-  readonly idleTimeoutMs: number
+  readonly idleTimeoutMs: PositiveSafeInteger
   readonly inboundCapacity?: number
   readonly reconnectAuth?: ReconnectAuthOptions
   /** The caller's real `WebSocket` constructor — see the file header for why this is not read from `globalThis`. */
@@ -345,6 +362,7 @@ type RuntimeState = {
 type SocketContext = {
   readonly clock: Clock.Clock
   readonly completed: Deferred.Deferred<void>
+  readonly livenessStarted: Deferred.Deferred<void>
   readonly inboundAccounting: InboundQueueAccounting
   readonly inboundCapacity: number
   readonly inbound: Queue.Queue<WireText>
@@ -355,16 +373,16 @@ type SocketContext = {
 const createRuntimeState = (reconnectAuth: ReconnectAuthOptions | undefined, nowNanos: bigint): RuntimeState => ({
   authenticated: false,
   awaitingResume: reconnectAuth !== undefined,
+  byteTokens: BYTE_RATE_BURST,
   current: 'connecting',
   disposed: false,
   fault: undefined,
   frameTokens: FRAME_RATE_BURST,
-  byteTokens: BYTE_RATE_BURST,
-  lastRateUpdateNanos: nowNanos,
   lastInboundNanos: nowNanos,
-  nextPingNonce: 0,
-  pendingPingNonce: undefined,
+  lastRateUpdateNanos: nowNanos,
   livenessStarted: false,
+  nextPingNonce: ZERO,
+  pendingPingNonce: undefined,
   sentRegistrationToken: false,
   terminalError: new TransportError({ detail: 'websocket transport is closed', reason: 'closed' }),
 })
@@ -396,10 +414,28 @@ const terminateTransport = (ctx: SocketContext, error: TransportError, shutdownI
   ctx.runtime.authenticated = false
   ctx.runtime.terminalError = error
   detachSocketListeners(ctx)
-  Effect.runSync(Deferred.succeed(ctx.completed, undefined))
+  Deferred.doneUnsafe(ctx.completed, Effect.succeed(undefined))
   if (shutdownInbound) {
-    Effect.runSync(Queue.shutdown(ctx.inbound))
+    Queue.shutdownUnsafe(ctx.inbound)
   }
+}
+
+const faultDetail = (fault: BrowserTransportFault): string => {
+  if (fault._tag === 'ProtocolError') {
+    const { detail } = fault
+    return detail
+  }
+  return `websocket transport fault: ${fault._tag}`
+}
+
+const faultCloseCode = (fault: BrowserTransportFault): number => {
+  if (fault._tag === 'ProtocolError' && fault.reason === 'frame-too-large') {
+    return FRAME_TOO_LARGE_CODE
+  }
+  if (fault._tag === 'NonTextFrame') {
+    return UNSUPPORTED_DATA_CODE
+  }
+  return POLICY_VIOLATION_CODE
 }
 
 const terminateWithFault = (ctx: SocketContext, fault: BrowserTransportFault): void => {
@@ -409,20 +445,8 @@ const terminateWithFault = (ctx: SocketContext, fault: BrowserTransportFault): v
     return
   }
   ctx.runtime.fault = fault
-  const isOversizedFrame = fault._tag === 'ProtocolError' && fault.reason === 'frame-too-large'
-  const isNonTextFrame = fault._tag === 'NonTextFrame'
-  const detail = fault._tag === 'ProtocolError' ? fault.detail : `websocket transport fault: ${fault._tag}`
-  terminateTransport(ctx, new TransportError({ detail, reason: 'closed' }), true)
-  try {
-    const closeCode = isOversizedFrame
-      ? FRAME_TOO_LARGE_CODE
-      : isNonTextFrame
-        ? UNSUPPORTED_DATA_CODE
-        : POLICY_VIOLATION_CODE
-    ctx.socket.close(closeCode, fault._tag)
-  } catch {
-    // The typed fault remains observable even if the peer has already closed the socket.
-  }
+  terminateTransport(ctx, new TransportError({ detail: faultDetail(fault), reason: 'closed' }), true)
+  Result.try(() => ctx.socket.close(faultCloseCode(fault), fault._tag))
 }
 
 const resolveRegistrationToken = (
@@ -436,13 +460,17 @@ const resolveRegistrationToken = (
 }
 
 const sendResumeRequest = (ctx: SocketContext, reconnectAuth: ReconnectAuthOptions): void => {
-  try {
-    const token = reconnectAuth.loadToken()
-    const registrationToken = resolveRegistrationToken(token, reconnectAuth)
-    ctx.runtime.sentRegistrationToken = registrationToken !== undefined
-    ctx.socket.send(JSON.stringify({ _tag: 'PlayerResume', player: reconnectAuth.playerId, registrationToken, token }))
-  } catch (cause) {
-    const detail = `websocket resume authentication failed: ${String(cause)}`
+  const sent = Result.try({
+    catch: (cause) => cause,
+    try: () => {
+      const token = reconnectAuth.loadToken()
+      const registrationToken = resolveRegistrationToken(token, reconnectAuth)
+      ctx.runtime.sentRegistrationToken = registrationToken !== undefined
+      ctx.socket.send(JSON.stringify({ _tag: 'PlayerResume', player: reconnectAuth.playerId, registrationToken, token }))
+    },
+  })
+  if (Result.isFailure(sent)) {
+    const detail = `websocket resume authentication failed: ${String(sent.failure)}`
     terminateTransport(ctx, new TransportError({ detail, reason: 'send-failed' }), false)
   }
 }
@@ -464,13 +492,17 @@ const rejectResumeToken = (ctx: SocketContext, detail: string): void => {
 }
 
 const persistResumeToken = (ctx: SocketContext, reconnectAuth: ReconnectAuthOptions, accepted: PlayerResumeAccepted): void => {
-  try {
-    reconnectAuth.saveToken(accepted.token)
-    if (ctx.runtime.sentRegistrationToken) {
-      reconnectAuth.clearRegistrationToken?.()
-    }
-  } catch (cause) {
-    rejectResumeToken(ctx, `failed to persist websocket resume token: ${String(cause)}`)
+  const saved = Result.try({
+    catch: (cause) => cause,
+    try: () => {
+      reconnectAuth.saveToken(accepted.token)
+      if (ctx.runtime.sentRegistrationToken) {
+        reconnectAuth.clearRegistrationToken?.()
+      }
+    },
+  })
+  if (Result.isFailure(saved)) {
+    rejectResumeToken(ctx, `failed to persist websocket resume token: ${String(saved.failure)}`)
     return
   }
   ctx.runtime.awaitingResume = false
@@ -513,8 +545,11 @@ const resolveResumeCandidate = (
 const currentMonotonicNanos = (ctx: SocketContext): bigint => ctx.clock.monotonicTimeNanosUnsafe()
 
 const refillRateBuckets = (ctx: SocketContext, nowNanos: bigint): void => {
-  const elapsedNanos = nowNanos > ctx.runtime.lastRateUpdateNanos ? nowNanos - ctx.runtime.lastRateUpdateNanos : 0n
-  const elapsedSeconds = Number(elapsedNanos) / 1_000_000_000
+  let elapsedNanos = ZERO_NANOS
+  if (nowNanos > ctx.runtime.lastRateUpdateNanos) {
+    elapsedNanos = nowNanos - ctx.runtime.lastRateUpdateNanos
+  }
+  const elapsedSeconds = Number(elapsedNanos) / NANOSECONDS_PER_SECOND
   ctx.runtime.frameTokens = Math.min(FRAME_RATE_BURST, ctx.runtime.frameTokens + elapsedSeconds * FRAME_RATE_PER_SECOND)
   ctx.runtime.byteTokens = Math.min(BYTE_RATE_BURST, ctx.runtime.byteTokens + elapsedSeconds * BYTE_RATE_PER_SECOND)
   ctx.runtime.lastRateUpdateNanos = nowNanos
@@ -522,20 +557,20 @@ const refillRateBuckets = (ctx: SocketContext, nowNanos: bigint): void => {
 
 const consumeRateBudget = (ctx: SocketContext, frameBytes: number, nowNanos: bigint): BrowserTransportFault | undefined => {
   refillRateBuckets(ctx, nowNanos)
-  if (ctx.runtime.frameTokens < 1) {
+  if (ctx.runtime.frameTokens < ONE) {
     return {
       _tag: 'FrameRateExceeded',
-      burstFrames: FRAME_RATE_BURST,
-      maxFramesPerSecond: FRAME_RATE_PER_SECOND,
-      observedFrames: Math.ceil(FRAME_RATE_BURST - ctx.runtime.frameTokens + 1),
+      burstFrames: nonNegativeSafeInteger(FRAME_RATE_BURST),
+      maxFramesPerSecond: nonNegativeSafeInteger(FRAME_RATE_PER_SECOND),
+      observedFrames: nonNegativeSafeInteger(Math.ceil(FRAME_RATE_BURST - ctx.runtime.frameTokens + ONE)),
     }
   }
   if (ctx.runtime.byteTokens < frameBytes) {
     return {
       _tag: 'ByteRateExceeded',
-      burstBytes: BYTE_RATE_BURST,
-      maxBytesPerSecond: BYTE_RATE_PER_SECOND,
-      observedBytes: Math.ceil(BYTE_RATE_BURST - ctx.runtime.byteTokens + frameBytes),
+      burstBytes: nonNegativeSafeInteger(BYTE_RATE_BURST),
+      maxBytesPerSecond: nonNegativeSafeInteger(BYTE_RATE_PER_SECOND),
+      observedBytes: nonNegativeSafeInteger(Math.ceil(BYTE_RATE_BURST - ctx.runtime.byteTokens + frameBytes)),
     }
   }
   ctx.runtime.frameTokens -= 1
@@ -545,10 +580,10 @@ const consumeRateBudget = (ctx: SocketContext, frameBytes: number, nowNanos: big
 
 const createQueueOverflowFault = (ctx: SocketContext, frameBytes: number, queuedFrames: number): BrowserTransportFault => ({
   _tag: 'InboundQueueOverflow',
-  maxBytes: INBOUND_BYTE_CAPACITY,
-  maxFrames: ctx.inboundCapacity,
-  observedBytes: ctx.inboundAccounting.queuedBytes + frameBytes,
-  observedFrames: queuedFrames + 1,
+  maxBytes: nonNegativeSafeInteger(INBOUND_BYTE_CAPACITY),
+  maxFrames: nonNegativeSafeInteger(ctx.inboundCapacity),
+  observedBytes: nonNegativeSafeInteger(ctx.inboundAccounting.queuedBytes + frameBytes),
+  observedFrames: nonNegativeSafeInteger(queuedFrames + ONE),
 })
 
 const offerInboundFrame = (ctx: SocketContext, frame: WireText, frameBytes: number): BrowserTransportFault | undefined => {
@@ -593,57 +628,54 @@ const sendInternalMessage = (ctx: SocketContext, message: NetworkMessage): void 
     )
     return
   }
-  try {
-    ctx.socket.send(encoded.success)
-  } catch (cause) {
-    terminateTransport(ctx, new TransportError({ detail: `websocket send failed: ${String(cause)}`, reason: 'send-failed' }), false)
+  const sent = Result.try({
+    catch: (cause) => cause,
+    try: () => ctx.socket.send(encoded.success),
+  })
+  if (Result.isFailure(sent)) {
+    terminateTransport(ctx, new TransportError({ detail: `websocket send failed: ${String(sent.failure)}`, reason: 'send-failed' }), false)
   }
 }
 
 const sendHeartbeatPing = (ctx: SocketContext): void => {
   const nonce = ctx.runtime.nextPingNonce
-  ctx.runtime.nextPingNonce = (nonce + 1) % (Number.MAX_SAFE_INTEGER + 1)
+  ctx.runtime.nextPingNonce = (nonce + ONE) % MAX_SAFE_INTEGER_SUCCESSOR
   ctx.runtime.pendingPingNonce = nonce
   sendInternalMessage(ctx, { _tag: 'Ping', nonce })
 }
 
 const heartbeatLoop = (ctx: SocketContext, heartbeatIntervalMs: number): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    return Effect.flatMap(Effect.sleep(Duration.millis(heartbeatIntervalMs)), () => {
+  Effect.suspend(() => Effect.flatMap(Effect.sleep(Duration.millis(heartbeatIntervalMs)), () => {
       if (ctx.runtime.awaitingResume) {
         return heartbeatLoop(ctx, heartbeatIntervalMs)
       }
       const pendingNonce = ctx.runtime.pendingPingNonce
       if (pendingNonce !== undefined) {
-        terminateWithFault(ctx, { _tag: 'HeartbeatTimeout', nonce: pendingNonce })
+        terminateWithFault(ctx, { _tag: 'HeartbeatTimeout', nonce: nonNegativeSafeInteger(pendingNonce) })
         return Effect.void
       }
       sendHeartbeatPing(ctx)
       return heartbeatLoop(ctx, heartbeatIntervalMs)
-    })
-  })
+    }))
 
 const idleTimeoutLoop = (ctx: SocketContext, idleTimeoutMs: number): Effect.Effect<void> =>
   Effect.suspend(() => {
     const elapsedNanos = currentMonotonicNanos(ctx) - ctx.runtime.lastInboundNanos
-    const remainingMillis = idleTimeoutMs - Number(elapsedNanos) / 1_000_000
-    if (remainingMillis <= 0) {
-      terminateWithFault(ctx, { _tag: 'IdleTimeout', idleTimeoutMs })
+    const remainingMillis = idleTimeoutMs - Number(elapsedNanos) / NANOSECONDS_PER_MILLISECOND
+    if (remainingMillis <= ZERO) {
+      terminateWithFault(ctx, { _tag: 'IdleTimeout', idleTimeoutMs: nonNegativeSafeInteger(idleTimeoutMs) })
       return Effect.void
     }
-    const sleepMillis = Math.max(1, Math.ceil(remainingMillis))
+    const sleepMillis = Math.max(ONE, Math.ceil(remainingMillis))
     return Effect.flatMap(Effect.sleep(Duration.millis(sleepMillis)), () => idleTimeoutLoop(ctx, idleTimeoutMs))
   })
 
-const startLiveness = (ctx: SocketContext, options: BrowserWebSocketTransportOptions): void => {
+const startLiveness = (ctx: SocketContext): void => {
   if (ctx.runtime.livenessStarted) {
     return
   }
   ctx.runtime.livenessStarted = true
-  const heartbeat = Effect.raceFirst(heartbeatLoop(ctx, options.heartbeatIntervalMs), Deferred.await(ctx.completed))
-  const idleTimeout = Effect.raceFirst(idleTimeoutLoop(ctx, options.idleTimeoutMs), Deferred.await(ctx.completed))
-  Effect.runFork(Effect.provideService(heartbeat, Clock.Clock, ctx.clock))
-  Effect.runFork(Effect.provideService(idleTimeout, Clock.Clock, ctx.clock))
+  Deferred.doneUnsafe(ctx.livenessStarted, Effect.succeed(undefined))
 }
 
 const validateInboundFrameSize = (ctx: SocketContext, frame: string): number | undefined => {
@@ -796,7 +828,7 @@ const createSocketHandlers = (ctx: SocketContext, options: BrowserWebSocketTrans
     beginConnection(ctx, options.reconnectAuth)
     if (ctx.runtime.current === 'open') {
       ctx.runtime.lastInboundNanos = currentMonotonicNanos(ctx)
-      startLiveness(ctx, options)
+      startLiveness(ctx)
     }
   }
   const handleMessage = (event: WebSocketMessageEventLike): void =>
@@ -869,14 +901,14 @@ const makeClose = (ctx: SocketContext): Effect.Effect<void> =>
   })
 
 const validatePositiveConfig = (name: string, value: number): TransportError | undefined => {
-  if (Number.isSafeInteger(value) && value > 0) {
+  if (Number.isSafeInteger(value) && value > ZERO) {
     return undefined
   }
   return new TransportError({ detail: `${name} must be a positive safe integer, received ${String(value)}`, reason: 'not-connected' })
 }
 
 const validateInboundCapacity = (capacity: number): TransportError | undefined => {
-  if (Number.isSafeInteger(capacity) && capacity > 0 && capacity <= MAX_INBOUND_CAPACITY) {
+  if (Number.isSafeInteger(capacity) && capacity > ZERO && capacity <= MAX_INBOUND_CAPACITY) {
     return undefined
   }
   return new TransportError({
@@ -891,18 +923,27 @@ const openSocket = (options: BrowserWebSocketTransportOptions): Effect.Effect<We
     try: () => options.socketFactory(options.url),
   })
 
-const startTransport = (ctx: SocketContext, options: BrowserWebSocketTransportOptions): BrowserWebSocketTransport => {
-  const handlers = createSocketHandlers(ctx, options)
-  attachSocketListeners(ctx.socket, handlers)
-  return {
-    close: makeClose(ctx),
-    fault: () => ctx.runtime.fault,
-    inbound: ctx.inbound,
-    isAuthenticated: () => ctx.runtime.authenticated,
-    send: makeSend(ctx),
-    state: () => ctx.runtime.current,
-  }
-}
+const startTransport = (ctx: SocketContext, options: BrowserWebSocketTransportOptions): Effect.Effect<BrowserWebSocketTransport> =>
+  Effect.gen(function* () {
+    const handlers = createSocketHandlers(ctx, options)
+    attachSocketListeners(ctx.socket, handlers)
+    const opened = Effect.flatMap(Deferred.await(ctx.livenessStarted), () =>
+      Effect.raceFirst(heartbeatLoop(ctx, options.heartbeatIntervalMs), Deferred.await(ctx.completed)),
+    )
+    const idle = Effect.flatMap(Deferred.await(ctx.livenessStarted), () =>
+      Effect.raceFirst(idleTimeoutLoop(ctx, options.idleTimeoutMs), Deferred.await(ctx.completed)),
+    )
+    yield* Effect.forkDetach(Effect.provideService(opened, Clock.Clock, ctx.clock))
+    yield* Effect.forkDetach(Effect.provideService(idle, Clock.Clock, ctx.clock))
+    return {
+      close: makeClose(ctx),
+      fault: () => ctx.runtime.fault,
+      inbound: ctx.inbound,
+      isAuthenticated: () => ctx.runtime.authenticated,
+      send: makeSend(ctx),
+      state: () => ctx.runtime.current,
+    }
+  })
 
 const validateBrowserTransportConfig = (options: BrowserWebSocketTransportOptions): Effect.Effect<number, TransportError> =>
   Effect.gen(function* () {
@@ -934,16 +975,18 @@ export const makeBrowserWebSocketTransport = (
     const capacity = yield* validateBrowserTransportConfig(options)
     const inbound = yield* Queue.bounded<WireText>(capacity)
     const completed = yield* Deferred.make<void>()
+    const livenessStarted = yield* Deferred.make<void>()
     const clock = yield* Clock.Clock
     const socket = yield* openSocket(options)
     const ctx: SocketContext = {
       clock,
       completed,
+      inbound,
       inboundAccounting: { frameBytes: [], queuedBytes: 0 },
       inboundCapacity: capacity,
-      inbound,
+      livenessStarted,
       runtime: createRuntimeState(options.reconnectAuth, clock.monotonicTimeNanosUnsafe()),
       socket,
     }
-    return startTransport(ctx, options)
+    return yield* startTransport(ctx, options)
   })

@@ -1,4 +1,5 @@
-import { Data, Result } from 'effect'
+import { Data, Result, Schema } from 'effect'
+import { type PositiveSafeInteger, PositiveSafeIntegerSchema } from './codec.js'
 
 const FIXTURE_FRAMES_PER_SECOND = 25
 const FIXTURE_BYTES_PER_SECOND = 1_089_775
@@ -8,23 +9,18 @@ const ZERO = 0
 const ONE = 1
 const MILLISECONDS_PER_SECOND = 1_000
 
-export const CONNECTION_RATE_LIMITS: Readonly<{
-  burstFrames: number
-  bytesPerSecond: number
-  framesPerSecond: number
-  maxDeltaBytes: number
-}> = Object.freeze({
-  burstFrames: FIXTURE_BURST_FRAMES,
-  bytesPerSecond: FIXTURE_BYTES_PER_SECOND,
-  framesPerSecond: FIXTURE_FRAMES_PER_SECOND,
-  maxDeltaBytes: FIXTURE_MAX_DELTA_BYTES,
+export const CONNECTION_RATE_LIMITS: ConnectionRateLimitConfig = Object.freeze({
+  burstFrames: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(FIXTURE_BURST_FRAMES),
+  bytesPerSecond: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(FIXTURE_BYTES_PER_SECOND),
+  framesPerSecond: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(FIXTURE_FRAMES_PER_SECOND),
+  maxDeltaBytes: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(FIXTURE_MAX_DELTA_BYTES),
 })
 
 export type ConnectionRateLimitConfig = Readonly<{
-  framesPerSecond: number
-  bytesPerSecond: number
-  burstFrames: number
-  maxDeltaBytes: number
+  framesPerSecond: PositiveSafeInteger
+  bytesPerSecond: PositiveSafeInteger
+  burstFrames: PositiveSafeInteger
+  maxDeltaBytes: PositiveSafeInteger
 }>
 
 export type ConnectionRateLimitConfigField = keyof ConnectionRateLimitConfig
@@ -115,7 +111,7 @@ const readConfigObject = (input: unknown): Result.Result<object, RateLimitConfig
 const readConfigField = (
   input: object,
   field: ConnectionRateLimitConfigField,
-): Result.Result<number, RateLimitConfigurationError> => {
+): Result.Result<PositiveSafeInteger, RateLimitConfigurationError> => {
   const descriptor = Object.getOwnPropertyDescriptor(input, field)
   if (descriptor === undefined) {
     return configurationFailure('missing-field', field)
@@ -123,10 +119,11 @@ const readConfigField = (
   if (!('value' in descriptor)) {
     return configurationFailure('accessor-field', field)
   }
-  if (!isPositiveSafeInteger(descriptor.value)) {
+  const decoded = Schema.decodeUnknownResult(PositiveSafeIntegerSchema)(descriptor.value)
+  if (Result.isFailure(decoded)) {
     return configurationFailure('invalid-value', field)
   }
-  return Result.succeed(descriptor.value)
+  return Result.succeed(decoded.success)
 }
 
 const readConfigValues = (

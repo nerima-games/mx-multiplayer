@@ -34,6 +34,8 @@ import type { NetworkMessage } from './protocol.js'
 
 const INBOUND_QUEUE_CAPACITY = 80
 const INBOUND_QUEUE_BYTE_CAPACITY = 3_486_960
+const FIRST_QUEUE_INDEX = 0
+const INCOMING_FRAME_COUNT = 1
 
 type InboundQueueAccounting = {
   readonly frameBytes: Array<number>
@@ -44,7 +46,7 @@ const releaseTakenFrames = (accounting: InboundQueueAccounting, queuedFrames: nu
   if (accounting.frameBytes.length <= queuedFrames) {
     return
   }
-  const takenFrames = accounting.frameBytes.splice(0, accounting.frameBytes.length - queuedFrames)
+  const takenFrames = accounting.frameBytes.splice(FIRST_QUEUE_INDEX, accounting.frameBytes.length - queuedFrames)
   for (const frameBytes of takenFrames) {
     accounting.queuedBytes -= frameBytes
   }
@@ -63,7 +65,7 @@ const overflowFault = (accounting: InboundQueueAccounting, queuedFrames: number,
   maxBytes: INBOUND_QUEUE_BYTE_CAPACITY,
   maxFrames: INBOUND_QUEUE_CAPACITY,
   observedBytes: accounting.queuedBytes + frameBytes,
-  observedFrames: queuedFrames + 1,
+  observedFrames: queuedFrames + INCOMING_FRAME_COUNT,
 })
 
 export type TransportService = {

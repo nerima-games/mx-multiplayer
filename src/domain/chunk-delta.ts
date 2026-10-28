@@ -1,5 +1,6 @@
 import {
   type AreaOfInterest,
+  type ChunkInterestKey,
   areaOfInterestExpanded,
   areaOfInterestIncludesChunkKey,
   areaOfInterestIncludesOwner,
@@ -14,32 +15,35 @@ import {
 } from './protocol.js'
 import { Data, Result, Schema } from 'effect'
 import {
+  type NonNegativeSafeInteger,
   type ReplicatedOwnerRegistry,
+  type WireText,
   encodeFrame,
   wireFrameByteLength,
 } from './codec.js'
+import { PlayerId, type PlayerId as PlayerIdType } from './protocol/identifiers.js'
 import type { ReplicatedBlockChange } from '@nerima-games/mc-sim'
 
 export const MAX_C4_DELTA_FRAME_BYTES = 54_489
 
 export type DeltaProjectionRecipient = Readonly<{
-  id: string
+  id: PlayerIdType
   interest: AreaOfInterest
   previousInterest?: AreaOfInterest
-  lastKnownRevision?: number
+  lastKnownRevision?: Revision
 }>
 
 export type DeltaProjectionOutcome =
   | Readonly<{
       _tag: 'ProjectedDelta'
-      recipientId: string
+      recipientId: PlayerIdType
       message: ReplicatedWorldDelta
-      frame: string
-      frameBytes: number
+      frame: WireText
+      frameBytes: NonNegativeSafeInteger
     }>
   | Readonly<{
       _tag: 'ResyncRequired'
-      recipientId: string
+      recipientId: PlayerIdType
       reason: 'interest-expanded' | 'delta-frame-too-large'
       request: typeof AuthoritativeResyncRequest.Type
     }>
@@ -55,10 +59,10 @@ export class DeltaProjectionError extends DeltaProjectionError_base<{
 }> {}
 
 type ValidRecipient = Readonly<{
-  id: string
+  id: PlayerIdType
   interest: AreaOfInterest
   previousInterest: AreaOfInterest | undefined
-  lastKnownRevision: number | undefined
+  lastKnownRevision: Revision | undefined
 }>
 
 type RecipientFields = Readonly<{
@@ -69,7 +73,7 @@ type RecipientFields = Readonly<{
 }>
 
 type ProjectionContext = Readonly<{
-  blockGroups: ReadonlyMap<string, ReadonlyArray<ReplicatedBlockChange>>
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>
   delta: ReplicatedWorldDelta
   owners: ReplicatedOwnerRegistry
   recipient: ValidRecipient
@@ -83,7 +87,7 @@ type EncodedProjectionContext = Readonly<{
 }>
 
 type BatchProjectionContext = Readonly<{
-  blockGroups: ReadonlyMap<string, ReadonlyArray<ReplicatedBlockChange>>
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>
   delta: ReplicatedWorldDelta
   owners: ReplicatedOwnerRegistry
   recipients: ReadonlyArray<ValidRecipient>
@@ -91,7 +95,7 @@ type BatchProjectionContext = Readonly<{
 
 type RecipientAccumulator = {
   recipients: Array<ValidRecipient>
-  seenIds: Set<string>
+  seenIds: Set<PlayerIdType>
 }
 
 const strictParseOptions = { onExcessProperty: 'error' as const }
@@ -143,7 +147,7 @@ const readRecipientFields = (input: object): Result.Result<RecipientFields, Delt
 
 const decodeLastKnownRevision = (
   input: unknown,
-): Result.Result<number | undefined, DeltaProjectionError> => {
+): Result.Result<Revision | undefined, DeltaProjectionError> => {
   if (input === undefined) {
     return Result.succeed(undefined)
   }
@@ -156,7 +160,8 @@ const decodeLastKnownRevision = (
 
 const decodeRecipientFields = (fields: RecipientFields): Result.Result<ValidRecipient, DeltaProjectionError> => {
   const { id, interest, lastKnownRevision, previousInterest } = fields
-  if (typeof id !== 'string' || id.length === ZERO || !isAreaOfInterest(interest)) {
+  const decodedId = Schema.decodeUnknownResult(PlayerId, strictParseOptions)(id)
+  if (Result.isFailure(decodedId) || !isAreaOfInterest(interest)) {
     return invalidRecipient('recipient id and interest are required')
   }
   if (previousInterest !== undefined && !isAreaOfInterest(previousInterest)) {
@@ -167,7 +172,7 @@ const decodeRecipientFields = (fields: RecipientFields): Result.Result<ValidReci
     return Result.fail(revision.failure)
   }
   return Result.succeed({
-    id,
+    id: decodedId.success,
     interest,
     lastKnownRevision: revision.success,
     previousInterest,
@@ -221,7 +226,7 @@ const decodeRecipients = (input: unknown): Result.Result<ReadonlyArray<ValidReci
   if (!Array.isArray(input)) {
     return invalidRecipient('recipients must be an array')
   }
-  const accumulator: RecipientAccumulator = { recipients: [], seenIds: new Set<string>() }
+  const accumulator: RecipientAccumulator = { recipients: [], seenIds: new Set<PlayerIdType>() }
   for (let index = ZERO; index < input.length; index += ONE) {
     const appended = appendRecipientAtIndex(input, index, accumulator)
     if (Result.isFailure(appended)) {
@@ -233,7 +238,7 @@ const decodeRecipients = (input: unknown): Result.Result<ReadonlyArray<ValidReci
 
 const resyncRequest = (
   world: ReplicatedWorldDelta['world'],
-  lastKnownRevision: number | undefined,
+  lastKnownRevision: Revision | undefined,
 ): typeof AuthoritativeResyncRequest.Type => {
   if (lastKnownRevision === undefined) {
     return Schema.decodeUnknownSync(AuthoritativeResyncRequest, strictParseOptions)({
@@ -262,7 +267,7 @@ const makeResyncOutcome = (
 const visibleBlockChanges = (
   delta: ReplicatedWorldDelta,
   interest: AreaOfInterest,
-  blockGroups: ReadonlyMap<string, ReadonlyArray<ReplicatedBlockChange>>,
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>,
 ): ReadonlyArray<ReplicatedBlockChange> => {
   const visibleChanges = new Set<ReplicatedBlockChange>()
   for (const [key, group] of blockGroups) {
@@ -278,7 +283,7 @@ const visibleBlockChanges = (
 const projectedDelta = (
   delta: ReplicatedWorldDelta,
   recipient: ValidRecipient,
-  blockGroups: ReadonlyMap<string, ReadonlyArray<ReplicatedBlockChange>>,
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>,
 ): ReplicatedWorldDelta => ({
   _tag: 'ReplicatedWorldDelta',
   blockChanges: visibleBlockChanges(delta, recipient.interest, blockGroups),
@@ -331,8 +336,8 @@ const projectForRecipient = (
 
 const groupBlockChanges = (
   changes: ReadonlyArray<ReplicatedBlockChange>,
-): ReadonlyMap<string, ReadonlyArray<ReplicatedBlockChange>> => {
-  const groupedChanges = new Map<string, Array<ReplicatedBlockChange>>()
+): ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>> => {
+  const groupedChanges = new Map<ChunkInterestKey, Array<ReplicatedBlockChange>>()
   for (const change of changes) {
     const key = chunkInterestKeyForBlockChange(change)
     const group = groupedChanges.get(key)

@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import { Result } from 'effect'
 import {
   TransportSecurityError,
   isAllowedWebSocketOrigin,
@@ -8,16 +9,18 @@ import {
   type TransportSecurityUrlLike,
 } from '../src/application/server/transport-security'
 
-const rejectionReason = (attempt: () => void): TransportSecurityErrorReason => {
-  try {
-    attempt()
-  } catch (error) {
-    if (error instanceof TransportSecurityError) {
-      return error.reason
-    }
-    throw error
+const rejectionReason = (
+  resolve: () => Result.Result<unknown, TransportSecurityError>,
+): TransportSecurityErrorReason | undefined => {
+  const result = resolve()
+  return Result.isFailure(result) ? result.failure.reason : undefined
+}
+
+const successValue = <A>(result: Result.Result<A, TransportSecurityError>): A => {
+  if (Result.isFailure(result)) {
+    throw result.failure
   }
-  throw new Error('expected resolveTransportSecurity to throw')
+  return result.success
 }
 
 /** A minimal, real `TransportSecurityUrlLike`. Throws on anything that is not `scheme://host[/]`. */
@@ -96,118 +99,67 @@ describe('isLoopbackHost', () => {
 
 describe('resolveTransportSecurity', () => {
   it('stays plaintext for an unconfigured loopback host', () => {
-    const result = resolveTransportSecurity({ host: 'localhost' }, FakeUrl)
+    const result = successValue(resolveTransportSecurity({ host: 'localhost' }, FakeUrl))
     expect(result).toStrictEqual({ allowedOrigins: new Set(), secure: false })
   })
 
   it('requires TLS for a non-loopback host even with nothing else configured', () => {
-    expect(() => resolveTransportSecurity({ host: 'example.com' }, FakeUrl)).toThrow(TransportSecurityError)
+    expect(rejectionReason(() => resolveTransportSecurity({ host: 'example.com' }, FakeUrl))).toBe('missing-tls-cert')
   })
 
   it('requires TLS for a loopback host once any secure option is set', () => {
-    expect(() =>
-      resolveTransportSecurity({ allowedOrigins: 'https://example.com', host: 'localhost' }, FakeUrl),
-    ).toThrow(TransportSecurityError)
+    expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: 'https://example.com', host: 'localhost' }, FakeUrl))).toBe('missing-tls-cert')
   })
 
   it('rejects a missing tls-cert', () => {
-    const exit = (): void => {
-      resolveTransportSecurity(
-        { allowedOrigins: 'https://example.com', host: 'example.com', tlsKey: 'key' },
-        FakeUrl,
-      )
-    }
-    expect(exit).toThrow(TransportSecurityError)
-    expect(rejectionReason(exit)).toBe('missing-tls-cert')
+    expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: 'https://example.com', host: 'example.com', tlsKey: 'key' }, FakeUrl))).toBe('missing-tls-cert')
   })
 
   it('rejects a missing tls-key', () => {
-    const exit = (): void => {
-      resolveTransportSecurity(
-        { allowedOrigins: 'https://example.com', host: 'example.com', tlsCert: 'cert' },
-        FakeUrl,
-      )
-    }
-    expect(exit).toThrow(TransportSecurityError)
-    expect(rejectionReason(exit)).toBe('missing-tls-key')
+    expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: 'https://example.com', host: 'example.com', tlsCert: 'cert' }, FakeUrl))).toBe('missing-tls-key')
   })
 
   it('rejects a config with TLS material but no allowed origins', () => {
-    const exit = (): void => {
-      resolveTransportSecurity({ host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl)
-    }
-    expect(exit).toThrow(TransportSecurityError)
-    expect(rejectionReason(exit)).toBe('no-allowed-origins')
+    expect(rejectionReason(() => resolveTransportSecurity({ host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl))).toBe('no-allowed-origins')
   })
 
   it('rejects a blank origin in the allowed-origins list', () => {
-    const exit = (): void => {
-      resolveTransportSecurity(
-        { allowedOrigins: 'https://example.com,', host: 'example.com', tlsCert: 'cert', tlsKey: 'key' },
-        FakeUrl,
-      )
-    }
-    expect(exit).toThrow(TransportSecurityError)
-    expect(rejectionReason(exit)).toBe('empty-origin')
+    expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: 'https://example.com,', host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl))).toBe('empty-origin')
   })
 
   it('rejects the literal origin "null" and a wildcard origin', () => {
     for (const origin of ['null', 'https://*.example.com']) {
-      expect(() =>
-        resolveTransportSecurity({ allowedOrigins: origin, host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl),
-      ).toThrow(TransportSecurityError)
+      expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: origin, host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl))).toBe('invalid-origin')
     }
   })
 
   it('rejects a non-HTTPS scheme in the allowed-origins list', () => {
     for (const origin of ['http://example.com', 'ws://example.com']) {
-      const exit = (): void => {
-        resolveTransportSecurity({ allowedOrigins: origin, host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl)
-      }
-      expect(exit, origin).toThrow(TransportSecurityError)
-      expect(rejectionReason(exit), origin).toBe('invalid-origin')
+      expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: origin, host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl))).toBe('invalid-origin')
     }
   })
 
   it('rejects an origin the URL constructor cannot parse', () => {
-    expect(() =>
-      resolveTransportSecurity(
-        { allowedOrigins: 'not a url', host: 'example.com', tlsCert: 'cert', tlsKey: 'key' },
-        FakeUrl,
-      ),
-    ).toThrow(TransportSecurityError)
+    expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: 'not a url', host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl))).toBe('invalid-origin')
   })
 
   it('rejects an origin with a non-root pathname', () => {
-    expect(() =>
-      resolveTransportSecurity(
-        { allowedOrigins: 'https://example.com/path', host: 'example.com', tlsCert: 'cert', tlsKey: 'key' },
-        FakeUrl,
-      ),
-    ).toThrow(TransportSecurityError)
+    expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: 'https://example.com/path', host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, FakeUrl))).toBe('invalid-origin')
   })
 
   it('rejects userinfo, a non-root path, a query string, and a fragment even when the URL-like implementation echoes the raw input as its origin', () => {
-    // FakeUrl can never populate username/password/search/hash from its input — every
-    // field defaults to '' regardless — so it cannot exercise these four checks at all.
-    // NonConformingUrl parses them for real, but reports an unnormalized `.origin`, so
-    // only the explicit per-field checks (not origin-equality) can catch these.
     for (const origin of [
       'https://user:pass@example.com',
       'https://example.com/path',
       'https://example.com?q=1',
       'https://example.com#frag',
     ]) {
-      const exit = (): void => {
-        resolveTransportSecurity({ allowedOrigins: origin, host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, NonConformingUrl)
-      }
-      expect(exit, origin).toThrow(TransportSecurityError)
-      expect(rejectionReason(exit), origin).toBe('invalid-origin')
+      expect(rejectionReason(() => resolveTransportSecurity({ allowedOrigins: origin, host: 'example.com', tlsCert: 'cert', tlsKey: 'key' }, NonConformingUrl))).toBe('invalid-origin')
     }
   })
 
   it('accepts a fully configured secure transport with multiple allowed origins', () => {
-    const result = resolveTransportSecurity(
+    const result = successValue(resolveTransportSecurity(
       {
         allowedOrigins: 'https://example.com, https://other.example.com',
         host: 'example.com',
@@ -215,7 +167,7 @@ describe('resolveTransportSecurity', () => {
         tlsKey: 'key',
       },
       FakeUrl,
-    )
+    ))
     expect(result).toStrictEqual({
       allowedOrigins: new Set(['https://example.com', 'https://other.example.com']),
       secure: true,
@@ -227,16 +179,16 @@ describe('resolveTransportSecurity', () => {
 
 describe('isAllowedWebSocketOrigin', () => {
   it('allows any origin, including undefined, when the transport is not secure', () => {
-    const insecure = resolveTransportSecurity({ host: 'localhost' }, FakeUrl)
+    const insecure = successValue(resolveTransportSecurity({ host: 'localhost' }, FakeUrl))
     expect(isAllowedWebSocketOrigin(undefined, insecure)).toBe(true)
     expect(isAllowedWebSocketOrigin('https://anything.example.com', insecure)).toBe(true)
   })
 
   it('rejects an unlisted or missing origin when the transport is secure', () => {
-    const secure = resolveTransportSecurity(
+    const secure = successValue(resolveTransportSecurity(
       { allowedOrigins: 'https://example.com', host: 'example.com', tlsCert: 'cert', tlsKey: 'key' },
       FakeUrl,
-    )
+    ))
     expect(isAllowedWebSocketOrigin(undefined, secure)).toBe(false)
     expect(isAllowedWebSocketOrigin('https://not-listed.example.com', secure)).toBe(false)
     expect(isAllowedWebSocketOrigin('https://example.com', secure)).toBe(true)

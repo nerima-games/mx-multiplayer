@@ -10,7 +10,7 @@ const unsupported = { accepted: false, reason: 'authority-boundary-unsupported' 
 const invalid = { accepted: false, reason: 'invalid-command' } as const
 
 describe('hunger authority boundary', () => {
-  it('rejects every valid mutation before sim work and never returns a local revision or delta', () => {
+  it('returns valid commands as intents without a local revision or delta', () => {
     const commands: ReadonlyArray<HungerCommand> = [
       { ...header('activity'), _tag: 'Activity', activity: 'jump', amount: 1 },
       { ...header('eat'), _tag: 'Eat', item: 'apple' },
@@ -22,7 +22,7 @@ describe('hunger authority boundary', () => {
     for (const command of commands) {
       const inputBefore = { ...command }
       const result = authority.execute(command)
-      expect(result).toStrictEqual(unsupported)
+      expect(result).toStrictEqual({ accepted: true, intent: command })
       expect(command).toStrictEqual(inputBefore)
       expect(command.expectedRevision).toBe(2)
       expect(result).not.toHaveProperty('revision')
@@ -31,12 +31,13 @@ describe('hunger authority boundary', () => {
     }
   })
 
-  it('does not record an unsupported request as a processed duplicate', () => {
+  it('returns repeated commands as intents without local mutation', () => {
     const authority = createHungerAuthority()
     const command = { ...header('same-request'), _tag: 'Activity', activity: 'walk', amount: 1 } as const
+    const expected = { accepted: true, intent: command }
 
-    expect(authority.execute(command)).toStrictEqual(unsupported)
-    expect(authority.execute(command)).toStrictEqual(unsupported)
+    expect(authority.execute(command)).toStrictEqual(expected)
+    expect(authority.execute(command)).toStrictEqual(expected)
     expect(command.expectedRevision).toBe(2)
   })
 
@@ -63,10 +64,10 @@ describe('hunger authority boundary', () => {
     }
   })
 
-  it('accepts the fixed activity boundary as syntactically valid, then returns unsupported', () => {
+  it('returns the fixed valid activity command as an intent', () => {
     const command = { ...header('at-limit'), _tag: 'Activity', activity: 'walk', amount: 100 } as const
 
-    expect(createHungerAuthority().execute(command)).toStrictEqual(unsupported)
+    expect(createHungerAuthority().execute(command)).toStrictEqual({ accepted: true, intent: command })
     expect(command.expectedRevision).toBe(2)
   })
 
@@ -78,16 +79,21 @@ describe('hunger authority boundary', () => {
     expect(authority.tick(-1)).toStrictEqual({ accepted: false, reason: 'invalid-elapsed-time' })
   })
 
-  it('routes generated activity amounts through validation or the typed authority boundary', () => {
+  it('routes generated activity amounts to intents or typed invalid failures', () => {
     fc.assert(fc.property(fc.integer({ min: -100, max: 200 }), (amount) => {
-      const result = createHungerAuthority().execute({
+      const command: HungerCommand = {
         ...header(`activity-${amount}`),
         _tag: 'Activity',
         activity: 'walk',
         amount,
-      })
+      }
+      const result = createHungerAuthority().execute(command)
 
-      expect(result).toStrictEqual(amount > 0 && amount <= 100 ? unsupported : invalid)
+      expect(result).toStrictEqual(
+        amount > 0 && amount <= 100
+          ? { accepted: true, intent: command }
+          : invalid,
+      )
     }))
   })
 

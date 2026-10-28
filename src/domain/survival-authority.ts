@@ -38,6 +38,9 @@ export type SurvivalCommand = CommandHeader & (
   | { readonly _tag: 'EnterSleep'; readonly bed: SurvivalPosition }
   | { readonly _tag: 'LeaveSleep' }
 )
+
+/** Validated gameplay command for downstream C2 processing; it does not commit owner state. */
+export type SurvivalIntent = SurvivalCommand
 export type SurvivalEvent =
   | { readonly _tag: 'InventoryChanged'; readonly actor: PlayerId; readonly slot: number; readonly stack: SurvivalItemStack | null }
   | { readonly _tag: 'BlockChanged'; readonly at: SurvivalPosition; readonly block: string | null }
@@ -82,7 +85,9 @@ export type SurvivalSleepValidationInput = {
   readonly snapshot: SurvivalSnapshot
 }
 export type SurvivalAuthorityResult = { readonly accepted: false; readonly reason: SurvivalRejectionReason }
-export type SurvivalCommandResult = SurvivalAuthorityResult & { readonly requestId: string }
+export type SurvivalCommandResult =
+  | (SurvivalAuthorityResult & { readonly requestId: string })
+  | { readonly accepted: true; readonly intent: SurvivalIntent; readonly requestId: string }
 export type SurvivalAuthorityOptions = {
   readonly reach?: number
   readonly attackReach?: number
@@ -168,8 +173,7 @@ export class SurvivalAuthority {
         return commandFailure(command.requestId, 'invalid-command')
       }
 
-      // Mc-sim 0.6 has no plan-fragment commit for block, inventory, vitals, entity, and drop updates.
-      return commandFailure(command.requestId, 'authority-boundary-unsupported')
+      return { accepted: true, intent: command, requestId: command.requestId }
     }
   }
 }

@@ -13,10 +13,8 @@ const header = (requestId: string, expectedRevision = 7, clientTick = 10) => ({
   expectedRevision,
   clientTick,
 })
-const unsupported = (requestId: string) => ({ accepted: false, requestId, reason: 'authority-boundary-unsupported' })
-
 describe('survival authority boundary', () => {
-  it('rejects every valid mutation before sim work and returns no owner revision or delta', () => {
+  it('returns valid commands as intents without a local revision or delta', () => {
     const commands: ReadonlyArray<SurvivalCommand> = [
       { ...header('place'), _tag: 'PlaceBlock', at: { x: 1, y: 64, z: 1 }, slot: 0, block: 'stone' },
       { ...header('break'), _tag: 'BreakBlock', at: { x: 2, y: 64, z: 0 } },
@@ -31,7 +29,11 @@ describe('survival authority boundary', () => {
     for (const command of commands) {
       const inputBefore = { ...command }
       const result = authority.execute(command)
-      expect(result).toStrictEqual(unsupported(command.requestId))
+      expect(result).toStrictEqual({
+        accepted: true,
+        intent: command,
+        requestId: command.requestId,
+      })
       expect(command).toStrictEqual(inputBefore)
       expect(command.expectedRevision).toBe(7)
       expect(result).not.toHaveProperty('revision')
@@ -40,12 +42,13 @@ describe('survival authority boundary', () => {
     }
   })
 
-  it('does not mark an unsupported request as processed or advance a local revision', () => {
+  it('returns replayed commands as intents without advancing a local revision', () => {
     const authority = new SurvivalAuthority()
     const command = { ...header('replayed'), _tag: 'BreakBlock', at: { x: 2, y: 64, z: 0 } } as const
+    const expected = { accepted: true, intent: command, requestId: command.requestId }
 
-    expect(authority.execute(command)).toStrictEqual(unsupported('replayed'))
-    expect(authority.execute(command)).toStrictEqual(unsupported('replayed'))
+    expect(authority.execute(command)).toStrictEqual(expected)
+    expect(authority.execute(command)).toStrictEqual(expected)
     expect(command.expectedRevision).toBe(7)
   })
 
@@ -88,7 +91,7 @@ describe('survival authority boundary', () => {
     })
   })
 
-  it('accepts fixed zero and negative integer boundaries as valid input without applying them', () => {
+  it('returns the fixed valid command as an intent', () => {
     const command: SurvivalCommand = {
       ...header('boundary', 0, 0),
       _tag: 'PlaceBlock',
@@ -97,12 +100,16 @@ describe('survival authority boundary', () => {
       block: 'stone',
     }
 
-    expect(new SurvivalAuthority().execute(command)).toStrictEqual(unsupported('boundary'))
+    expect(new SurvivalAuthority().execute(command)).toStrictEqual({
+      accepted: true,
+      intent: command,
+      requestId: command.requestId,
+    })
     expect(command.expectedRevision).toBe(0)
     expect(command.clientTick).toBe(0)
   })
 
-  it('accepts generated integer coordinates and nonnegative headers before the simulation boundary', () => {
+  it('returns generated valid commands as intents', () => {
     fc.assert(fc.property(
       fc.nat({ max: 1_000_000 }),
       fc.nat({ max: 1_000_000 }),
@@ -119,7 +126,11 @@ describe('survival authority boundary', () => {
           block: 'stone',
         }
 
-        expect(new SurvivalAuthority().execute(command)).toStrictEqual(unsupported(requestId))
+        expect(new SurvivalAuthority().execute(command)).toStrictEqual({
+          accepted: true,
+          intent: command,
+          requestId,
+        })
       },
     ))
   })
