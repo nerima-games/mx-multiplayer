@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { PlayerId } from '../src/domain/protocol/identifiers'
 import {
   RECONNECT_TOKEN_BYTES,
   createReconnectAuth,
@@ -117,6 +118,86 @@ describe('createReconnectAuth', () => {
     const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
     const fakeToken = randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url')
     expect(await auth.rotate('nobody', fakeToken)).toBeUndefined()
+  })
+
+  it('resumes with the stored player even when a different player claim was rejected', async () => {
+    const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
+    const token = definedOrThrow(await auth.issue('alice'))
+
+    expect(await auth.rotate('bob', token)).toBeUndefined()
+    const resumed = await auth.resume(token)
+
+    expect(resumed?.player).toBe(PlayerId.make('alice'))
+    expect(resumed?.token).toBeDefined()
+    expect(resumed?.token).not.toBe(token)
+  })
+
+  it('resume rejects malformed and unknown tokens without persisting a rotation', async () => {
+    const store = inMemoryStore()
+    const auth = await createReconnectAuth(nodeCrypto, store)
+
+    expect(await auth.resume('A'.repeat(43))).toBeUndefined()
+    await auth.issue('alice')
+    expect(await auth.resume('not-a-valid-token')).toBeUndefined()
+    expect(await auth.resume('A'.repeat(43))).toBeUndefined()
+    expect(store.writes.length).toBe(1)
+  })
+
+  it('resume rejects a token that matches more than one stored player', async () => {
+    const token = 'A'.repeat(43)
+    const hash = nodeCrypto.hashHex(token)
+    let writes = 0
+    const store: ReconnectAuthStore = {
+      load: () => Promise.resolve(JSON.stringify({
+        format: 2,
+        players: { alice: { current: hash }, bob: { current: hash } },
+      })),
+      save: () => {
+        writes += 1
+        return Promise.resolve()
+      },
+    }
+    const auth = await createReconnectAuth(nodeCrypto, store)
+
+    expect(await auth.resume(token)).toBeUndefined()
+    expect(writes).toBe(0)
+  })
+
+  it('resume accepts the stored previous token and returns its assigned player', async () => {
+    const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
+    const token = definedOrThrow(await auth.issue('alice'))
+    await auth.rotate('alice', token)
+
+    const resumed = await auth.resume(token)
+
+    expect(resumed?.player).toBe(PlayerId.make('alice'))
+    expect(resumed?.token).toBeDefined()
+    expect(resumed?.token).not.toBe(token)
+  })
+
+  it('does not return an identity or rotate the token when resume persistence fails', async () => {
+    let allowSave = true
+    const contents: { value: string | undefined } = { value: undefined }
+    const store: ReconnectAuthStore = {
+      load: () => Promise.resolve(contents.value),
+      save: (next) => {
+        if (!allowSave) {
+          return Promise.reject(new Error('disk full'))
+        }
+        contents.value = next
+        return Promise.resolve()
+      },
+    }
+    const auth = await createReconnectAuth(nodeCrypto, store)
+    const token = definedOrThrow(await auth.issue('alice'))
+    allowSave = false
+
+    await expect(auth.resume(token)).rejects.toThrow('disk full')
+    allowSave = true
+    const resumed = await auth.resume(token)
+
+    expect(resumed?.player).toBe(PlayerId.make('alice'))
+    expect(resumed?.token).toBeDefined()
   })
 
   it('reverts the in-memory hash on a persistence failure during issue', async () => {

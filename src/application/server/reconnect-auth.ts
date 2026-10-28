@@ -28,6 +28,7 @@
  * had — that contract is documented on `ReconnectAuthStore.save` below, not
  * re-implemented here).
  */
+import { PlayerId } from '../../domain/protocol/identifiers.js'
 import { Schema } from 'effect'
 
 export const RECONNECT_TOKEN_BYTES = 32
@@ -68,6 +69,7 @@ export type ReconnectAuth = {
   readonly issue: (player: string) => Promise<string | undefined>
   readonly reissue: (player: string) => Promise<string | undefined>
   readonly rotate: (player: string, token: string) => Promise<string | undefined>
+  readonly resume: (token: string) => Promise<{ readonly player: PlayerId; readonly token: string } | undefined>
 }
 
 const RECONNECT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u
@@ -242,23 +244,59 @@ type RotationRequest = {
   readonly player: string
 }
 
+type RotationTarget = {
+  readonly expected: ReconnectTokenHashes
+  readonly matchesCurrent: boolean
+  readonly player: string
+}
+
+const matchingOwner = (
+  ctx: ReconnectAuthContext,
+  actual: string,
+  candidate: { readonly player: string; readonly expected: ReconnectTokenHashes },
+): RotationTarget | undefined => {
+  const { matchesCurrent, matchesPrevious } = matchesToken(ctx.crypto, actual, candidate.expected)
+  if (!matchesCurrent && !matchesPrevious) {
+    return undefined
+  }
+  return { expected: candidate.expected, matchesCurrent, player: candidate.player }
+}
+
+const findUniqueTokenOwner = (ctx: ReconnectAuthContext, actual: string): RotationTarget | undefined => {
+  let owner: RotationTarget | undefined = undefined
+  for (const [player, expected] of ctx.hashes) {
+    const match = matchingOwner(ctx, actual, { expected, player })
+    if (match !== undefined) {
+      if (owner !== undefined) {
+        return undefined
+      }
+      owner = match
+    }
+  }
+  return owner
+}
+
+const applyMatchedRotation = async (ctx: ReconnectAuthContext, target: RotationTarget): Promise<string> => {
+  const { hashes: nextHashes, token } = rotatedHashes(ctx.crypto, target.expected, target.matchesCurrent)
+  ctx.hashes.set(target.player, nextHashes)
+  await persistOrRevert(ctx, target.player, target.expected)
+  return token
+}
+
 const applyRotation = async (ctx: ReconnectAuthContext, request: RotationRequest): Promise<string | undefined> => {
   const { matchesCurrent, matchesPrevious } = matchesToken(ctx.crypto, request.actual, request.expected)
   if (!matchesCurrent && !matchesPrevious) {
     return undefined
   }
-  const { hashes: nextHashes, token } = rotatedHashes(ctx.crypto, request.expected, matchesCurrent)
-  ctx.hashes.set(request.player, nextHashes)
-  await persistOrRevert(ctx, request.player, request.expected)
-  return token
+  return applyMatchedRotation(ctx, { expected: request.expected, matchesCurrent, player: request.player })
 }
 
 /**
  * Loads (or starts) the persisted reconnect-token table and returns the
- * issue/reissue/rotate/has interface the transport layer authenticates
+ * issue/reissue/rotate/resume/has interface the transport layer authenticates
  * `PlayerResume` requests against. Mutating operations serialize through one
- * queue per instance, so two concurrent requests for the same player cannot
- * interleave their read-modify-write of the hash table.
+ * queue per instance, so concurrent requests cannot interleave their
+ * read-modify-write of the hash table.
  */
 export const createReconnectAuth = async (crypto: ReconnectAuthCrypto, store: ReconnectAuthStore): Promise<ReconnectAuth> => {
   const hashes = await loadHashes(store)
@@ -294,5 +332,19 @@ export const createReconnectAuth = async (crypto: ReconnectAuthCrypto, store: Re
       return applyRotation(ctx, { actual, expected, player })
     })
 
-  return { has, issue, reissue, rotate }
+  const resume = (token: string): Promise<{ readonly player: PlayerId; readonly token: string } | undefined> =>
+    mutate(queue, async () => {
+      if (!isWellFormedToken(token)) {
+        return undefined
+      }
+      const actual = crypto.hashHex(token)
+      const target = findUniqueTokenOwner(ctx, actual)
+      if (target === undefined) {
+        return undefined
+      }
+      const rotated = await applyMatchedRotation(ctx, target)
+      return { player: PlayerId.make(target.player), token: rotated }
+    })
+
+  return { has, issue, reissue, resume, rotate }
 }
