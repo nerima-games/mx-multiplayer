@@ -15,12 +15,13 @@ import { CommandId, PlayerId, Revision, WorldId } from '../protocol/identifiers.
 import { Schema } from 'effect'
 
 /** Anvils have 36 slots; the renamed item always sits in the first (input) slot in the reference implementation's layout. */
+const ZERO = 0
 const ANVIL_SLOT_COUNT = 36
 const ANVIL_MAX_NAME_LENGTH = 50
 
 export const AnvilSlotIndex: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isGreaterThanOrEqualTo(0)),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
   Schema.check(Schema.isLessThan(ANVIL_SLOT_COUNT)),
 )
 export type AnvilSlotIndex = typeof AnvilSlotIndex.Type

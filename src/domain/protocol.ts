@@ -88,6 +88,7 @@ export const PROTOCOL_VERSION = 8
 
 /** The floor every free-text identifier and content string in this protocol shares: not blank. */
 const MIN_NON_EMPTY_LENGTH = 1
+const ZERO = 0
 
 // ---------------------------------------------------------------------------
 // Payload shapes
@@ -124,7 +125,7 @@ export const Orientation: Schema.Struct<{
   pitchRadians: typeof Schema.Number
   yawRadians: typeof Schema.Number
 }> = Schema.Struct({
-  pitchRadians: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: -QUARTER_TURN_RADIANS, maximum: QUARTER_TURN_RADIANS }))),
+  pitchRadians: Schema.Number.pipe(Schema.check(Schema.isBetween({ maximum: QUARTER_TURN_RADIANS, minimum: -QUARTER_TURN_RADIANS }))),
   yawRadians: Schema.Number.pipe(Schema.check(Schema.isFinite())),
 })
 export type Orientation = typeof Orientation.Type
@@ -254,13 +255,13 @@ export type BlockMutationSnapshot = typeof BlockMutationSnapshot.Type
 export const PoweredRailSnapshot: Schema.Struct<{ at: typeof BlockPos; powered: typeof Schema.Boolean }> = Schema.Struct({
   at: BlockPos,
   powered: Schema.Boolean,
-}).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+})
 export type PoweredRailSnapshot = typeof PoweredRailSnapshot.Type
 
 export const LeverSnapshot: Schema.Struct<{ active: typeof Schema.Boolean; at: typeof BlockPos }> = Schema.Struct({
   active: Schema.Boolean,
   at: BlockPos,
-}).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+})
 export type LeverSnapshot = typeof LeverSnapshot.Type
 
 /**
@@ -286,7 +287,7 @@ export const WorldSnapshot: Schema.TaggedStruct<
   levers: Schema.Array(LeverSnapshot),
   players: Schema.Array(PlayerSnapshot),
   poweredRails: Schema.Array(PoweredRailSnapshot),
-  revision: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  revision: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   seed: Schema.Number.pipe(Schema.check(Schema.isInt())),
   world: WorldId,
 })
@@ -314,7 +315,7 @@ export const BlockMutationRejected: Schema.TaggedStruct<
   operation: Schema.Literals(['place', 'break']),
   player: PlayerId,
   reason: BlockMutationRejectionReason,
-  revision: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  revision: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   world: WorldId,
 })
 export type BlockMutationRejected = typeof BlockMutationRejected.Type
@@ -327,8 +328,8 @@ const ItemDurability: Schema.Struct<{
   current: typeof Schema.Number
   max: typeof Schema.Number
 }> = Schema.Struct({
-  current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(0))),
+  current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
 })
 
 const ItemStack: Schema.Struct<{
@@ -341,11 +342,11 @@ const ItemStack: Schema.Struct<{
   >
   item: typeof Schema.String
 }> = Schema.Struct({
-  count: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(0))),
+  count: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
   durability: Schema.optional(
     Schema.Struct({
-      current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-      max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(0))),
+      current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+      max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
     }),
   ),
   item: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
@@ -383,7 +384,7 @@ const InventoryState: Schema.Struct<{
   // Accepted for protocol-v1 peers that sent durability out-of-band.
   durability: Schema.optional(Schema.Array(Schema.NullOr(ItemDurability))),
   equipment: Schema.optional(EquipmentState),
-  selectedSlot: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  selectedSlot: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   slots: Schema.Array(Schema.NullOr(ItemStack)),
 })
 
@@ -392,16 +393,16 @@ const VitalsState: Schema.Struct<{
   health: typeof Schema.Number
   hunger: typeof Schema.Number
 }> = Schema.Struct({
-  experience: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  hunger: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  experience: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  hunger: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
 })
 
 const TimeWeatherState: Schema.Struct<{
   timeOfDay: typeof Schema.Number
   weather: Schema.Literals<readonly ['clear', 'rain', 'thunder']>
 }> = Schema.Struct({
-  timeOfDay: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  timeOfDay: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   weather: Schema.Literals(['clear', 'rain', 'thunder']),
 })
 
@@ -432,8 +433,8 @@ const FurnaceState: Schema.Struct<{
   input: Schema.NullOr<typeof ItemStack>
   output: Schema.NullOr<typeof ItemStack>
 }> = Schema.Struct({
-  burnTicksRemaining: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  cookTicks: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  burnTicksRemaining: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  cookTicks: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   fuel: Schema.NullOr(ItemStack),
   furnaceId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
   input: Schema.NullOr(ItemStack),
@@ -455,10 +456,10 @@ const VillagerTradeState: Schema.Struct<{
   offers: Schema.Array(
     Schema.Struct({
       input: Schema.Array(ItemStack),
-      maxUses: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(0))),
+      maxUses: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
       offerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
       output: ItemStack,
-      uses: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+      uses: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
     }),
   ),
   villagerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
@@ -474,11 +475,11 @@ const MobState: Schema.Struct<{
   provoked: typeof Schema.Boolean
   tamed: Schema.optional<typeof Schema.Boolean>
 }> = Schema.Struct({
-  ageTicks: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
-  attackCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  ageTicks: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
+  attackCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   /** Present only for creepers struck by server-authoritative lightning. */
   charged: Schema.optional(Schema.Boolean),
-  motionPhase: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  motionPhase: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   named: Schema.optional(Schema.Boolean),
   persistent: Schema.optional(Schema.Boolean),
   provoked: Schema.Boolean,
@@ -499,8 +500,8 @@ export const LivingEntityState: Schema.TaggedStruct<
   at: Vec3,
   entityId: EntityId,
   entityType: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
-  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(0))),
-  maxHealth: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(0))),
+  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
+  maxHealth: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   mobState: Schema.optional(MobState),
 })
 export const ItemDropEntityState: Schema.TaggedStruct<
@@ -512,7 +513,7 @@ export const ItemDropEntityState: Schema.TaggedStruct<
     stack: typeof ItemStack
   }
 > = Schema.TaggedStruct('item-drop', {
-  ageTicks: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
+  ageTicks: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
   at: Vec3,
   entityId: EntityId,
   stack: ItemStack,
@@ -536,9 +537,9 @@ export const ArrowEntityState: Schema.TaggedStruct<
     velocity: typeof Vec3
   }
 > = Schema.TaggedStruct('arrow', {
-  ageTicks: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  ageTicks: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   at: Vec3,
-  damage: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  damage: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   entityId: EntityId,
   owner: NullablePlayerId,
   velocity: Vec3,
@@ -554,7 +555,7 @@ export const PrimedTntEntityState: Schema.TaggedStruct<
   }
 > = Schema.TaggedStruct('primed-tnt', {
   at: Vec3,
-  burnedSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  burnedSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   entityId: EntityId,
   owner: NullablePlayerId,
 })
@@ -632,7 +633,7 @@ export const RealmTransferSnapshot: Schema.Struct<
   fromWorld: WorldId,
   player: PlayerId,
   worldSnapshot: WorldSnapshot,
-}).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+})
 export type RealmTransferSnapshot = typeof RealmTransferSnapshot.Type
 
 const DeltaHeader: { revision: typeof Revision; world: typeof WorldId } = { revision: Revision, world: WorldId }
@@ -667,7 +668,7 @@ const PlayerFishingState: Schema.Union<
   Schema.Struct({ phase: Schema.Literal('waiting'), result: Schema.Literal('cast') }),
   Schema.Struct({ phase: Schema.Literal('bite'), result: Schema.Literal('bite') }),
   Schema.Struct({ phase: Schema.Literal('escaped'), result: Schema.Literal('escaped') }),
-]).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+])
 export const PlayerFishingDelta: Schema.TaggedStruct<
   'PlayerFishingDelta',
   typeof DeltaHeader & { player: typeof PlayerId; state: typeof PlayerFishingState }
@@ -792,14 +793,13 @@ const CommandHeader: {
 
 export const CommandSlotIndex: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isGreaterThanOrEqualTo(0)),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
 )
 export const CommandItemCount: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isGreaterThan(0)),
+  Schema.check(Schema.isGreaterThan(ZERO)),
 )
 
-const strictAction = { parseOptions: { onExcessProperty: 'error' as const } }
 
 export const PlayerInventoryAction: Schema.Union<
   readonly [
@@ -834,7 +834,7 @@ export const PlayerInventoryAction: Schema.Union<
     destination: Schema.optional(CommandSlotIndex),
     equipmentSlot: EquipmentSlot,
   }),
-]).pipe(Schema.annotate(strictAction))
+])
 export type PlayerInventoryAction = typeof PlayerInventoryAction.Type
 
 export const WorldTimeWeatherAction: Schema.Union<
@@ -843,9 +843,9 @@ export const WorldTimeWeatherAction: Schema.Union<
     Schema.TaggedStruct<'set-weather', { weather: Schema.Literals<readonly ['clear', 'rain', 'thunder']> }>,
   ]
 > = Schema.Union([
-  Schema.TaggedStruct('set-time', { timeOfDay: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))) }),
+  Schema.TaggedStruct('set-time', { timeOfDay: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))) }),
   Schema.TaggedStruct('set-weather', { weather: Schema.Literals(['clear', 'rain', 'thunder']) }),
-]).pipe(Schema.annotate(strictAction))
+])
 export type WorldTimeWeatherAction = typeof WorldTimeWeatherAction.Type
 
 export const PlayerSlotEndpoint: Schema.TaggedStruct<'player-slot', { slot: typeof CommandSlotIndex }> = Schema.TaggedStruct(
@@ -877,7 +877,7 @@ export const ContainerAction: Schema.Union<
     source: ContainerSlotEndpoint,
   }),
   Schema.TaggedStruct('close', {}),
-]).pipe(Schema.annotate(strictAction))
+])
 export type ContainerAction = typeof ContainerAction.Type
 
 export const FurnaceSlotEndpoint: Schema.TaggedStruct<'furnace-slot', { slot: Schema.Literals<readonly ['input', 'fuel']> }> =
@@ -912,7 +912,7 @@ export const FurnaceAction: Schema.Union<
     destination: PlayerSlotEndpoint,
     source: FurnaceOutputEndpoint,
   }),
-]).pipe(Schema.annotate(strictAction))
+])
 export type FurnaceAction = typeof FurnaceAction.Type
 
 export const PlayerInventoryCommand: Schema.TaggedStruct<
@@ -942,7 +942,7 @@ export const PlayerVitalsCommand: Schema.TaggedStruct<
     Schema.Literal('respawn'),
     Schema.TaggedStruct('activity', {
       activity: Schema.Literals(['walk', 'swim', 'jump', 'attack', 'mine']),
-      amount: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(0)), Schema.check(Schema.isLessThanOrEqualTo(MAX_VITALS_ACTIVITY_AMOUNT))),
+      amount: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(MAX_VITALS_ACTIVITY_AMOUNT))),
     }),
     Schema.TaggedStruct('eat', { item: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))) }),
   ]),
@@ -1018,14 +1018,14 @@ export const EndPortalUseCommand: Schema.Struct<
 > = Schema.TaggedStruct('EndPortalUseCommand', {
   ...CommandHeader,
   portal: BlockPos,
-}).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+})
 export type EndPortalUseCommand = typeof EndPortalUseCommand.Type
 
 /** The server validates the held Eye and derives the stronghold from the world seed. */
 export const ThrowEyeOfEnderCommand: Schema.Struct<{ _tag: Schema.tag<'ThrowEyeOfEnderCommand'> } & typeof CommandHeader> =
   Schema.TaggedStruct('ThrowEyeOfEnderCommand', {
     ...CommandHeader,
-  }).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+  })
 export type ThrowEyeOfEnderCommand = typeof ThrowEyeOfEnderCommand.Type
 
 /** The server validates that this is an empty generated stronghold frame. */
@@ -1034,7 +1034,7 @@ export const InsertEyeIntoEndPortalFrameCommand: Schema.Struct<
 > = Schema.TaggedStruct('InsertEyeIntoEndPortalFrameCommand', {
   ...CommandHeader,
   frame: BlockPos,
-}).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+})
 export type InsertEyeIntoEndPortalFrameCommand = typeof InsertEyeIntoEndPortalFrameCommand.Type
 
 /** A client requests Nether portal use; destination and spawn are server authority. */
@@ -1043,7 +1043,7 @@ export const NetherPortalUseCommand: Schema.Struct<
 > = Schema.TaggedStruct('NetherPortalUseCommand', {
   ...CommandHeader,
   portal: BlockPos,
-}).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+})
 export type NetherPortalUseCommand = typeof NetherPortalUseCommand.Type
 
 /** A client requests a lever toggle; the server owns its active state. */
@@ -1052,7 +1052,7 @@ export const ToggleLeverCommand: Schema.Struct<
 > = Schema.TaggedStruct('ToggleLeverCommand', {
   ...CommandHeader,
   lever: BlockPos,
-}).pipe(Schema.annotate({ parseOptions: { onExcessProperty: 'error' as const } }))
+})
 export type ToggleLeverCommand = typeof ToggleLeverCommand.Type
 
 export const EnderPearlCommand: Schema.TaggedStruct<'EnderPearlCommand', typeof CommandHeader> = Schema.TaggedStruct(
@@ -1089,7 +1089,7 @@ export const VehicleCommand: Schema.TaggedStruct<
   action: Schema.Union([
     Schema.Literals(['mount', 'dismount']),
     Schema.TaggedStruct('move', { direction: Schema.Literals(['forward', 'backward']) }),
-  ]).pipe(Schema.annotate(strictAction)),
+  ]),
   entityId: EntityId,
 })
 export const AuthoritativeCommand: Schema.Union<

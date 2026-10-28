@@ -36,7 +36,6 @@
  * That adapter owns the projection to mc-sim and mx-gameplay; these `Ref`s keep
  * the transport boundary explicit for the preview and its contract tests.
  */
-import { Effect, Layer, Queue, Ref, Result } from 'effect'
 import {
   type ConnectionEvent,
   type ConnectionState,
@@ -44,6 +43,7 @@ import {
   initialConnectionState,
   transition,
 } from '../domain/connection.js'
+import { Effect, Layer, Queue, Ref, Result } from 'effect'
 import type { GameModule, StageRegistration } from '@nerima-games/mc-kernel'
 import { MULTIPLAYER_STAGE_IDS, UPSTREAM_STAGE_IDS } from './stage-ids.js'
 import { TransportPort, type TransportService } from '../domain/transport.js'

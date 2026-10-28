@@ -215,15 +215,15 @@ try {
       throw new Error('Published package is missing exports: ' + missing.join(', '));
     }
 
-    const { Effect } = await import('effect');
+    const { Effect, Result } = await import('effect');
     const player = mod.PlayerId.make('package-probe-player');
     const message = mod.PlayerLeave.make({ player });
     const encoded = mod.encodeFrame(message);
-    if (encoded._tag !== 'Right') {
+    if (Result.isFailure(encoded)) {
       throw new Error('encodeFrame rejected a message this build should speak');
     }
-    const decoded = mod.decodeFrame(encoded.right);
-    if (decoded._tag !== 'Right' || JSON.stringify(decoded.right) !== JSON.stringify(message)) {
+    const decoded = mod.decodeFrame(Result.getOrThrow(encoded));
+    if (Result.isFailure(decoded) || JSON.stringify(Result.getOrThrow(decoded)) !== JSON.stringify(message)) {
       throw new Error('decodeFrame(encodeFrame(m)) did not round-trip');
     }
 
@@ -299,6 +299,7 @@ void nextState
         compilerOptions: {
           strict: true,
           target: "ES2022",
+          lib: ["ES2022", "DOM", "DOM.Iterable", "ESNext.Disposable"],
           module: "NodeNext",
           moduleResolution: "NodeNext",
           noEmit: true,

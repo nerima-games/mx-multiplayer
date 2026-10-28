@@ -10,6 +10,7 @@
 import { Schema } from 'effect'
 
 /** The floor every branded/free-text identifier and content string in this protocol shares: not blank. */
+const ZERO = 0
 const MIN_NON_EMPTY_LENGTH = 1
 
 /** A peer's stable identity for the lifetime of a session. */
@@ -49,7 +50,7 @@ export type EntityId = typeof EntityId.Type
 
 export const Revision: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isGreaterThanOrEqualTo(0)),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
 )
 export type Revision = typeof Revision.Type
 

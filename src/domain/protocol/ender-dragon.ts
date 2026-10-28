@@ -21,9 +21,9 @@ import { CommandId, PlayerId, Revision } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `ENDER_DRAGON_MAX_HEALTH`. Not imported — see the file header. */
+const ZERO = 0
 const ENDER_DRAGON_MAX_HEALTH = 200
 
-const strictShape = { parseOptions: { onExcessProperty: 'error' as const } }
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `EnderDragonPhaseSchema`. Not imported — see the file header. */
 export const EnderDragonPhase: Schema.Literals<readonly ['circling', 'perching', 'charging', 'dead']> = Schema.Literals([
@@ -41,11 +41,11 @@ export const EnderDragonEncounterSnapshot: Schema.Struct<{
   phaseTimerSecs: typeof Schema.Number
   rewardEmitted: typeof Schema.Boolean
 }> = Schema.Struct({
-  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0)), Schema.check(Schema.isLessThanOrEqualTo(ENDER_DRAGON_MAX_HEALTH))),
+  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(ENDER_DRAGON_MAX_HEALTH))),
   phase: EnderDragonPhase,
-  phaseTimerSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  phaseTimerSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   rewardEmitted: Schema.Boolean,
-}).pipe(Schema.annotate(strictShape))
+})
 export type EnderDragonEncounterSnapshot = typeof EnderDragonEncounterSnapshot.Type
 
 export const DamageEnderDragonCommand: Schema.TaggedStruct<

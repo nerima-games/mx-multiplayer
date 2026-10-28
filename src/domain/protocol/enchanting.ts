@@ -12,6 +12,7 @@
 import { CommandId, PlayerId, Revision, WorldId } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
+const ZERO = 0
 const MIN_ITEM_NAME_LENGTH = 1
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `ENCHANTMENT_IDS`. Not imported — see the file header. */
@@ -20,7 +21,6 @@ export const EnchantmentId: Schema.Literals<
 > = Schema.Literals(['protection', 'sharpness', 'efficiency', 'unbreaking', 'fortune', 'power'])
 export type EnchantmentId = typeof EnchantmentId.Type
 
-const strictShape = { parseOptions: { onExcessProperty: 'error' as const } }
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `Enchantment`. Not imported — see the file header. */
 export const Enchantment: Schema.Struct<{
@@ -28,8 +28,8 @@ export const Enchantment: Schema.Struct<{
   level: typeof Schema.Number
 }> = Schema.Struct({
   id: EnchantmentId,
-  level: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(0))),
-}).pipe(Schema.annotate(strictShape))
+  level: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+})
 export type Enchantment = typeof Enchantment.Type
 
 /** Mirrors `@nerima-games/mc-sim`'s `Durability`, the same shape `protocol.ts`'s `ItemStack.durability` already mirrors. */
@@ -37,9 +37,9 @@ const EnchantedItemDurability: Schema.Struct<{
   current: typeof Schema.Number
   max: typeof Schema.Number
 }> = Schema.Struct({
-  current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(0))),
-}).pipe(Schema.annotate(strictShape))
+  current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+})
 
 /**
  * Mirrors `@nerima-games/mx-gameplay`'s `EnchantedItem`. Not imported — see
@@ -54,14 +54,14 @@ export const EnchantedItem: Schema.Struct<{
   durability: Schema.NullOr(EnchantedItemDurability),
   enchantments: Schema.Array(Enchantment),
   item: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_ITEM_NAME_LENGTH))),
-}).pipe(Schema.annotate(strictShape))
+})
 export type EnchantedItem = typeof EnchantedItem.Type
 
 const ENCHANTING_SLOT_COUNT = 36
 
 export const EnchantingSlotIndex: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isGreaterThanOrEqualTo(0)),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
   Schema.check(Schema.isLessThan(ENCHANTING_SLOT_COUNT)),
 )
 export type EnchantingSlotIndex = typeof EnchantingSlotIndex.Type
@@ -169,7 +169,7 @@ export const PlayerEnchantmentsDelta: Schema.TaggedStruct<
   items: Schema.Array(EnchantedSlotEntry),
   player: PlayerId,
   revision: Revision,
-  seed: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  seed: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   world: WorldId,
 })
 export type PlayerEnchantmentsDelta = typeof PlayerEnchantmentsDelta.Type

@@ -54,6 +54,7 @@
  */
 import type { AuthoritativeCommand, AuthoritativeCommandResult, CommandId, PlayerId } from '../../domain/protocol.js'
 import { AuthoritativeSession, type CommandDecision } from '../../domain/authoritative-session.js'
+import { Brand, Effect, Schema } from 'effect'
 import {
   type EntityManagerApi,
   type HotbarServiceApi,
@@ -68,7 +69,6 @@ import {
   OccupantId as toSimOccupantId,
   VehicleId as toSimVehicleId,
 } from '@nerima-games/mc-sim'
-import { Brand, Effect, Schema } from 'effect'
 
 /**
  * What a host must supply for the four command families this file writes

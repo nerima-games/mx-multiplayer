@@ -47,18 +47,18 @@ export const PotionType: Schema.Literals<readonly ['awkward', 'speed', 'poison',
 ])
 export type PotionType = typeof PotionType.Type
 
-const strictShape = { parseOptions: { onExcessProperty: 'error' as const } }
+const ZERO = 0
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `BrewingBottle`. Not imported — see the file header. */
 export const BrewingBottle: Schema.Union<readonly [Schema.Literal<'water_bottle'>, Schema.Struct<{ potion: typeof PotionType }>]> =
-  Schema.Union([Schema.Literal('water_bottle'), Schema.Struct({ potion: PotionType }).pipe(Schema.annotate(strictShape))])
+  Schema.Union([Schema.Literal('water_bottle'), Schema.Struct({ potion: PotionType })])
 export type BrewingBottle = typeof BrewingBottle.Type
 
 const BrewingProgress: Schema.Struct<{ output: typeof PotionType; remainingSecs: typeof Schema.Number }> =
   Schema.Struct({
     output: PotionType,
-    remainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  }).pipe(Schema.annotate(strictShape))
+    remainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  })
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `BrewingStandState`. Not imported — see the file header. */
 export const BrewingStandState: Schema.Struct<{
@@ -69,7 +69,7 @@ export const BrewingStandState: Schema.Struct<{
 }> = Schema.Struct({
   bottle: Schema.optional(BrewingBottle),
   brewing: Schema.optional(BrewingProgress),
-  fuelUnits: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  fuelUnits: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   ingredient: Schema.optional(BrewingIngredient),
 })
 export type BrewingStandState = typeof BrewingStandState.Type
@@ -91,9 +91,9 @@ export const ActiveStatusEffect: Schema.Struct<{
   remainingSecs: typeof Schema.Number
   type: typeof StatusEffectType
 }> = Schema.Struct({
-  amplifier: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
-  pulseClockSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  remainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(0))),
+  amplifier: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
+  pulseClockSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  remainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   type: StatusEffectType,
 })
 export type ActiveStatusEffect = typeof ActiveStatusEffect.Type
@@ -108,7 +108,7 @@ const BREWING_SLOT_COUNT = 36
 
 export const BrewingSlotIndex: typeof Schema.Number = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
-  Schema.check(Schema.isGreaterThanOrEqualTo(0)),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
   Schema.check(Schema.isLessThan(BREWING_SLOT_COUNT)),
 )
 export type BrewingSlotIndex = typeof BrewingSlotIndex.Type
@@ -125,7 +125,7 @@ export const BrewingAction: Schema.Union<
   Schema.TaggedStruct('insert', { slot: BrewingSlotIndex }),
   Schema.TaggedStruct('collect', {}),
   Schema.TaggedStruct('drink', {}),
-]).pipe(Schema.annotate(strictShape))
+])
 export type BrewingAction = typeof BrewingAction.Type
 
 export const BrewingCommand: Schema.TaggedStruct<

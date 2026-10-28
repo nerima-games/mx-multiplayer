@@ -222,6 +222,7 @@ const encoded = (message: NetworkMessage): string => Result.getOrThrow(encodeFra
 /** The ProtocolError a decode produced, or undefined if it succeeded. */
 const failure = (result: Result.Result<unknown, ProtocolError>): ProtocolError | undefined =>
   Option.getOrUndefined(Result.getFailure(result))
+const STRICT_PARSE_OPTIONS = { onExcessProperty: 'error' as const }
 
 describe('frame round trip', () => {
   // REGRESSION: "every message survives encode -> text -> decode unchanged".
@@ -864,9 +865,9 @@ describe('malformed input', () => {
     }),
   )
 
-  it('applies action-level excess-property rejection without decoder options', () => {
+  it('applies action-level excess-property rejection with strict parse options', () => {
     expect(() =>
-      Schema.decodeUnknownSync(WorldTimeWeatherAction)({
+      Schema.decodeUnknownSync(WorldTimeWeatherAction, STRICT_PARSE_OPTIONS)({
         _tag: 'set-time',
         timeOfDay: 6_000,
         weather: 'rain',
@@ -874,21 +875,21 @@ describe('malformed input', () => {
     ).toThrow()
   })
 
-  it('rejects client-selected portal transfer state without decoder options', () => {
+  it('rejects client-selected portal transfer state with strict parse options', () => {
     expect(() =>
-      Schema.decodeUnknownSync(EndPortalUseCommand)({
+      Schema.decodeUnknownSync(EndPortalUseCommand, STRICT_PARSE_OPTIONS)({
         ...SAMPLES.EndPortalUseCommand,
         destinationWorld: end,
       }),
     ).toThrow()
     expect(() =>
-      Schema.decodeUnknownSync(NetherPortalUseCommand)({
+      Schema.decodeUnknownSync(NetherPortalUseCommand, STRICT_PARSE_OPTIONS)({
         ...SAMPLES.NetherPortalUseCommand,
         destinationWorld: end,
       }),
     ).toThrow()
     expect(() =>
-      Schema.decodeUnknownSync(RealmTransferSnapshot)({
+      Schema.decodeUnknownSync(RealmTransferSnapshot, STRICT_PARSE_OPTIONS)({
         ...SAMPLES.RealmTransferSnapshot,
         spawn: { x: 0, y: 64, z: 0 },
       }),

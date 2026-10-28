@@ -31,7 +31,6 @@ export const CraftingGridSize: Schema.Literals<readonly [typeof POCKET_GRID_SIZE
 ])
 export type CraftingGridSize = typeof CraftingGridSize.Type
 
-const strictGrid = { parseOptions: { onExcessProperty: 'error' as const } }
 
 /**
  * A square crafting grid: `cells.length` must equal `width * height`, read
@@ -46,7 +45,6 @@ export const CraftingGrid: Schema.Struct<{ cells: Schema.$Array<Schema.NullOr<ty
   width: CraftingGridSize,
 }).pipe(
   Schema.check(Schema.makeFilter((grid) => grid.cells.length === grid.width * grid.height || 'cells.length must equal width * height')),
-  Schema.annotate(strictGrid),
 )
 export type CraftingGrid = typeof CraftingGrid.Type
 

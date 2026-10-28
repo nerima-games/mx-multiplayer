@@ -31,8 +31,8 @@
  * `NaN` and `Infinity` into `null`, so an unconstrained number would break the
  * round trip at the far end, where the frame is no longer available to debug.
  */
-import { Result, Schema } from 'effect'
 import { Frame, NetworkMessage, type NetworkMessage as NetworkMessageType, PROTOCOL_VERSION } from './protocol.js'
+import { Result, Schema } from 'effect'
 import { ProtocolError } from './errors.js'
 
 /**
@@ -43,6 +43,17 @@ export type WireText = string
 
 /** `Frame` viewed through JSON: decoding takes text, encoding produces text. */
 const WireFrame = Schema.fromJsonString(Frame)
+const strictParseOptions = { onExcessProperty: 'error' as const }
+const strictRootMessageTags = new Set([
+  'EndPortalUseCommand',
+  'InsertEyeIntoEndPortalFrameCommand',
+  'NetherPortalUseCommand',
+  'RealmTransferSnapshot',
+  'ThrowEyeOfEnderCommand',
+  'ToggleLeverCommand',
+])
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /** The stable envelope decoded before inspecting a version-specific message. */
 const WireEnvelope = Schema.fromJsonString(
@@ -54,8 +65,28 @@ const WireEnvelope = Schema.fromJsonString(
 )
 
 const decodeWireEnvelope = Schema.decodeUnknownResult(WireEnvelope)
-const decodeNetworkMessage = Schema.decodeUnknownResult(NetworkMessage)
-const encodeWireFrame = Schema.encodeUnknownResult(WireFrame)
+const decodeNetworkMessageIgnoringUnknownRootFields = Schema.decodeUnknownResult(NetworkMessage)
+const decodeNetworkMessageStrict = Schema.decodeUnknownResult(NetworkMessage, strictParseOptions)
+const encodeWireFrame = Schema.encodeUnknownResult(WireFrame, strictParseOptions)
+
+const validateStrictMessage = (input: unknown, value: NetworkMessageType) => {
+  if (!isRecord(input) || strictRootMessageTags.has(value._tag)) {
+    return decodeNetworkMessageStrict(input)
+  }
+
+  // Root fields stay open for forward-compatible messages; nested object shapes are versioned.
+  const strictInput = Object.fromEntries(Object.entries(input).filter(([key]) => Object.hasOwn(value, key)))
+  return decodeNetworkMessageStrict(strictInput)
+}
+
+const decodeNetworkMessage = (input: unknown) => {
+  const decoded = decodeNetworkMessageIgnoringUnknownRootFields(input)
+  if (Result.isFailure(decoded)) {
+    return decoded
+  }
+
+  return validateStrictMessage(input, Result.getOrThrow(decoded))
+}
 
 /**
  * Encode a message at an explicit protocol version.

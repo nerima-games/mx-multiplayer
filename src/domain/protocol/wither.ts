@@ -22,8 +22,8 @@
 import { CommandId, PlayerId, Revision } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
+const ZERO = 0
 const MIN_NON_EMPTY_LENGTH = 1
-const strictShape = { parseOptions: { onExcessProperty: 'error' as const } }
 
 /** A continuous position, the same shape as `protocol.ts`'s `Vec3` (re-declared, not imported — see the file header). */
 const WitherPosition: Schema.Struct<{
@@ -70,12 +70,12 @@ const WitherState: Schema.Struct<{
   phase: typeof WitherPhase
   velocity: typeof WitherPosition
 }> = Schema.Struct({
-  chargeRemainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  chargeRemainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   feetPosition: WitherPosition,
-  healthPoints: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0)), Schema.check(Schema.isLessThanOrEqualTo(WITHER_MAX_HEALTH))),
+  healthPoints: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(WITHER_MAX_HEALTH))),
   phase: WitherPhase,
   velocity: WitherPosition,
-}).pipe(Schema.annotate(strictShape))
+})
 
 /** Mirrors `@nerima-games/mc-sim`'s `WitherSkullProjectileDescriptor`. Not imported — see the file header. */
 const WitherSkullDescriptor: Schema.Struct<{
@@ -88,11 +88,11 @@ const WitherSkullDescriptor: Schema.Struct<{
 }> = Schema.Struct({
   destroysResistantBlocks: Schema.Boolean,
   direction: WitherPosition,
-  explosivePower: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(0))),
+  explosivePower: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   origin: WitherPosition,
-  speed: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(0))),
+  speed: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   variant: WitherSkullVariant,
-}).pipe(Schema.annotate(strictShape))
+})
 
 const WitherEntryId: typeof Schema.String = Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH)))
 const WitherDimension: typeof Schema.String = Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH)))
@@ -108,11 +108,11 @@ const RuntimeWitherEntry: Schema.Struct<{
 }> = Schema.Struct({
   dimension: WitherDimension,
   id: WitherEntryId,
-  meleeCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  rangedCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  shotsFired: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  meleeCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  rangedCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  shotsFired: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   state: WitherState,
-}).pipe(Schema.annotate(strictShape))
+})
 
 /** Mirrors the composing app's `RuntimeWitherSkull`. Not imported — see the file header. */
 const RuntimeWitherSkullEntry: Schema.Struct<{
@@ -123,13 +123,13 @@ const RuntimeWitherSkullEntry: Schema.Struct<{
   ownerId: typeof WitherEntryId
   position: typeof WitherPosition
 }> = Schema.Struct({
-  ageSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  ageSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   descriptor: WitherSkullDescriptor,
   dimension: WitherDimension,
   id: WitherEntryId,
   ownerId: WitherEntryId,
   position: WitherPosition,
-}).pipe(Schema.annotate(strictShape))
+})
 
 /** Mirrors the composing app's `WitherRuntimeSnapshot`. Not imported — see the file header. */
 export const WitherRuntimeSnapshot: Schema.Struct<{
@@ -138,11 +138,11 @@ export const WitherRuntimeSnapshot: Schema.Struct<{
   skulls: Schema.$Array<typeof RuntimeWitherSkullEntry>
   withers: Schema.$Array<typeof RuntimeWitherEntry>
 }> = Schema.Struct({
-  nextSkullId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-  nextWitherId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  nextSkullId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  nextWitherId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   skulls: Schema.Array(RuntimeWitherSkullEntry),
   withers: Schema.Array(RuntimeWitherEntry),
-}).pipe(Schema.annotate(strictShape))
+})
 export type WitherRuntimeSnapshot = typeof WitherRuntimeSnapshot.Type
 
 export const SummonWitherCommand: Schema.TaggedStruct<
@@ -174,7 +174,7 @@ export const DamageWitherCommand: Schema.TaggedStruct<
     witherId: typeof WitherEntryId
   }
 > = Schema.TaggedStruct('DamageWitherCommand', {
-  amount: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(0))),
+  amount: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   commandId: CommandId,
   expectedRevision: Revision,
   kind: WitherDamageKind,
