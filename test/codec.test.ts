@@ -1943,6 +1943,9 @@ describe('registered C4 owner messages', () => {
         ...OWNER_REGISTRY_LIMITS,
         ownerStates: [{ ...ownerBounds, ownerId: invalidOwnerId }],
       })
+      const invalidRegistrationOwnerId = createReplicatedOwnerRegistry([invalidOwnerRegistration], {
+        ...OWNER_REGISTRY_LIMITS,
+      })
       const invalidDepthLimit = createReplicatedOwnerRegistry([OWNER_REGISTRATION], {
         ...OWNER_REGISTRY_LIMITS,
         maxDepth: GLOBAL_JSON_DEPTH_LIMIT + 1,
@@ -1967,6 +1970,7 @@ describe('registered C4 owner messages', () => {
       for (const invalidRegistry of [
         invalidCountLimit,
         invalidOwnerIdentity,
+        invalidRegistrationOwnerId,
         invalidDepthLimit,
         invalidOwnerStateBound,
         duplicateOwnerStateBound,
