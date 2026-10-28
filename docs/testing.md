@@ -188,7 +188,7 @@ DN-2 / DN-3 / DN-5 / DN-6 / DN-7 とラウンドトリップの 6 つ。うち 3
 **2 つはこれまで assertion が無かった**:
 
 - 「**不正値は送信側で落ちる**」—— DN-5 の主張（「失敗するのは送信側の `encodeFrame` であり、
-  原因が手元にある」）が成り立つのは `Schema.encodeEither` が encode 方向でも refinement を
+  原因が手元にある」）が成り立つのは `Schema.encodeUnknownResult` が encode 方向でも refinement を
   検査するからで、それは**スキーマの性質ではなくコーデックの性質**である。
   ラウンドトリップテストからは見えない。
 - 「**知らないフィールドは無視される**」—— DN-6 の前方互換の半分。

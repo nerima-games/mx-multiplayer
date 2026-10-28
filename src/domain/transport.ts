@@ -29,8 +29,44 @@
 import { type ConnectionState, canSend } from './connection.js'
 import { Context, Effect, Layer, Queue } from 'effect'
 import { type ProtocolError, TransportError } from './errors.js'
-import { type WireText, decodeFrame, encodeFrame } from './codec.js'
+import { type WireText, decodeFrame, encodeFrame, wireFrameByteLength } from './codec.js'
 import type { NetworkMessage } from './protocol.js'
+
+const INBOUND_QUEUE_CAPACITY = 80
+const INBOUND_QUEUE_BYTE_CAPACITY = 3_486_960
+const FIRST_QUEUE_INDEX = 0
+const INCOMING_FRAME_COUNT = 1
+
+type InboundQueueAccounting = {
+  readonly frameBytes: Array<number>
+  queuedBytes: number
+}
+
+const releaseTakenFrames = (accounting: InboundQueueAccounting, queuedFrames: number): void => {
+  if (accounting.frameBytes.length <= queuedFrames) {
+    return
+  }
+  const takenFrames = accounting.frameBytes.splice(FIRST_QUEUE_INDEX, accounting.frameBytes.length - queuedFrames)
+  for (const frameBytes of takenFrames) {
+    accounting.queuedBytes -= frameBytes
+  }
+}
+
+type LoopbackQueueOverflow = {
+  readonly _tag: 'InboundQueueOverflow'
+  readonly maxBytes: number
+  readonly maxFrames: number
+  readonly observedBytes: number
+  readonly observedFrames: number
+}
+
+const overflowFault = (accounting: InboundQueueAccounting, queuedFrames: number, frameBytes: number): LoopbackQueueOverflow => ({
+  _tag: 'InboundQueueOverflow',
+  maxBytes: INBOUND_QUEUE_BYTE_CAPACITY,
+  maxFrames: INBOUND_QUEUE_CAPACITY,
+  observedBytes: accounting.queuedBytes + frameBytes,
+  observedFrames: queuedFrames + INCOMING_FRAME_COUNT,
+})
 
 export type TransportService = {
   /** Write one frame. Fails, rather than buffering, when not connected. */
@@ -38,18 +74,18 @@ export type TransportService = {
   /**
    * Frames received from the peer, in arrival order.
    *
-   * A `Dequeue` rather than a callback so that back-pressure is expressible:
-   * a consumer that cannot keep up blocks the producer instead of growing an
-   * unbounded queue behind the scenes.
+   * The bounded `Dequeue` makes queue pressure explicit: a producer that
+   * exceeds the frame or byte cap receives a typed send failure with observed
+   * counts in its detail.
    */
   readonly inbound: Queue.Dequeue<WireText>
 }
 
 // `isolatedDeclarations` (TS 7) rejects a class expression directly in an
 // `extends` clause (TS9021); naming the base with its own explicit
-// `Context.TagClass` type is the same pattern mc-kernel uses for `ClockPort`.
-const TransportPortBase: Context.TagClass<TransportPort, '@nerima-games/mx-multiplayer/TransportPort', TransportService> =
-  Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<TransportPort, TransportService>()
+// `Context.ServiceClass` type is the same pattern mc-kernel uses for `ClockPort`.
+const TransportPortBase: Context.ServiceClass<TransportPort, '@nerima-games/mx-multiplayer/TransportPort', TransportService> =
+  Context.Service<TransportPort, TransportService>()('@nerima-games/mx-multiplayer/TransportPort')
 
 export class TransportPort extends TransportPortBase {}
 
@@ -86,7 +122,7 @@ export const sendMessage = (
 ): Effect.Effect<void, ProtocolError | TransportError, TransportPort> =>
   Effect.gen(function* () {
     const transport = yield* TransportPort
-    const frame = yield* encodeFrame(message)
+    const frame = yield* Effect.fromResult(encodeFrame(message))
     yield* transport.send(frame)
   })
 
@@ -95,8 +131,62 @@ export const receiveMessage: Effect.Effect<NetworkMessage, ProtocolError, Transp
   Effect.gen(function* () {
     const transport = yield* TransportPort
     const frame = yield* Queue.take(transport.inbound)
-    return yield* decodeFrame(frame)
+    return yield* Effect.fromResult(decodeFrame(frame))
   })
+
+const offerLoopbackFrame = (
+  target: Queue.Queue<WireText>,
+  accounting: InboundQueueAccounting,
+  frame: WireText,
+): LoopbackQueueOverflow | undefined => {
+  const queuedFrames = Queue.sizeUnsafe(target)
+  releaseTakenFrames(accounting, queuedFrames)
+  const frameBytes = wireFrameByteLength(frame)
+  if (
+    queuedFrames >= INBOUND_QUEUE_CAPACITY ||
+    accounting.queuedBytes + frameBytes > INBOUND_QUEUE_BYTE_CAPACITY
+  ) {
+    return overflowFault(accounting, queuedFrames, frameBytes)
+  }
+  // The synchronous capacity check and open-state check make queue rejection unreachable here.
+  /* v8 ignore next 3 -- @preserve */
+  if (!Queue.offerUnsafe(target, frame)) {
+    return overflowFault(accounting, queuedFrames, frameBytes)
+  }
+  accounting.frameBytes.push(frameBytes)
+  accounting.queuedBytes += frameBytes
+  return undefined
+}
+
+const sendLoopbackFrame = (
+  target: Queue.Queue<WireText>,
+  accounting: InboundQueueAccounting,
+  frame: WireText,
+): Effect.Effect<void, TransportError> => {
+  // TransportService exposes only the Dequeue, so callers cannot shut this queue down.
+  /* v8 ignore next 3 -- @preserve */
+  if (target.state._tag !== 'Open') {
+    return Effect.fail(new TransportError({ detail: 'loopback inbound queue is closed', reason: 'closed' }))
+  }
+  const overflow = offerLoopbackFrame(target, accounting, frame)
+  if (overflow !== undefined) {
+    return Effect.fail(
+      new TransportError({
+        detail: `loopback inbound queue overflow: ${overflow.observedFrames}/${overflow.maxFrames} frames, ${overflow.observedBytes}/${overflow.maxBytes} bytes`,
+        reason: 'send-failed',
+      }),
+    )
+  }
+  return Effect.void
+}
+
+const makeLoopbackSide = (target: Queue.Queue<WireText>, inbound: Queue.Dequeue<WireText>): TransportService => {
+  const accounting: InboundQueueAccounting = { frameBytes: [], queuedBytes: 0 }
+  return {
+    inbound,
+    send: (frame) => Effect.suspend(() => sendLoopbackFrame(target, accounting, frame)),
+  }
+}
 
 /**
  * A directly wired pair of transports: whatever one side sends, the other side
@@ -107,36 +197,19 @@ export const receiveMessage: Effect.Effect<NetworkMessage, ProtocolError, Transp
  * be able to handle, and because the two ends want to be provided to two
  * different Effects (one acting as client, one as server).
  *
- * Queues are unbounded here: a bounded queue would make a test that sends more
- * frames than it reads deadlock rather than fail, which is a much worse failure
- * to debug. Real adapters should bound theirs.
+ * Both directions use the same frame and byte bounds as the browser ingress.
+ * An overfull queue fails the sending Effect with a typed fault instead of
+ * blocking or silently discarding a frame.
  */
 export const makeLoopbackPair: Effect.Effect<
   readonly [TransportService, TransportService]
 > = Effect.gen(function* () {
-  const leftInbound = yield* Queue.unbounded<WireText>()
-  const rightInbound = yield* Queue.unbounded<WireText>()
-
-  const sideSending = (target: Queue.Enqueue<WireText>, inbound: Queue.Dequeue<WireText>): TransportService => ({
-    inbound,
-    send: (frame) =>
-      Queue.offer(target, frame).pipe(
-        Effect.asVoid,
-        // Verified empirically: offering to a queue after `Queue.shutdown`
-        // Fails the fiber through interruption, not a defect — there is no
-        // Legitimate use of `Queue`'s public API that reaches `catchAllDefect`
-        // Here. This guards a failure mode internal to Effect's `Queue`
-        // Implementation, not one this repository's callers can construct.
-        /* v8 ignore next 3 -- @preserve */
-        Effect.catchAllDefect((defect) =>
-          Effect.fail(new TransportError({ detail: String(defect), reason: 'send-failed' })),
-        ),
-      ),
-  })
+  const leftInbound = yield* Queue.bounded<WireText>(INBOUND_QUEUE_CAPACITY)
+  const rightInbound = yield* Queue.bounded<WireText>(INBOUND_QUEUE_CAPACITY)
 
   return [
-    sideSending(rightInbound, leftInbound),
-    sideSending(leftInbound, rightInbound),
+    makeLoopbackSide(rightInbound, leftInbound),
+    makeLoopbackSide(leftInbound, rightInbound),
   ] as const
 })
 
@@ -151,7 +224,7 @@ export const LoopbackTransportLayer = (service: TransportService): Layer.Layer<T
  * handle `TransportError` even when the happy path is all it ever tests.
  */
 export const disconnectedTransport: Effect.Effect<TransportService> = Effect.gen(function* () {
-  const inbound = yield* Queue.unbounded<WireText>()
+  const inbound = yield* Queue.bounded<WireText>(INBOUND_QUEUE_CAPACITY)
   return {
     inbound,
     send: () =>

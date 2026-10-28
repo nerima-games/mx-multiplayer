@@ -102,6 +102,56 @@ describe('loopback synchronisation', () => {
   )
 })
 
+describe('bounded loopback ingress', () => {
+  it.effect('releases byte accounting after a queued frame is taken', () =>
+    Effect.gen(function* () {
+      const [sender, receiver] = yield* makeLoopbackPair
+      yield* sender.send('x'.repeat(3_486_960))
+      expect(yield* Queue.take(receiver.inbound)).toHaveLength(3_486_960)
+      yield* sender.send('next')
+      expect(yield* Queue.size(receiver.inbound)).toBe(1)
+    }),
+  )
+
+  it.effect('returns a typed send failure with frame pressure instead of accepting beyond capacity', () =>
+    Effect.gen(function* () {
+      const [sender, receiver] = yield* makeLoopbackPair
+      yield* Effect.forEach(Array.from({ length: 80 }, () => 'frame'), (frame) => sender.send(frame))
+
+      const overflow = yield* sender.send('overflow').pipe(Effect.result)
+
+      expect(overflow._tag).toBe('Failure')
+      if (overflow._tag === 'Failure') {
+        expect(overflow.failure).toMatchObject({
+          _tag: 'TransportError',
+          reason: 'send-failed',
+          detail: 'loopback inbound queue overflow: 81/80 frames, 408/3486960 bytes',
+        })
+      }
+      expect(yield* Queue.size(receiver.inbound)).toBe(80)
+    }),
+  )
+
+  it.effect('returns a typed send failure with byte pressure beyond the exact byte ceiling', () =>
+    Effect.gen(function* () {
+      const [sender, receiver] = yield* makeLoopbackPair
+      yield* sender.send('x'.repeat(3_486_960))
+
+      const overflow = yield* sender.send('x').pipe(Effect.result)
+
+      expect(overflow._tag).toBe('Failure')
+      if (overflow._tag === 'Failure') {
+        expect(overflow.failure).toMatchObject({
+          _tag: 'TransportError',
+          reason: 'send-failed',
+          detail: 'loopback inbound queue overflow: 2/80 frames, 3486961/3486960 bytes',
+        })
+      }
+      expect(yield* Queue.size(receiver.inbound)).toBe(1)
+    }),
+  )
+})
+
 describe('transport failure', () => {
   it.effect('gates each send using the current connection state', () =>
     Effect.gen(function* () {
@@ -110,10 +160,10 @@ describe('transport failure', () => {
       const gated = connectionGatedTransport(Ref.get(state), client)
       const layer = LoopbackTransportLayer(gated)
 
-      const refused = yield* sendMessage(join).pipe(Effect.provide(layer), Effect.either)
-      expect(refused._tag).toBe('Left')
-      if (refused._tag === 'Left') {
-        expect(refused.left).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
+      const refused = yield* sendMessage(join).pipe(Effect.provide(layer), Effect.result)
+      expect(refused._tag).toBe('Failure')
+      if (refused._tag === 'Failure') {
+        expect(refused.failure).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
       }
       expect(yield* Queue.size(server.inbound)).toBe(0)
 
@@ -126,8 +176,8 @@ describe('transport failure', () => {
       expect(yield* Queue.size(server.inbound)).toBe(1)
 
       yield* Ref.set(state, { _tag: 'Closed', reason: 'closed' })
-      const closed = yield* sendMessage(move).pipe(Effect.provide(layer), Effect.either)
-      expect(closed._tag).toBe('Left')
+      const closed = yield* sendMessage(move).pipe(Effect.provide(layer), Effect.result)
+      expect(closed._tag).toBe('Failure')
       expect(yield* Queue.size(server.inbound)).toBe(1)
     }),
   )
@@ -138,12 +188,12 @@ describe('transport failure', () => {
 
       const result = yield* sendMessage(join).pipe(
         Effect.provide(LoopbackTransportLayer(transport)),
-        Effect.either,
+        Effect.result,
       )
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left._tag).toBe('TransportError')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure._tag).toBe('TransportError')
       }
     }),
   )
@@ -158,13 +208,13 @@ describe('transport failure', () => {
       yield* client.send('not a frame at all')
       const result = yield* receiveMessage.pipe(
         Effect.provide(LoopbackTransportLayer(server)),
-        Effect.either,
+        Effect.result,
       )
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left._tag).toBe('ProtocolError')
-        expect(result.left.reason).toBe('malformed-frame')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure._tag).toBe('ProtocolError')
+        expect(result.failure.reason).toBe('malformed-frame')
       }
     }),
   )

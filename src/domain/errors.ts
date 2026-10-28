@@ -23,6 +23,8 @@ import { Data } from 'effect'
 export type ProtocolErrorReason =
   /** The frame text is not valid JSON, or does not match any known message. */
   | 'malformed-frame'
+  /** The frame exceeded a byte or UTF-16 code-unit ceiling before message decoding. */
+  | 'frame-too-large'
   /** The frame parsed, but its `protocolVersion` is one this build cannot speak. */
   | 'unsupported-protocol-version'
   /** A message value could not be turned into a frame (a branded invariant was violated). */
@@ -55,5 +57,23 @@ const TransportError_base: ReturnType<typeof Data.TaggedError<'TransportError'>>
 
 export class TransportError extends TransportError_base<{
   readonly reason: TransportErrorReason
+  readonly detail: string
+}> {}
+
+export type SnapshotInterpolationConfigErrorReason = 'invalid-history-limit' | 'invalid-teleport-distance'
+
+const SnapshotInterpolationConfigError_base: ReturnType<
+  typeof Data.TaggedError<'SnapshotInterpolationConfigError'>
+> = Data.TaggedError('SnapshotInterpolationConfigError')
+
+export class SnapshotInterpolationConfigError extends SnapshotInterpolationConfigError_base<{
+  readonly reason: SnapshotInterpolationConfigErrorReason
+  readonly detail: string
+}> {}
+
+const SnapshotTransferConfigError_base: ReturnType<typeof Data.TaggedError<'SnapshotTransferConfigError'>> =
+  Data.TaggedError('SnapshotTransferConfigError')
+
+export class SnapshotTransferConfigError extends SnapshotTransferConfigError_base<{
   readonly detail: string
 }> {}

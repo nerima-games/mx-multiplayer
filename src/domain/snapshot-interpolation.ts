@@ -1,4 +1,6 @@
 import type { Orientation, PlayerId, Vec3 } from './protocol.js'
+import { Result } from 'effect'
+import { SnapshotInterpolationConfigError } from './errors.js'
 
 export type PlayerTransformSnapshot = {
   /** Monotonic server-assigned packet sequence for this player. */
@@ -31,12 +33,17 @@ const LAST_INDEX = -1
 
 /** A full turn is two half turns (`Math.PI` each). */
 const FULL_TURN_MULTIPLIER = 2
+const VECTOR_COMPONENT_COUNT = 3
+const VECTOR_COMPONENT_POWER = 2
+const INTERPOLATION_TOTAL_WEIGHT = 1
 
 /** Below this, `sample`'s neighbor-pair scan has no earlier snapshot to interpolate from. */
 const NEIGHBOR_OFFSET = 1
 
 /** A buffer holding fewer than this cannot bracket a render tick between two snapshots. */
 const MIN_HISTORY_LIMIT = 2
+const SQRT_VECTOR_COMPONENT_COUNT = Math.sqrt(VECTOR_COMPONENT_COUNT)
+const MAX_FINITE_NUMBER = Number.MAX_VALUE
 
 const validSnapshot = (snapshot: PlayerTransformSnapshot): boolean =>
   Number.isSafeInteger(snapshot.sequence) &&
@@ -53,15 +60,57 @@ const isNonEmptyHistory = (
   history: ReadonlyArray<PlayerTransformSnapshot>,
 ): history is readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>] => history.length > ZERO
 
-const distance = (left: Vec3, right: Vec3): number =>
-  Math.hypot(right.x - left.x, right.y - left.y, right.z - left.z)
+const axisDistance = (left: number, right: number): number | undefined => {
+  const crossesZero = (left < ZERO && right > ZERO) || (left > ZERO && right < ZERO)
+  const leftMagnitude = Math.abs(left)
+  const rightMagnitude = Math.abs(right)
+  if (crossesZero && leftMagnitude > MAX_FINITE_NUMBER - rightMagnitude) {
+    return undefined
+  }
+  return Math.abs(right - left)
+}
+
+const scaledDistanceAtOrBeyondThreshold = (
+  distances: Readonly<{ readonly x: number; readonly y: number; readonly z: number }>,
+  threshold: number,
+): boolean => {
+  const { x, y, z } = distances
+  const scale = Math.max(x, y, z)
+  if (scale === ZERO) {
+    return false
+  }
+  if (scale >= threshold) {
+    return true
+  }
+  if (scale < threshold / SQRT_VECTOR_COMPONENT_COUNT) {
+    return false
+  }
+  const scaledDistance = Math.sqrt(
+    (x / scale) ** VECTOR_COMPONENT_POWER +
+      (y / scale) ** VECTOR_COMPONENT_POWER +
+      (z / scale) ** VECTOR_COMPONENT_POWER,
+  )
+  return scaledDistance >= threshold / scale
+}
+
+const atOrBeyondDistance = (left: Vec3, right: Vec3, threshold: number): boolean => {
+  const x = axisDistance(left.x, right.x)
+  const y = axisDistance(left.y, right.y)
+  const z = axisDistance(left.z, right.z)
+  if (x === undefined || y === undefined || z === undefined) {
+    return true
+  }
+  return scaledDistanceAtOrBeyondThreshold({ x, y, z }, threshold)
+}
 
 const lerp = (left: number, right: number, alpha: number): number =>
-  left + (right - left) * alpha
+  left * (INTERPOLATION_TOTAL_WEIGHT - alpha) + right * alpha
 
 const interpolateYaw = (left: number, right: number, alpha: number): number => {
   const fullTurn = Math.PI * FULL_TURN_MULTIPLIER
-  const shortest = ((right - left + Math.PI) % fullTurn + fullTurn) % fullTurn - Math.PI
+  const leftTurn = left % fullTurn
+  const rightTurn = right % fullTurn
+  const shortest = ((rightTurn - leftTurn + Math.PI) % fullTurn + fullTurn) % fullTurn - Math.PI
   return left + shortest * alpha
 }
 
@@ -76,14 +125,30 @@ export class SnapshotInterpolator {
   readonly #config: SnapshotInterpolatorConfig
   readonly #history = new Map<PlayerId, Array<PlayerTransformSnapshot>>()
 
-  constructor(config: SnapshotInterpolatorConfig) {
+  static make(
+    config: SnapshotInterpolatorConfig,
+  ): Result.Result<SnapshotInterpolator, SnapshotInterpolationConfigError> {
     if (!Number.isSafeInteger(config.historyLimit) || config.historyLimit < MIN_HISTORY_LIMIT) {
-      throw new RangeError('historyLimit must be a safe integer of at least 2')
+      return Result.fail(
+        new SnapshotInterpolationConfigError({
+          detail: 'historyLimit must be a safe integer of at least 2',
+          reason: 'invalid-history-limit',
+        }),
+      )
     }
     if (!Number.isFinite(config.teleportDistance) || config.teleportDistance <= ZERO) {
-      throw new RangeError('teleportDistance must be finite and greater than zero')
+      return Result.fail(
+        new SnapshotInterpolationConfigError({
+          detail: 'teleportDistance must be finite and greater than zero',
+          reason: 'invalid-teleport-distance',
+        }),
+      )
     }
-    this.#config = config
+    return Result.succeed(new SnapshotInterpolator(config))
+  }
+
+  private constructor(config: SnapshotInterpolatorConfig) {
+    this.#config = { ...config }
   }
 
   ingest(player: PlayerId, snapshot: PlayerTransformSnapshot): SnapshotIngestResult {
@@ -130,32 +195,23 @@ export class SnapshotInterpolator {
     return this.#interpolate(history, renderTick)
   }
 
-  /** Precondition, enforced by the only caller (`sample`): `history` is non-empty. */
+  /** Precondition, enforced by the only caller (`sample`): history is non-empty and renderTick is finite. */
   static #sampleAtBoundary(
     history: readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>],
     renderTick: number,
   ): PlayerTransformSnapshot | undefined {
-    // The tuple type guarantees that the first element exists; the loop keeps
-    // `last` aligned with the final history entry without a non-null assertion.
     const [first] = history
-    let last = first
-    for (const snapshot of history) {
-      last = snapshot
-    }
     if (renderTick <= first.tick) {
       return first
-    }
-    if (renderTick >= last.tick) {
-      return last
     }
     return undefined
   }
 
-  /** Precondition, enforced by the only caller (`sample`): `first.tick < renderTick < last.tick`. */
+  /** Precondition, enforced by the only caller (`sample`): history is non-empty and renderTick > first.tick. */
   #interpolate(
     history: readonly [PlayerTransformSnapshot, ...Array<PlayerTransformSnapshot>],
     renderTick: number,
-  ): PlayerTransformSnapshot {
+  ): PlayerTransformSnapshot | undefined {
     let [left] = history
     for (const right of history.slice(NEIGHBOR_OFFSET)) {
       // The tuple and slice preserve the non-empty history invariant, so both
@@ -164,15 +220,8 @@ export class SnapshotInterpolator {
         return this.#interpolatePair(left, right, renderTick)
       }
       left = right
-      // Unreachable: the precondition above guarantees some `right` in this
-      // Loop satisfies `renderTick <= right.tick` no later than the final
-      // Element, so the loop always returns from inside the `if` above. The
-      // `-- @preserve` suffix is required under vitest 4 (Vitest 4.1 restored
-      // Ignore-hint support but esbuild strips ignore comments lacking it).
-      /* v8 ignore next -- @preserve */
     }
-    /* v8 ignore next -- @preserve */
-    throw new Error('unreachable: renderTick was not strictly within the sampled history')
+    return history.at(LAST_INDEX)
   }
 
   #interpolatePair(
@@ -180,7 +229,7 @@ export class SnapshotInterpolator {
     right: PlayerTransformSnapshot,
     renderTick: number,
   ): PlayerTransformSnapshot {
-    if (distance(left.at, right.at) >= this.#config.teleportDistance) {
+    if (atOrBeyondDistance(left.at, right.at, this.#config.teleportDistance)) {
       if (renderTick < right.tick) {
         return left
       }

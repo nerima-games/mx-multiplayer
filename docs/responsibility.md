@@ -8,12 +8,12 @@
 
 | 責務 | 具体物 | 現状 |
 | --- | --- | --- |
-| プロトコル定義 | `NetworkMessage` の集合、`Frame` エンベロープ、`PROTOCOL_VERSION` | `domain/protocol.ts`; 版数とタグ集合の正本は実装とテスト |
-| フレームコーデック | `encodeFrame` / `decodeFrame`。ラウンドトリップが契約 | `domain/codec.ts` |
+| Protocol definition | `NetworkMessage`, `Frame`, C4 grouped delta / snapshot transfer, and `PROTOCOL_VERSION` | `domain/protocol.ts`; implementation and tests are authoritative for the version and tag set |
+| Frame codec | `encodeFrame` / `decodeFrame`; validates the C4 owner registry and typed frame bounds | `domain/codec.ts` |
 | 障害分類 | `ProtocolError`(再送無意味)/ `TransportError`(再送が正解) | `domain/errors.ts` |
 | 接続ライフサイクル | 明示的な状態機械。合法遷移の表 | `domain/connection.ts` |
 | トランスポート Port | `TransportPort` とループバック実装 | `domain/transport.ts` |
-| 状態同期 | 受信フレームを decode して host に渡し、host が `mc-sim` の authoritative state を反映する | `src/stages/registration.ts` はルールを持たない queue seam。状態変換は host/server の責務 |
+| State synchronization | Client applies C4 groups atomically; host projects owner state from the `mc-sim` WCC | `src/domain/authoritative-sync.ts` and `src/stages/registration.ts`; mx-multiplayer keeps no duplicate owner state |
 | stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | 実装済 `src/stages/registration.ts`。配置は mc-compose の skeleton が所有 |
 
 ### 2.1 登録した 2 stage と、mc-compose 側の配置

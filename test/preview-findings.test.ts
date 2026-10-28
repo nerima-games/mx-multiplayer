@@ -28,7 +28,7 @@
  * each other and injecting faults.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Either, Queue } from 'effect'
+import { Effect, Result, Queue } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
 import {
   type ConnectionEvent,
@@ -54,7 +54,7 @@ const ping: NetworkMessage = { _tag: 'Ping', nonce: 7 }
 
 const reasonOf = (text: string): string => {
   const result = decodeFrame(text)
-  return Either.isLeft(result) ? result.left.reason : 'accepted'
+  return Result.isFailure(result) ? result.failure.reason : 'accepted'
 }
 
 describe('M1 — the version is checked before the message shape', () => {
@@ -99,7 +99,7 @@ describe('M1 — the version is checked before the message shape', () => {
 
   it.effect('also rejects a version bump whose message still has a known shape', () =>
     Effect.sync(() => {
-      const knownShape = Either.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, ping))
+      const knownShape = Result.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, ping))
       expect(reasonOf(knownShape)).toBe('unsupported-protocol-version')
     }),
   )
@@ -209,11 +209,11 @@ describe('M4 — the transport boundary enforces Connected-only sending', () => 
       expect(canSend(connecting)).toBe(false)
       const result = yield* sendMessage(chat).pipe(
         Effect.provide(LoopbackTransportLayer(gated)),
-        Effect.either,
+        Effect.result,
       )
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toMatchObject({ _tag: 'TransportError', reason: 'not-connected' })
       }
       expect(yield* Queue.size(server.inbound)).toBe(0)
     }),
@@ -228,10 +228,10 @@ describe('M4 — the transport boundary enforces Connected-only sending', () => 
       expect(canSend(closed)).toBe(false)
       const result = yield* sendMessage(chat).pipe(
         Effect.provide(LoopbackTransportLayer(gated)),
-        Effect.either,
+        Effect.result,
       )
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {expect(result.left._tag).toBe('TransportError')}
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {expect(result.failure._tag).toBe('TransportError')}
       expect(yield* Queue.size(server.inbound)).toBe(0)
     }),
   )
@@ -244,13 +244,13 @@ describe('checks the preview kept after they passed', () => {
 
   // The encode direction validates too. That is what makes DN-5's argument true
   // — "失敗するのは送信側の `encodeFrame` であり、原因が手元にある" — and it is a
-  // Property of `Schema.encodeEither`, not of the schema, so it deserves an
+  // Property of `Schema.encodeUnknownResult`, not of the schema, so it deserves an
   // Assertion of its own rather than being assumed by the round-trip tests.
   it.effect('an invalid value fails at the sender, where the originating code still is', () =>
     Effect.sync(() => {
       const rejected = (message: NetworkMessage): string => {
         const result = encodeFrame(message)
-        return Either.isLeft(result) ? result.left.reason : 'ENCODED'
+        return Result.isFailure(result) ? result.failure.reason : 'ENCODED'
       }
 
       expect(
@@ -298,7 +298,7 @@ describe('checks the preview kept after they passed', () => {
 
       const offenders: Array<string> = []
       for (const message of samples) {
-        const encoded = Either.getOrThrow(encodeFrame(message))
+        const encoded = Result.getOrThrow(encodeFrame(message))
         const parsed: unknown = JSON.parse(encoded)
         if (typeof parsed !== 'object' || parsed === null || !('message' in parsed) || typeof parsed.message !== 'object' || parsed.message === null) {
           throw new Error('encoded frame must contain an object message')
@@ -328,8 +328,8 @@ describe('checks the preview kept after they passed', () => {
       })
       const decoded = decodeFrame(text)
 
-      expect(Either.isRight(decoded)).toBe(true)
-      expect(Either.getOrThrow(decoded)).toStrictEqual({ _tag: 'Ping', nonce: 4 })
+      expect(Result.isSuccess(decoded)).toBe(true)
+      expect(Result.getOrThrow(decoded)).toStrictEqual({ _tag: 'Ping', nonce: 4 })
     }),
   )
 })

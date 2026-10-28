@@ -86,3 +86,7 @@ bump は必ず明示的な編集になる。
 必須フィールドの欠落はデコード失敗になるためである。
 オプショナルフィールドによる漸進的な拡張を許すかどうかは、
 最初の互換性が必要になる場面(= 実際に 2 バージョンが同時に動く場面)まで決めない。
+
+## 8. Protocol v10
+
+Protocol v10 adds C4 replication messages. A delta carries owner changes and sparse block changes for one world revision; a snapshot carries a consistent owner/block view. Oversized snapshots use start, chunk, and end frames. The client validates and applies each revision group atomically. The replicated owner state remains owned by mc-sim's `WorldCommitCoordinator`; mx-multiplayer transports the projection and does not keep a second authoritative copy.

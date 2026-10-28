@@ -6,22 +6,24 @@
 import { CommandId, PlayerId, Revision, WorldId } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
+const ZERO = 0
+
 /** No vanilla damage source deals more than a full 10 hearts in one hit. */
 const PLAYER_DAMAGE_MAX_AMOUNT = 20
 /** `minimumHealthPoints` caps at one heart: a damage source that cannot kill still leaves the player alive. */
 const PLAYER_DAMAGE_MAX_MINIMUM_HEALTH_POINTS = 1
 
-export const PlayerDamageAmount: Schema.filter<Schema.filter<Schema.filter<typeof Schema.Number>>> = Schema.Number.pipe(
-  Schema.finite(),
-  Schema.positive(),
-  Schema.lessThanOrEqualTo(PLAYER_DAMAGE_MAX_AMOUNT),
+export const PlayerDamageAmount: typeof Schema.Number = Schema.Number.pipe(
+  Schema.check(Schema.isFinite()),
+  Schema.check(Schema.isGreaterThan(ZERO)),
+  Schema.check(Schema.isLessThanOrEqualTo(PLAYER_DAMAGE_MAX_AMOUNT)),
 )
 export type PlayerDamageAmount = typeof PlayerDamageAmount.Type
 
-export const PlayerDamageMinimumHealth: Schema.filter<Schema.filter<Schema.filter<typeof Schema.Number>>> = Schema.Number.pipe(
-  Schema.finite(),
-  Schema.nonNegative(),
-  Schema.lessThanOrEqualTo(PLAYER_DAMAGE_MAX_MINIMUM_HEALTH_POINTS),
+export const PlayerDamageMinimumHealth: typeof Schema.Number = Schema.Number.pipe(
+  Schema.check(Schema.isFinite()),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
+  Schema.check(Schema.isLessThanOrEqualTo(PLAYER_DAMAGE_MAX_MINIMUM_HEALTH_POINTS)),
 )
 export type PlayerDamageMinimumHealth = typeof PlayerDamageMinimumHealth.Type
 
@@ -46,9 +48,9 @@ export const PlayerDamageCommand: Schema.TaggedStruct<
 })
 export type PlayerDamageCommand = typeof PlayerDamageCommand.Type
 
-export const PlayerDamageRejectionReason: Schema.Literal<
-  ['stale-revision', 'unauthorized-player', 'wrong-world', 'invalid-command']
-> = Schema.Literal('stale-revision', 'unauthorized-player', 'wrong-world', 'invalid-command')
+export const PlayerDamageRejectionReason: Schema.Literals<
+  readonly ['stale-revision', 'unauthorized-player', 'wrong-world', 'invalid-command']
+> = Schema.Literals(['stale-revision', 'unauthorized-player', 'wrong-world', 'invalid-command'])
 export type PlayerDamageRejectionReason = typeof PlayerDamageRejectionReason.Type
 
 export const PlayerDamageCommandAccepted: Schema.TaggedStruct<
@@ -71,12 +73,12 @@ export const PlayerDamageCommandRejected: Schema.TaggedStruct<
 export type PlayerDamageCommandRejected = typeof PlayerDamageCommandRejected.Type
 
 export const PlayerDamageCommandResult: Schema.Union<
-  [typeof PlayerDamageCommandAccepted, typeof PlayerDamageCommandRejected]
-> = Schema.Union(PlayerDamageCommandAccepted, PlayerDamageCommandRejected)
+  readonly [typeof PlayerDamageCommandAccepted, typeof PlayerDamageCommandRejected]
+> = Schema.Union([PlayerDamageCommandAccepted, PlayerDamageCommandRejected])
 export type PlayerDamageCommandResult = typeof PlayerDamageCommandResult.Type
 
 /** Every message this module contributes to the shared `NetworkMessage` union. */
 export const PlayerDamageMessage: Schema.Union<
-  [typeof PlayerDamageCommand, typeof PlayerDamageCommandAccepted, typeof PlayerDamageCommandRejected]
-> = Schema.Union(PlayerDamageCommand, PlayerDamageCommandAccepted, PlayerDamageCommandRejected)
+  readonly [typeof PlayerDamageCommand, typeof PlayerDamageCommandAccepted, typeof PlayerDamageCommandRejected]
+> = Schema.Union([PlayerDamageCommand, PlayerDamageCommandAccepted, PlayerDamageCommandRejected])
 export type PlayerDamageMessage = typeof PlayerDamageMessage.Type

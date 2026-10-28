@@ -44,7 +44,7 @@
  * `Date.now()` to make a prettier number would reintroduce the exact field
  * DN-3 removed from the protocol.
  */
-import { Effect, Either, Queue } from 'effect'
+import { Effect, Result, Queue } from 'effect'
 import { type WireText, decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
   type ConnectionEvent,
@@ -325,14 +325,14 @@ export const send = (
       sender.transport = yield* disconnectedTransport
     }
 
-    const encoded: Either.Either<WireText, ProtocolError> =
+    const encoded: Result.Result<WireText, ProtocolError> =
       fault === 'wrong-version'
         ? encodeFrameAsVersion(PROTOCOL_VERSION + 1, message)
         : fault === 'future-message'
-          ? Either.right(forgeFutureFrame())
+          ? Result.succeed(forgeFutureFrame())
           : encodeFrame(message)
 
-    if (Either.isLeft(encoded)) {
+    if (Result.isFailure(encoded)) {
       // DN-5's whole point: an invalid value fails at the SENDER, where the
       // Originating code is still on the stack, instead of arriving at the far
       // End as an undebuggable decode failure.
@@ -343,13 +343,13 @@ export const send = (
         from,
         tag: tagOf(message),
         text: undefined,
-        verdict: `encode refused: ProtocolError(${encoded.left.reason})`,
+        verdict: `encode refused: ProtocolError(${encoded.failure.reason})`,
         version: PROTOCOL_VERSION,
       })
       return
     }
 
-    const text = fault === 'corrupt' ? corrupt(encoded.right) : encoded.right
+    const text = fault === 'corrupt' ? corrupt(encoded.success) : encoded.success
     const version =
       fault === 'wrong-version' || fault === 'future-message' ? PROTOCOL_VERSION + 1 : PROTOCOL_VERSION
     const tag = fault === 'future-message' ? FUTURE_TAG : tagOf(message)
@@ -368,9 +368,9 @@ export const send = (
       return
     }
 
-    const sent = yield* Effect.either(sender.transport.send(text))
-    if (Either.isLeft(sent)) {
-      const error: TransportError = sent.left
+    const sent = yield* Effect.result(sender.transport.send(text))
+    if (Result.isFailure(sent)) {
+      const error: TransportError = sent.failure
       record({
         bytes: text.length,
         failed: true,
@@ -408,7 +408,7 @@ export type Received = {
 /**
  * Drain everything waiting for one peer and decode it.
  *
- * `Queue.takeAll` rather than `receiveMessage`: the shipped helper takes ONE
+ * `Queue.clear` rather than `receiveMessage`: the shipped helper takes ONE
  * frame and blocks until one arrives, which is right for a fiber and wrong for a
  * keystroke. Draining also makes the "dropped frame" fault legible — the queue
  * is empty, and it is empty because nothing was ever offered.
@@ -416,15 +416,15 @@ export type Received = {
 export const pump = (session: Session, name: SideName): Effect.Effect<Received> =>
   Effect.gen(function* () {
     const target = sideOf(session, name)
-    const frames = yield* Queue.takeAll(target.transport.inbound)
+    const frames = yield* Queue.clear(target.transport.inbound)
     const ok: Array<NetworkMessage> = []
     const failures: Array<ProtocolError> = []
 
     for (const text of frames) {
       session.seq += 1
       const decoded = decodeFrame(text)
-      if (Either.isLeft(decoded)) {
-        failures.push(decoded.left)
+      if (Result.isFailure(decoded)) {
+        failures.push(decoded.failure)
         session.wire = [
           ...session.wire,
           {
@@ -435,13 +435,13 @@ export const pump = (session: Session, name: SideName): Effect.Effect<Received> 
             seq: session.seq,
             tag: '?',
             text,
-            verdict: `${name} rejected: ProtocolError(${decoded.left.reason})`,
+            verdict: `${name} rejected: ProtocolError(${decoded.failure.reason})`,
             version: 0,
           },
         ]
         continue
       }
-      ok.push(decoded.right)
+      ok.push(decoded.success)
       session.wire = [
         ...session.wire,
         {
@@ -450,9 +450,9 @@ export const pump = (session: Session, name: SideName): Effect.Effect<Received> 
           fault: undefined,
           from: OTHER[name],
           seq: session.seq,
-          tag: decoded.right._tag,
+          tag: decoded.success._tag,
           text,
-          verdict: `${name} accepted ${decoded.right._tag}`,
+          verdict: `${name} accepted ${decoded.success._tag}`,
           version: PROTOCOL_VERSION,
         },
       ]

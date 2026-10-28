@@ -20,6 +20,9 @@
 | `NetworkMessage` | Schema(Union) | ワイヤを渡りうるすべて |
 | `MESSAGE_TAGS` | `ReadonlyArray` | 既知タグの一覧。網羅性テスト用 |
 | `Frame` | Schema | `{ protocolVersion, message }` |
+| `ReplicatedWorldDeltaMessage` / `ReplicatedWorldSnapshot` | Schema | C4 group carrying owner state and sparse block changes for one world revision |
+| `ReplicatedWorldSnapshotStart` / `ReplicatedWorldSnapshotChunk` / `ReplicatedWorldSnapshotEnd` | Schema | Control frames for bounded transfer of large C4 snapshots |
+| `TransferIdSchema` / `Base64Schema` / `LowercaseHexSha256Schema` | branded Schema | Branded schemas for transfer IDs, chunks, and digests |
 
 ### メッセージタグ
 
@@ -32,6 +35,8 @@
 | `AuthoritativeCommandAccepted` / `AuthoritativeCommandRejected` / `AuthoritativeResyncRequest` | command 結果と再同期要求 |
 | `Ping` / `Pong` | 生存確認。**タイムスタンプではない**([design-notes.md](./design-notes.md) DN-3) |
 | subsystem command/result and delta tags (`Anvil*`、`Crafting*`、`PlayerDamage*`、`Brewing*`、`Enchanting*`、`Wither*`、`EnderDragon*`) | 各サブシステムの同期 |
+| `ReplicatedWorldDelta` / `ReplicatedWorldSnapshot` | C4 owner changes and sparse block changes grouped by revision |
+| `ReplicatedWorldSnapshotStart` / `ReplicatedWorldSnapshotChunk` / `ReplicatedWorldSnapshotEnd` | Bounded transfer for large snapshots |
 
 > **「主張している」**の含意: `BlockBreak` はドロップが何であるかを言わない。
 > それはルールであり、mx-gameplay と mc-sim のものである。
@@ -39,28 +44,49 @@
 タグの完全な列挙は `domain/protocol.ts` の `MESSAGE_TAGS` が正本であり、
 codec test が集合と union の一致を検証する。
 
+C4 deltas carry `changes` and `blockChanges` with the same `world` and `revision`. The receiver validates and
+applies them as one group; revisions with no visible changes still advance as empty groups. A C4 snapshot
+represents a consistent view of owners and blocks. Oversized snapshots use start/chunk/end frames. The
+protocol transports the WCC owner state projection and sparse block changes from `mc-sim`; `mx-multiplayer`
+does not duplicate owner state.
+
 ## 2. コーデック(`domain/codec.ts`)
 
 ```typescript
 type WireText = string
+type NonNegativeSafeInteger = typeof NonNegativeSafeIntegerSchema.Type
+type PositiveSafeInteger = typeof PositiveSafeIntegerSchema.Type
 
-const encodeFrame: (message: unknown) => Either<WireText, ProtocolError>
-const encodeFrameAsVersion: (protocolVersion: number, message: unknown) => Either<WireText, ProtocolError>
-const decodeFrame: (text: WireText) => Either<NetworkMessage, ProtocolError>
+const encodeFrame: (message: unknown, owners?: ReplicatedOwnerRegistry) => Result.Result<WireText, ProtocolError>
+const encodeFrameAsVersion: (protocolVersion: number, message: unknown, owners?: ReplicatedOwnerRegistry) => Result.Result<WireText, ProtocolError>
+const decodeFrame: (text: WireText, owners?: ReplicatedOwnerRegistry) => Result.Result<NetworkMessage, ProtocolError>
+const wireFrameByteLength: (text: WireText) => NonNegativeSafeInteger
+const encodeTransferredSnapshotFrame: (message: unknown, owners: ReplicatedOwnerRegistry, maxTotalBytes: unknown) => Result.Result<WireText, ProtocolError>
+const decodeTransferredSnapshotFrame: (text: WireText, owners: ReplicatedOwnerRegistry, maxTotalBytes: unknown) => Result.Result<NetworkMessage, ProtocolError>
+const NonNegativeSafeIntegerSchema: branded Schema
+const PositiveSafeIntegerSchema: branded Schema
+const ReplicatedOwnerStateBoundsSchema: Schema
+const ReplicatedOwnerRegistryLimitsSchema: Schema
 ```
 
-**契約**: runtime input を encode 境界で検証し、表現可能な `m` について
-`decodeFrame(encodeFrame(m)) == m`。不正な入力は `unencodable-message` になる。
+**Contract**: Validate runtime input at the encode boundary. For representable `m`,
+`decodeFrame(encodeFrame(m)) == m`. Invalid input returns `unencodable-message`. Effect 4's
+`Result.Result` contains either a success or a failure value, so the codec itself requires no Effect context.
 
 - `encodeFrameAsVersion` はテスト用。「このビルドが話せないバージョンのフレーム」を作る唯一の手段であり、
   バージョンチェックが本当に**拒否**しているか(ベストエフォートで解釈していないか)を証明するために公開している。
-- 戻り値が `Either` なのは、Effect 3 では `Either` が `Effect` の部分型であるため。
-  `yield* decodeFrame(text)` がそのまま書ける。
+- `ReplicatedOwnerRegistryLimitsSchema` defines owner count, delta/snapshot counts, JSON shape, frame bytes, and
+  per-owner state bounds. `SnapshotTransferLimitsSchema` defines total bytes, chunk, and queued-delta limits.
+  Callers may pass unknown configuration to the factories; each factory decodes it before use. Neither has
+  production defaults; host composition supplies values based on schema and traffic measurements.
+- Use the transfer-specific encode/decode functions when a snapshot exceeds the regular frame cap. Callers
+  also configure receiver limits; the transport layer owns per-connection rate enforcement.
 
 ## 3. 障害(`domain/errors.ts`)
 
 ```typescript
-class ProtocolError  // reason: 'malformed-frame' | 'unsupported-protocol-version' | 'unencodable-message'
+type ProtocolErrorReason // 'malformed-frame' | 'frame-too-large' | 'unsupported-protocol-version' | 'unencodable-message'
+class ProtocolError  // reason: ProtocolErrorReason
 class TransportError // reason: 'not-connected' | 'send-failed' | 'closed'
 ```
 
@@ -95,22 +121,27 @@ const isSettled: (state) => boolean
 
 ```typescript
 type TransportService = {
-  readonly send: (frame: WireText) => Effect<void, TransportError>
+  readonly send: (frame: WireText) => Effect.Effect<void, TransportError>
   readonly inbound: Queue.Dequeue<WireText>
 }
-class TransportPort extends Context.Tag('@nerima-games/mx-multiplayer/TransportPort')<...>
+const TransportPortBase: Context.ServiceClass<
+  TransportPort,
+  '@nerima-games/mx-multiplayer/TransportPort',
+  TransportService
+> = Context.Service<TransportPort, TransportService>()('@nerima-games/mx-multiplayer/TransportPort')
+class TransportPort extends TransportPortBase {}
 
 const connectionGatedTransport: (
-  state: Effect<ConnectionState>,
+  state: Effect.Effect<ConnectionState>,
   transport: TransportService,
 ) => TransportService
 
-const sendMessage: (message: NetworkMessage) => Effect<void, ProtocolError | TransportError, TransportPort>
-const receiveMessage: Effect<NetworkMessage, ProtocolError, TransportPort>
+const sendMessage: (message: NetworkMessage) => Effect.Effect<void, ProtocolError | TransportError, TransportPort>
+const receiveMessage: Effect.Effect<NetworkMessage, ProtocolError, TransportPort>
 
-const makeLoopbackPair: Effect<readonly [TransportService, TransportService]>
-const LoopbackTransportLayer: (service: TransportService) => Layer<TransportPort>
-const disconnectedTransport: Effect<TransportService>
+const makeLoopbackPair: Effect.Effect<readonly [TransportService, TransportService]>
+const LoopbackTransportLayer: (service: TransportService) => Layer.Layer<TransportPort>
+const disconnectedTransport: Effect.Effect<TransportService>
 ```
 
 プラットフォームアダプタは raw transport と現在の `ConnectionState` を
@@ -140,8 +171,12 @@ interface SnapshotInterpolatorConfig {
   readonly teleportDistance: number
 }
 
+type SnapshotIngestResult =
+  | { readonly accepted: true; readonly historySize: number }
+  | { readonly accepted: false; readonly reason: 'invalid' | 'duplicate-or-stale' }
+
 class SnapshotInterpolator {
-  constructor(config: SnapshotInterpolatorConfig)
+  static make(config: SnapshotInterpolatorConfig): Result.Result<SnapshotInterpolator, SnapshotInterpolationConfigError>
   ingest(player: PlayerId, snapshot: PlayerTransformSnapshot): SnapshotIngestResult
   sample(player: PlayerId, renderTick: number): PlayerTransformSnapshot | undefined
   historySize(player: PlayerId): number
@@ -156,7 +191,7 @@ class SnapshotInterpolator {
 authoritative tick でスナップする。切断時は `disconnect(player)`、全切断時は `disconnect()` を呼ぶ。
 
 ```typescript
-const snapshots = new SnapshotInterpolator({ historyLimit: 32, teleportDistance: 8 })
+const snapshots = Result.getOrThrow(SnapshotInterpolator.make({ historyLimit: 32, teleportDistance: 8 }))
 
 snapshots.ingest(playerId, authoritativeSnapshot)
 const pose = snapshots.sample(playerId, serverTick - 2)
@@ -185,6 +220,47 @@ class AuthoritativeRevisionTracker {
 tracker はゲーム状態を保持・変更せず、再接続や snapshot 要求の transport 方針も決めない。
 それらを所有する platform adapter が admission 結果を使って再取得を開始する。
 
+### 7.1 C4 client apply and bounded snapshot transfer
+
+```typescript
+type ReplicatedWorldDeltaMessage = {
+  readonly _tag: 'ReplicatedWorldDelta'
+  readonly world: WorldId
+  readonly revision: WorldRevision
+  readonly changes: ReadonlyArray<ReplicatedOwnerChange>
+  readonly blockChanges: ReadonlyArray<ReplicatedBlockChange>
+}
+
+type SnapshotTransferLimits = {
+  readonly maxTotalBytes: PositiveSafeInteger
+  readonly maxChunkCount: PositiveSafeInteger
+  readonly maxChunkBytes: PositiveSafeInteger
+  readonly maxQueuedDeltaCount: NonNegativeSafeInteger
+  readonly maxQueuedDeltaBytes: NonNegativeSafeInteger
+}
+const SnapshotTransferLimitsSchema: Schema
+
+class SnapshotTransferReceiver {
+  static make(limits: unknown): Result.Result<SnapshotTransferReceiver, SnapshotTransferConfigError>
+  begin(start: ReplicatedWorldSnapshotStart, lastKnownRevision?: WorldRevision): SnapshotTransferReceipt
+  append(chunk: ReplicatedWorldSnapshotChunk): SnapshotTransferReceipt
+  queueDelta(delta: ReplicatedWorldDeltaMessage, frameBytes: unknown): SnapshotTransferReceipt & Readonly<{ queued?: boolean }>
+  finish(end: ReplicatedWorldSnapshotEnd): SnapshotTransferCompletion
+  discard(): void
+}
+
+const ReplicatedBlockKeySchema: branded Schema
+const decodeUtf8Frame: (bytes: Uint8Array) => WireText | undefined
+const sha256Hex: (bytes: Uint8Array) => Result.Result<LowercaseHexSha256, Schema.SchemaError>
+const applyReplicatedWorldSnapshot: (state: AuthoritativeClientSnapshot, snapshot: ReplicatedWorldSnapshot) => ClientSyncTransition
+const applyReplicatedWorldDelta: (state: AuthoritativeClientSnapshot, delta: ReplicatedWorldDeltaMessage) => ClientSyncTransition
+```
+
+`AuthoritativeClientState` holds the client projection. It validates owner changes and block changes in a delta
+as one revision and applies neither if either side is invalid. Snapshot transfer validates declared values,
+chunk order and size, total bytes, digest, snapshot schema, and deltas queued during the transfer before it
+publishes a candidate state. On failure, it keeps the previous projection and returns a resync request.
+
 ## 8. プラットフォーム境界
 
 | 境界 | 所有者 |
@@ -203,10 +279,12 @@ const EXPERIENCE_MODULE_STAGE_PREFIXES: readonly string[]
 const OWN_STAGE_PREFIX: string
 const multiplayerModule: GameModule<never, never, never, TransportPort>
 const multiplayerStages: (...args: unknown[]) => ReadonlyArray<StageRegistration>
-const makeMultiplayerStages: Effect<ReadonlyArray<StageRegistration>, never, TransportPort>
-const makeMultiplayerStagesForPreview: Effect<{ state; stages }, never, TransportPort>
-const makeMultiplayerFrameState: Effect<MultiplayerFrameState>
-const NO_NETWORK_FRAMES: NetworkFrameCounters
+const makeMultiplayerStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, TransportPort>
+const makeMultiplayerStagesForPreview: Effect.Effect<{ state; stages }, never, TransportPort>
+const makeMultiplayerStagesForClientPreview: (sync: MultiplayerClientSync) => Effect.Effect<{ state; stages }, never, TransportPort>
+const makeMultiplayerHostWithClientSync: (sync: MultiplayerClientSync) => Effect.Effect<MultiplayerHost, never, TransportPort>
+const makeMultiplayerFrameState: Effect.Effect<MultiplayerFrameState>
+const NO_NETWORK_FRAMES
 ```
 
 上記は `test/public-api.test.ts` が固定する stage 公開値の代表一覧である。

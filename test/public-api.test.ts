@@ -1,8 +1,91 @@
 import { describe, expect, it } from '@effect/vitest'
+import { expectTypeOf } from 'vitest'
 import { Effect } from 'effect'
+import type { Intent } from '@nerima-games/mc-sim'
 import * as multiplayer from '../src/index'
 import { decodeFrame, encodeFrame } from '../src/domain/codec'
 import { MESSAGE_TAGS, PROTOCOL_VERSION } from '../src/domain/protocol'
+import type {
+  AreaOfInterest,
+  AreaOfInterestInputErrorReason,
+  BrowserTransportFault,
+  BrowserWebSocketTransport,
+  BrowserWebSocketTransportOptions,
+  ChunkCoordinate,
+  ChunkInterestKey,
+  CommandApplicationFailure,
+  CommandApplicationOutcome,
+  CommandDecision,
+  CommandIntentContext,
+  CommandUnsupported,
+  CommandUnsupportedReason,
+  AuthoritativeCommandIntentAccepted,
+  AuthoritativeCommandIntentReplayed,
+  ChunkInterest,
+  ConnectionRateLimitConfig,
+  ConnectionRateLimitConfigField,
+  ConnectionRateLimitFailure,
+  ConnectionRateLimiter,
+  DeltaProjectionErrorReason,
+  DeltaProjectionOutcome,
+  DeltaProjectionRecipient,
+  FrameTag,
+  HungerRejectionReason,
+  HungerResult,
+  InboundFrameInspection,
+  NonNegativeSafeInteger,
+  PositiveSafeInteger,
+  RateLimitConfigurationErrorReason,
+  RateLimitExceededReason,
+  RateLimitInputErrorReason,
+  ServerConnectionIdentity,
+  SurvivalAuthorityResult,
+  SurvivalCommandResult,
+  TransportService,
+  WireText,
+} from '../src/index'
+
+type NewPublicTypes = {
+  area: AreaOfInterest
+  areaErrorReason: AreaOfInterestInputErrorReason
+  browserTransportFault: BrowserTransportFault
+  browserWebSocketTransport: BrowserWebSocketTransport
+  browserWebSocketTransportOptions: BrowserWebSocketTransportOptions
+  chunkCoordinate: ChunkCoordinate
+  chunkInterestKey: ChunkInterestKey
+  chunk: ChunkInterest
+  commandApplicationFailure: CommandApplicationFailure
+  commandApplicationOutcome: CommandApplicationOutcome
+  commandDecision: CommandDecision
+  commandIntentContext: CommandIntentContext
+  commandUnsupported: CommandUnsupported
+  commandUnsupportedReason: CommandUnsupportedReason
+  authoritativeCommandIntentAccepted: AuthoritativeCommandIntentAccepted
+  authoritativeCommandIntentReplayed: AuthoritativeCommandIntentReplayed
+  connectionIdentity: ServerConnectionIdentity
+  hungerIntent: Intent
+  hungerRejectionReason: HungerRejectionReason
+  hungerResult: HungerResult
+  frameTag: FrameTag
+  inboundFrameInspection: InboundFrameInspection
+  limitConfig: ConnectionRateLimitConfig
+  limitConfigField: ConnectionRateLimitConfigField
+  limitFailure: ConnectionRateLimitFailure
+  limiter: ConnectionRateLimiter
+  nonNegativeSafeInteger: NonNegativeSafeInteger
+  positiveSafeInteger: PositiveSafeInteger
+  projectionErrorReason: DeltaProjectionErrorReason
+  projectionOutcome: DeltaProjectionOutcome
+  projectionRecipient: DeltaProjectionRecipient
+  rateConfigurationErrorReason: RateLimitConfigurationErrorReason
+  rateExceededReason: RateLimitExceededReason
+  rateInputErrorReason: RateLimitInputErrorReason
+  survivalAuthorityResult: SurvivalAuthorityResult
+  survivalCommandResult: SurvivalCommandResult
+  survivalIntent: Intent
+  transportService: TransportService
+  wireText: WireText
+}
 
 describe('public API surface', () => {
   // The barrel is what mc-compose imports. A re-export dropped here is
@@ -11,6 +94,28 @@ describe('public API surface', () => {
   it.effect('re-exports every value a consumer is expected to import', () =>
     Effect.sync(() => {
       const expected = [
+        // Per-recipient scale projection
+        'AreaOfInterestInputError',
+        'chunkInterestKeyForBlockChange',
+        'createAreaOfInterest',
+        'isAreaOfInterest',
+        'areaOfInterestIncludesOwner',
+        'areaOfInterestIncludesChunkKey',
+        'areaOfInterestIncludesBlockChange',
+        'areaOfInterestExpanded',
+        'MAX_C4_DELTA_FRAME_BYTES',
+        'DeltaProjectionError',
+        'projectReplicatedWorldDelta',
+        'CONNECTION_RATE_LIMITS',
+        'RateLimitConfigurationError',
+        'RateLimitInputError',
+        'RateLimitExceeded',
+        'createConnectionRateLimiter',
+        // Transport safety and liveness
+        'makeBrowserWebSocketTransport',
+        'validateMultiplayerUrl',
+        'frameTag',
+        'inspectInboundFrame',
         // Protocol
         'PROTOCOL_VERSION',
         'PlayerId',
@@ -30,19 +135,48 @@ describe('public API surface', () => {
         'NetworkMessage',
         'MESSAGE_TAGS',
         'Frame',
+        'NonNegativeSafeIntegerSchema',
+        'PositiveSafeIntegerSchema',
+        'ReplicatedOwnerStateBoundsSchema',
+        'ReplicatedOwnerRegistryLimitsSchema',
+        'SnapshotTransferLimitsSchema',
+        'ReplicatedBlockKeySchema',
+        'ReplicatedWorldDeltaMessage',
+        'ReplicatedWorldSnapshot',
+        'ReplicatedWorldSnapshotStart',
+        'ReplicatedWorldSnapshotChunk',
+        'ReplicatedWorldSnapshotEnd',
+        'TransferIdSchema',
+        'Base64Schema',
+        'LowercaseHexSha256Schema',
         // Codec
         'encodeFrame',
         'encodeFrameAsVersion',
         'decodeFrame',
+        'decodeTransferredSnapshotFrame',
+        'encodeTransferredSnapshotFrame',
+        'createReplicatedOwnerRegistry',
+        'inspectReplicatedFrameTag',
+        'wireFrameByteLength',
         // Errors
         'ProtocolError',
         'TransportError',
+        'SnapshotInterpolationConfigError',
+        'SnapshotTransferConfigError',
         // Connection
         'initialConnectionState',
         'transition',
         'runTransitions',
         'canSend',
         'isSettled',
+        // C4 client synchronization and bounded snapshot transfer
+        'SnapshotTransferReceiver',
+        'AuthoritativeClientState',
+        'applyReplicatedWorldSnapshot',
+        'applyReplicatedWorldDelta',
+        'decodeTransferredSnapshot',
+        'decodeUtf8Frame',
+        'sha256Hex',
         // Authoritative resync admission
         'AuthoritativeRevisionTracker',
         // Transport
@@ -64,6 +198,8 @@ describe('public API surface', () => {
         'multiplayerStages',
         'makeMultiplayerStages',
         'makeMultiplayerStagesForPreview',
+        'makeMultiplayerStagesForClientPreview',
+        'makeMultiplayerHostWithClientSync',
         'makeMultiplayerFrameState',
         'NO_NETWORK_FRAMES',
       ]
@@ -113,7 +249,15 @@ describe('public API surface', () => {
   // Docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(8)
+      expect(PROTOCOL_VERSION).toBe(10)
+    }),
+  )
+
+  it.effect('keeps the public type surface concrete', () =>
+    Effect.sync(() => {
+      expectTypeOf<NewPublicTypes>().toBeObject()
+      expectTypeOf<Extract<HungerResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
+      expectTypeOf<Extract<SurvivalCommandResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
     }),
   )
 })

@@ -18,7 +18,8 @@
  * Every check answers a question of the form "if this were broken, what would I
  * see?". A measurement with no such answer is a number, not a check.
  */
-import { Effect, Either, Queue } from 'effect'
+import { WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { Effect, Queue, Result, Schema } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
   type ConnectionEvent,
@@ -37,12 +38,15 @@ import {
 } from '../../src/domain/transport'
 import {
   CommandId,
+  Base64Schema,
   EntityId,
+  LowercaseHexSha256Schema,
   MESSAGE_TAGS,
   type NetworkMessage,
   PROTOCOL_VERSION,
   PlayerId,
   PlayerName,
+  TransferIdSchema,
   WorldId,
 } from '../../src/domain/protocol'
 
@@ -64,9 +68,26 @@ const COMMAND_HEADER = { commandId: COMMAND_ID, expectedRevision: 1, player: ALI
 const ITEM = { count: 2, item: 'stone' }
 const ENTITY_ID = EntityId.make('entity-1')
 const ENTITY = { _tag: 'living' as const, at: { x: 1, y: 64, z: 1 }, entityId: ENTITY_ID, entityType: 'zombie', health: 20, maxHealth: 20 }
+const REPLICATED_REVISION = Schema.decodeUnknownSync(WorldRevisionSchema)(1)
+const TRANSFER_ID = Schema.decodeUnknownSync(TransferIdSchema)('preview-transfer')
+const TRANSFER_CHUNK = Schema.decodeUnknownSync(Base64Schema)('AQ==')
+const TRANSFER_DIGEST = Schema.decodeUnknownSync(LowercaseHexSha256Schema)('0'.repeat(64))
 
 /** One sample per tag, so a check can sweep the whole message set. */
 const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessage, { _tag: Tag }> } = {
+  ReplicatedWorldDelta: { _tag: 'ReplicatedWorldDelta', blockChanges: [], changes: [], revision: REPLICATED_REVISION, world: OVERWORLD },
+  ReplicatedWorldSnapshot: { _tag: 'ReplicatedWorldSnapshot', blocks: [], owners: [], revision: REPLICATED_REVISION, world: OVERWORLD },
+  ReplicatedWorldSnapshotStart: {
+    _tag: 'ReplicatedWorldSnapshotStart',
+    chunkCount: 1,
+    revision: REPLICATED_REVISION,
+    sha256: TRANSFER_DIGEST,
+    totalBytes: 1,
+    transferId: TRANSFER_ID,
+    world: OVERWORLD,
+  },
+  ReplicatedWorldSnapshotChunk: { _tag: 'ReplicatedWorldSnapshotChunk', data: TRANSFER_CHUNK, index: 0, transferId: TRANSFER_ID },
+  ReplicatedWorldSnapshotEnd: { _tag: 'ReplicatedWorldSnapshotEnd', transferId: TRANSFER_ID },
   AnvilCommand: { _tag: 'AnvilCommand', ...COMMAND_HEADER, name: 'Excalibur', slot: 0 },
   AnvilCommandAccepted: { _tag: 'AnvilCommandAccepted', commandId: COMMAND_ID, revision: 2 },
   AnvilCommandRejected: { _tag: 'AnvilCommandRejected', commandId: COMMAND_ID, reason: 'missing-iron', revision: 1 },
@@ -260,7 +281,7 @@ const versionBeforeShape = Effect.sync((): Check => {
     {
       counts: true,
       label: 'v2, a tag this build knows',
-      text: Either.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, SAMPLES.Ping)),
+      text: Result.getOrThrow(encodeFrameAsVersion(PROTOCOL_VERSION + 1, SAMPLES.Ping)),
     },
     { counts: true, label: 'v2, a tag added in the newer build', text: forged({ _tag: 'EntitySnapshot', entities: [] }) },
     { counts: true, label: 'v2, a known tag whose field was renamed', text: forged({ _tag: 'Ping', requestId: 7 }) },
@@ -282,7 +303,7 @@ const versionBeforeShape = Effect.sync((): Check => {
 
   for (const { label, text, counts } of cases) {
     const result = decodeFrame(text)
-    const reason = Either.isLeft(result) ? result.left.reason : 'ACCEPTED'
+    const reason = Result.isFailure(result) ? result.failure.reason : 'ACCEPTED'
     if (counts) {
       counted += 1
       if (reason !== 'unsupported-protocol-version') {
@@ -469,13 +490,13 @@ const sendGuard = Effect.gen(function* () {
   const closed: ConnectionState = { _tag: 'Closed', reason: 'closed' }
   const gated = connectionGatedTransport(Effect.succeed(beforeHandshake), client)
 
-  const attempt = yield* Effect.either(
+  const attempt = yield* Effect.result(
     sendMessage(SAMPLES.Chat).pipe(Effect.provide(LoopbackTransportLayer(gated))),
   )
   const delivered = yield* Queue.size(server.inbound)
 
   const refusing = yield* disconnectedTransport
-  const refused = yield* Effect.either(
+  const refused = yield* Effect.result(
     sendMessage(SAMPLES.Chat).pipe(Effect.provide(LoopbackTransportLayer(refusing))),
   )
 
@@ -485,9 +506,9 @@ const sendGuard = Effect.gen(function* () {
     lines: [
       `  canSend(Connecting)                 ${String(canSend(beforeHandshake))}`,
       `  canSend(Closed)                     ${String(canSend(closed))}`,
-      `  sendMessage from a Connecting peer  ${Either.isLeft(attempt) ? `refused: ${attempt.left._tag}` : 'ACCEPTED'}`,
+      `  sendMessage from a Connecting peer  ${Result.isFailure(attempt) ? `refused: ${attempt.failure._tag}` : 'ACCEPTED'}`,
       `  frames waiting at the far end       ${String(delivered)}`,
-      `  disconnectedTransport refuses       ${Either.isLeft(refused) ? `yes: ${refused.left._tag}` : 'no'}`,
+      `  disconnectedTransport refuses       ${Result.isFailure(refused) ? `yes: ${refused.failure._tag}` : 'no'}`,
       '',
       '  `connectionGatedTransport` reads the supplied state for every send and returns a typed',
       '  TransportError before delegating unless that state is Connected.',
@@ -513,12 +534,12 @@ const loopbackRoundTrip = Effect.gen(function* () {
     yield* sendMessage(SAMPLES[tag]).pipe(Effect.provide(asClient), Effect.orDie)
   }
 
-  const frames = yield* Queue.takeAll(server.inbound)
+  const frames = yield* Queue.clear(server.inbound)
   const decoded = [...frames].map((text) => decodeFrame(text))
-  const failures = decoded.filter(Either.isLeft).length
+  const failures = decoded.filter(Result.isFailure).length
   const order = decoded
-    .filter(Either.isRight)
-    .map((result) => result.right._tag)
+    .filter(Result.isSuccess)
+    .map((result) => result.success._tag)
     .join(' ')
   const inOrder = order === MESSAGE_TAGS.join(' ')
 
@@ -543,7 +564,7 @@ const loopbackRoundTrip = Effect.gen(function* () {
  *
  * "`finite()` があれば、失敗するのは送信側の `encodeFrame` であり、原因が手元にある."
  * That is only true if `encodeFrame` validates its refinements on the way OUT,
- * which is a property of `Schema.encodeEither` and not of the schema. Worth
+ * which is a property of `Schema.encodeUnknownResult` and not of the schema. Worth
  * measuring rather than assuming, because the failure mode if it were false is
  * silent: every bad value would arrive at the far end as a decode failure with
  * no originating code anywhere near it.
@@ -551,7 +572,7 @@ const loopbackRoundTrip = Effect.gen(function* () {
 const encodeSideValidation = Effect.sync((): Check => {
   const emptyPlayerLeave = { _tag: 'PlayerLeave', player: '' }
 
-  const cases: ReadonlyArray<readonly [string, () => Either.Either<string, { readonly reason: string }>]> = [
+  const cases: ReadonlyArray<readonly [string, () => Result.Result<string, { readonly reason: string }>]> = [
     ['a NaN coordinate (JSON.stringify(NaN) === "null")', () =>
       encodeFrame({ ...SAMPLES.PlayerMove, at: { x: Number.NaN, y: 0, z: 0 } })],
     ['an infinite coordinate', () =>
@@ -570,11 +591,11 @@ const encodeSideValidation = Effect.sync((): Check => {
 
   for (const [label, run] of cases) {
     const result = run()
-    if (Either.isRight(result)) {
+    if (Result.isSuccess(result)) {
       escaped += 1
       rows.push(`  ${pad(label, 50)}ENCODED — it reaches the far end`)
     } else {
-      rows.push(`  ${pad(label, 50)}${result.left.reason}`)
+      rows.push(`  ${pad(label, 50)}${result.failure.reason}`)
     }
   }
 
@@ -612,9 +633,9 @@ const contentSkew = Effect.sync((): Check => {
     }),
   )
 
-  const blockOk = Either.isRight(unknownBlock)
-  const tagRejected = Either.isLeft(unknownTag) && unknownTag.left.reason === 'malformed-frame'
-  const extraOk = Either.isRight(extraField)
+  const blockOk = Result.isSuccess(unknownBlock)
+  const tagRejected = Result.isFailure(unknownTag) && unknownTag.failure.reason === 'malformed-frame'
+  const extraOk = Result.isSuccess(extraField)
 
   return {
     finding: !(blockOk && tagRejected && extraOk),
@@ -639,16 +660,16 @@ const errorChannels = Effect.gen(function* () {
   const [client, server] = yield* makeLoopbackPair
 
   yield* client.send('not a frame at all').pipe(Effect.orDie)
-  const arrived = Array.from(yield* Queue.takeAll(server.inbound))
+  const arrived = Array.from(yield* Queue.clear(server.inbound))
   const protocolFailure = decodeFrame(arrived[0] ?? '')
 
   const refusing = yield* disconnectedTransport
-  const transportFailure = yield* Effect.either(
+  const transportFailure = yield* Effect.result(
     sendMessage(SAMPLES.Ping).pipe(Effect.provide(LoopbackTransportLayer(refusing))),
   )
 
-  const protocolTag = Either.isLeft(protocolFailure) ? protocolFailure.left._tag : 'none'
-  const transportTag = Either.isLeft(transportFailure) ? transportFailure.left._tag : 'none'
+  const protocolTag = Result.isFailure(protocolFailure) ? protocolFailure.failure._tag : 'none'
+  const transportTag = Result.isFailure(transportFailure) ? transportFailure.failure._tag : 'none'
   const distinct = protocolTag === 'ProtocolError' && transportTag === 'TransportError'
 
   return {
@@ -656,9 +677,9 @@ const errorChannels = Effect.gen(function* () {
     id: distinct ? 'ok' : 'M-channels',
     lines: [
       `  garbage that arrived intact   ${protocolTag}` +
-        (Either.isLeft(protocolFailure) ? `(${protocolFailure.left.reason})` : ''),
+        (Result.isFailure(protocolFailure) ? `(${protocolFailure.failure.reason})` : ''),
       `  a message that never left     ${transportTag}` +
-        (Either.isLeft(transportFailure) ? `(${transportFailure.left.reason})` : ''),
+        (Result.isFailure(transportFailure) ? `(${transportFailure.failure.reason})` : ''),
       '',
       '  The correct responses are opposite — drop the frame versus resend it — so the reference',
       '  implementation`s single `NetworkError` forced every call site to re-derive the',
@@ -683,11 +704,11 @@ const noWallClockOnTheWire = Effect.sync((): Check => {
 
   for (const tag of MESSAGE_TAGS) {
     const encoded = encodeFrame(SAMPLES[tag])
-    if (Either.isLeft(encoded)) {
+    if (Result.isFailure(encoded)) {
       offenders.push(`${tag}: sample does not encode`)
       continue
     }
-    const parsed: unknown = JSON.parse(encoded.right)
+    const parsed: unknown = JSON.parse(encoded.success)
     if (typeof parsed !== 'object' || parsed === null || !('message' in parsed) || typeof parsed.message !== 'object' || parsed.message === null) {
       offenders.push(`${tag}: encoded frame has no object message`)
       continue
@@ -727,15 +748,15 @@ const droppedFrameIsSilent = Effect.gen(function* () {
   // Two sends, of which the app drops the first: the send that "happened" is
   // The one the sender never learns about.
   const encoded = encodeFrame(SAMPLES.PlayerMove)
-  const sendResult = yield* Effect.either(sendMessage(SAMPLES.Chat).pipe(Effect.provide(asClient)))
+  const sendResult = yield* Effect.result(sendMessage(SAMPLES.Chat).pipe(Effect.provide(asClient)))
   const waiting = yield* Queue.size(server.inbound)
 
   return {
     finding: false,
     id: 'note',
     lines: [
-      `  encodeFrame succeeded            ${String(Either.isRight(encoded))}`,
-      `  sendMessage succeeded            ${String(Either.isRight(sendResult))}`,
+      `  encodeFrame succeeded            ${String(Result.isSuccess(encoded))}`,
+      `  sendMessage succeeded            ${String(Result.isSuccess(sendResult))}`,
       `  frames actually at the far end   ${String(waiting)}`,
       '',
       '  `send` returns `Effect<void, TransportError>`: it reports that the WRITE was accepted,',

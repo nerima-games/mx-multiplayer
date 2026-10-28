@@ -22,41 +22,41 @@
 import { CommandId, PlayerId, Revision } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
+const ZERO = 0
 const MIN_NON_EMPTY_LENGTH = 1
-const strictShape = { parseOptions: { onExcessProperty: 'error' as const } }
 
 /** A continuous position, the same shape as `protocol.ts`'s `Vec3` (re-declared, not imported — see the file header). */
 const WitherPosition: Schema.Struct<{
-  x: Schema.filter<typeof Schema.Number>
-  y: Schema.filter<typeof Schema.Number>
-  z: Schema.filter<typeof Schema.Number>
+  x: typeof Schema.Number
+  y: typeof Schema.Number
+  z: typeof Schema.Number
 }> = Schema.Struct({
-  x: Schema.Number.pipe(Schema.finite()),
-  y: Schema.Number.pipe(Schema.finite()),
-  z: Schema.Number.pipe(Schema.finite()),
+  x: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+  y: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+  z: Schema.Number.pipe(Schema.check(Schema.isFinite())),
 })
 
 /** Mirrors `@nerima-games/mc-sim`'s `WitherPhase`. Not imported — see the file header. */
-export const WitherPhase: Schema.Literal<['charging', 'airborne', 'armoured', 'dead']> = Schema.Literal(
+export const WitherPhase: Schema.Literals<readonly ['charging', 'airborne', 'armoured', 'dead']> = Schema.Literals([
   'charging',
   'airborne',
   'armoured',
   'dead',
-)
+])
 export type WitherPhase = typeof WitherPhase.Type
 
 /** Mirrors `@nerima-games/mc-sim`'s `WitherDamageKind`. Not imported — see the file header. */
-export const WitherDamageKind: Schema.Literal<['melee', 'ranged', 'magic', 'explosion', 'void']> = Schema.Literal(
+export const WitherDamageKind: Schema.Literals<readonly ['melee', 'ranged', 'magic', 'explosion', 'void']> = Schema.Literals([
   'melee',
   'ranged',
   'magic',
   'explosion',
   'void',
-)
+])
 export type WitherDamageKind = typeof WitherDamageKind.Type
 
 /** Mirrors `@nerima-games/mc-sim`'s `WitherSkullVariant`. Not imported — see the file header. */
-export const WitherSkullVariant: Schema.Literal<['normal', 'blue']> = Schema.Literal('normal', 'blue')
+export const WitherSkullVariant: Schema.Literals<readonly ['normal', 'blue']> = Schema.Literals(['normal', 'blue'])
 export type WitherSkullVariant = typeof WitherSkullVariant.Type
 
 /** Mirrors `@nerima-games/mc-sim`'s `WITHER_MAX_HEALTH`. Not imported — see the file header. */
@@ -64,85 +64,85 @@ const WITHER_MAX_HEALTH = 300
 
 /** Mirrors `@nerima-games/mc-sim`'s `WitherState`. Not imported — see the file header. */
 const WitherState: Schema.Struct<{
-  chargeRemainingSecs: Schema.filter<Schema.filter<typeof Schema.Number>>
+  chargeRemainingSecs: typeof Schema.Number
   feetPosition: typeof WitherPosition
-  healthPoints: Schema.filter<Schema.filter<typeof Schema.Number>>
+  healthPoints: typeof Schema.Number
   phase: typeof WitherPhase
   velocity: typeof WitherPosition
 }> = Schema.Struct({
-  chargeRemainingSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  chargeRemainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   feetPosition: WitherPosition,
-  healthPoints: Schema.Number.pipe(Schema.finite(), Schema.nonNegative(), Schema.lessThanOrEqualTo(WITHER_MAX_HEALTH)),
+  healthPoints: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(WITHER_MAX_HEALTH))),
   phase: WitherPhase,
   velocity: WitherPosition,
-}).annotations(strictShape)
+})
 
 /** Mirrors `@nerima-games/mc-sim`'s `WitherSkullProjectileDescriptor`. Not imported — see the file header. */
 const WitherSkullDescriptor: Schema.Struct<{
   destroysResistantBlocks: typeof Schema.Boolean
   direction: typeof WitherPosition
-  explosivePower: Schema.filter<Schema.filter<typeof Schema.Number>>
+  explosivePower: typeof Schema.Number
   origin: typeof WitherPosition
-  speed: Schema.filter<Schema.filter<typeof Schema.Number>>
+  speed: typeof Schema.Number
   variant: typeof WitherSkullVariant
 }> = Schema.Struct({
   destroysResistantBlocks: Schema.Boolean,
   direction: WitherPosition,
-  explosivePower: Schema.Number.pipe(Schema.finite(), Schema.positive()),
+  explosivePower: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   origin: WitherPosition,
-  speed: Schema.Number.pipe(Schema.finite(), Schema.positive()),
+  speed: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   variant: WitherSkullVariant,
-}).annotations(strictShape)
+})
 
-const WitherEntryId: Schema.filter<typeof Schema.String> = Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH))
-const WitherDimension: Schema.filter<typeof Schema.String> = Schema.String.pipe(Schema.minLength(MIN_NON_EMPTY_LENGTH))
+const WitherEntryId: typeof Schema.String = Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH)))
+const WitherDimension: typeof Schema.String = Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH)))
 
 /** Mirrors one entry of the composing app's `WitherRuntimeSnapshot.withers`. Not imported — see the file header. */
 const RuntimeWitherEntry: Schema.Struct<{
   dimension: typeof WitherDimension
   id: typeof WitherEntryId
-  meleeCooldownSecs: Schema.filter<Schema.filter<typeof Schema.Number>>
-  rangedCooldownSecs: Schema.filter<Schema.filter<typeof Schema.Number>>
-  shotsFired: Schema.filter<Schema.filter<typeof Schema.Number>>
+  meleeCooldownSecs: typeof Schema.Number
+  rangedCooldownSecs: typeof Schema.Number
+  shotsFired: typeof Schema.Number
   state: typeof WitherState
 }> = Schema.Struct({
   dimension: WitherDimension,
   id: WitherEntryId,
-  meleeCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  rangedCooldownSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
-  shotsFired: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  meleeCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  rangedCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  shotsFired: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   state: WitherState,
-}).annotations(strictShape)
+})
 
 /** Mirrors the composing app's `RuntimeWitherSkull`. Not imported — see the file header. */
 const RuntimeWitherSkullEntry: Schema.Struct<{
-  ageSecs: Schema.filter<Schema.filter<typeof Schema.Number>>
+  ageSecs: typeof Schema.Number
   descriptor: typeof WitherSkullDescriptor
   dimension: typeof WitherDimension
   id: typeof WitherEntryId
   ownerId: typeof WitherEntryId
   position: typeof WitherPosition
 }> = Schema.Struct({
-  ageSecs: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+  ageSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   descriptor: WitherSkullDescriptor,
   dimension: WitherDimension,
   id: WitherEntryId,
   ownerId: WitherEntryId,
   position: WitherPosition,
-}).annotations(strictShape)
+})
 
 /** Mirrors the composing app's `WitherRuntimeSnapshot`. Not imported — see the file header. */
 export const WitherRuntimeSnapshot: Schema.Struct<{
-  nextSkullId: Schema.filter<Schema.filter<typeof Schema.Number>>
-  nextWitherId: Schema.filter<Schema.filter<typeof Schema.Number>>
-  skulls: Schema.Array$<typeof RuntimeWitherSkullEntry>
-  withers: Schema.Array$<typeof RuntimeWitherEntry>
+  nextSkullId: typeof Schema.Number
+  nextWitherId: typeof Schema.Number
+  skulls: Schema.$Array<typeof RuntimeWitherSkullEntry>
+  withers: Schema.$Array<typeof RuntimeWitherEntry>
 }> = Schema.Struct({
-  nextSkullId: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  nextWitherId: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  nextSkullId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  nextWitherId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   skulls: Schema.Array(RuntimeWitherSkullEntry),
   withers: Schema.Array(RuntimeWitherEntry),
-}).annotations(strictShape)
+})
 export type WitherRuntimeSnapshot = typeof WitherRuntimeSnapshot.Type
 
 export const SummonWitherCommand: Schema.TaggedStruct<
@@ -166,7 +166,7 @@ export type SummonWitherCommand = typeof SummonWitherCommand.Type
 export const DamageWitherCommand: Schema.TaggedStruct<
   'DamageWitherCommand',
   {
-    amount: Schema.filter<Schema.filter<typeof Schema.Number>>
+    amount: typeof Schema.Number
     commandId: typeof CommandId
     expectedRevision: typeof Revision
     kind: typeof WitherDamageKind
@@ -174,7 +174,7 @@ export const DamageWitherCommand: Schema.TaggedStruct<
     witherId: typeof WitherEntryId
   }
 > = Schema.TaggedStruct('DamageWitherCommand', {
-  amount: Schema.Number.pipe(Schema.finite(), Schema.positive()),
+  amount: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   commandId: CommandId,
   expectedRevision: Revision,
   kind: WitherDamageKind,
@@ -183,16 +183,16 @@ export const DamageWitherCommand: Schema.TaggedStruct<
 })
 export type DamageWitherCommand = typeof DamageWitherCommand.Type
 
-export const WitherCommand: Schema.Union<[typeof SummonWitherCommand, typeof DamageWitherCommand]> = Schema.Union(
+export const WitherCommand: Schema.Union<readonly [typeof SummonWitherCommand, typeof DamageWitherCommand]> = Schema.Union([
   SummonWitherCommand,
   DamageWitherCommand,
-)
+])
 export type WitherCommand = typeof WitherCommand.Type
 
-export const WitherRejectionReason: Schema.Literal<['stale-revision', 'invalid-command']> = Schema.Literal(
+export const WitherRejectionReason: Schema.Literals<readonly ['stale-revision', 'invalid-command']> = Schema.Literals([
   'stale-revision',
   'invalid-command',
-)
+])
 export type WitherRejectionReason = typeof WitherRejectionReason.Type
 
 export const WitherCommandAccepted: Schema.TaggedStruct<
@@ -214,10 +214,10 @@ export const WitherCommandRejected: Schema.TaggedStruct<
 })
 export type WitherCommandRejected = typeof WitherCommandRejected.Type
 
-export const WitherCommandResult: Schema.Union<[typeof WitherCommandAccepted, typeof WitherCommandRejected]> = Schema.Union(
+export const WitherCommandResult: Schema.Union<readonly [typeof WitherCommandAccepted, typeof WitherCommandRejected]> = Schema.Union([
   WitherCommandAccepted,
   WitherCommandRejected,
-)
+])
 export type WitherCommandResult = typeof WitherCommandResult.Type
 
 export const WitherSnapshotDelta: Schema.TaggedStruct<
@@ -231,6 +231,6 @@ export type WitherSnapshotDelta = typeof WitherSnapshotDelta.Type
 
 /** Every message this module contributes to the shared `NetworkMessage` union. */
 export const WitherMessage: Schema.Union<
-  [typeof SummonWitherCommand, typeof DamageWitherCommand, typeof WitherCommandAccepted, typeof WitherCommandRejected, typeof WitherSnapshotDelta]
-> = Schema.Union(SummonWitherCommand, DamageWitherCommand, WitherCommandAccepted, WitherCommandRejected, WitherSnapshotDelta)
+  readonly [typeof SummonWitherCommand, typeof DamageWitherCommand, typeof WitherCommandAccepted, typeof WitherCommandRejected, typeof WitherSnapshotDelta]
+> = Schema.Union([SummonWitherCommand, DamageWitherCommand, WitherCommandAccepted, WitherCommandRejected, WitherSnapshotDelta])
 export type WitherMessage = typeof WitherMessage.Type
