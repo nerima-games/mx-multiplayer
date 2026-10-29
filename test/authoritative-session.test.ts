@@ -72,6 +72,39 @@ const sessionAt = (revision: number, targetWorld = world) => {
 }
 
 describe('authoritative protocol schemas', () => {
+  it('decodes mc-sim intents at the revision boundary and rejects values below it', () => {
+    const decode = Schema.decodeUnknownResult(IntentSchema)
+    const intent = {
+      id: CommandId.make('boundary'),
+      targetTick: 0,
+      source: 'network',
+      payload: { _tag: 'UseItem', actor: player, item: 1 },
+      expectedRevision: 0,
+      expectedDimensionRevision: 0,
+    }
+    const revisionFields = ['targetTick', 'expectedRevision', 'expectedDimensionRevision'] as const
+
+    expect(Result.isSuccess(decode(intent))).toBe(true)
+    for (const field of revisionFields) {
+      expect(Result.isFailure(decode({ ...intent, [field]: -1 }))).toBe(true)
+    }
+
+    fc.assert(fc.property(fc.nat({ max: 1_000_000 }), (revision) => {
+      expect(Result.isSuccess(decode({
+        ...intent,
+        targetTick: revision,
+        expectedRevision: revision,
+        expectedDimensionRevision: revision,
+      }))).toBe(true)
+    }), { numRuns: 100 })
+    fc.assert(fc.property(fc.nat({ max: 1_000_000 }), (offset) => {
+      const invalidRevision = -offset - 1
+      for (const field of revisionFields) {
+        expect(Result.isFailure(decode({ ...intent, [field]: invalidRevision }))).toBe(true)
+      }
+    }), { numRuns: 100 })
+  })
+
   it('defines each authoritative entity and inventory action variant once', () => {
     const entityStateAst = AuthoritativeEntityState.ast
     const inventoryActionAst = PlayerInventoryAction.ast
