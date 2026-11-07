@@ -66,15 +66,33 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
 
 | コマンド | 内容 |
 | --- | --- |
-| `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）/ `tsconfig.test.json`（テスト + スクリプト）/ `tsconfig.preview.json`（`apps/`）の 3 プロジェクトを型検査 |
+| `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）/ `tsconfig.test.json`（テスト + スクリプト）/ `tsconfig.preview.json` / `tsconfig.scenarios.json` / `tsconfig.debug-ui.json` を型検査 |
 | `pnpm lint` | oxlint(このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない)。設定ファイルは `.oxlintrc.json`(oxlint が自動検出する唯一のファイル名。旧 `oxlint.json` は無視され、実際には一度も読み込まれていなかった)。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`.oxlintrc.json` は 5 カテゴリすべてと個別 50 ルールが `warn`、`error` は `no-eval` / `no-implied-eval` / `no-restricted-imports` の 3 つだけ。このフラグが無かった頃は実質その 3 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
 | `pnpm preview` | 内蔵プレビュー(ローカル 2 クライアント + フォールトインジェクション)。**`pnpm verify` には入らない**。[apps/preview-two-clients/README.md](./apps/preview-two-clients/README.md) |
+| `pnpm debug-ui` | ブラウザ開発用 Debug UI を起動する（下記）。 |
 | `pnpm test` | vitest(`@effect/vitest` の `it.effect` が主 API) |
 | `pnpm test:watch` | vitest watch |
+| `pnpm test:browser` | `test-browser/` の Playwright ブラウザ仕様テストを実行する。 |
 | `pnpm test:coverage` | vitest をカバレッジ付きで実行 |
 | `pnpm package:verify` | 出荷ビルドとパッケージ内容を検査 |
 | `pnpm verify` | `typecheck && lint && test`。CI と同じ内容 |
+
+### Debug UI（開発専用）
+
+`pnpm debug-ui` は Vite の開発サーバーを起動し、既定では `http://127.0.0.1:5182` で待ち受ける。`HARNESS_PORT` でポートを変更できる（[apps/debug-ui/vite.config.ts](./apps/debug-ui/vite.config.ts)、[package.json](./package.json)）。この UI は開発専用であり、公開パッケージには含まれない。`package.json` の `files` は `dist`、`LICENSE`、`README.md` のみを許可する。
+
+| パネル | 表示・操作する内容 |
+| --- | --- |
+| Scenario runner ([apps/debug-ui/panels/scenario-runner.ts](./apps/debug-ui/panels/scenario-runner.ts)) | シナリオカタログからグループとフレーム数を選んで実行し、クライアント・authority の状態と verdict を表示する。 |
+| AOI grid ([apps/debug-ui/panels/aoi-grid.ts](./apps/debug-ui/panels/aoi-grid.ts)) | AOI 負荷シナリオを実行・step し、クライアントごとの投影と block-change の配送結果を表示する。 |
+| Invariants and rejection coverage ([apps/debug-ui/panels/invariants.ts](./apps/debug-ui/panels/invariants.ts)) | シナリオ assertion、観測した拒否理由、revision history の単調性、注入 clock と論理 frame の一致を表示する。 |
+| Timeline and reproduction ([apps/debug-ui/panels/timeline.ts](./apps/debug-ui/panels/timeline.ts)) | 再生・pause・step・reset・seek・速度変更と reproduction JSON の import/export を行う。 |
+| Communication and wire log ([apps/debug-ui/panels/communication.ts](./apps/debug-ui/panels/communication.ts)) | シナリオと runtime fault を選んで実行し、wire log と verdict を表示する。 |
+| Join and reconnect ([apps/debug-ui/panels/participants.ts](./apps/debug-ui/panels/participants.ts)) | クライアント状態と reconnect 認証を表示し、snapshot scenario では 1 frame 後に client C を参加させる。認証は決定的なメモリ内テスト fixture を使う。 |
+| Connection, transport, and security ([apps/debug-ui/panels/connection-security.ts](./apps/debug-ui/panels/connection-security.ts)) | 接続状態、`canSend`、reconnect・拒否の要約、設定済み rate limit、観測 traffic と frame size を表示する。rate probe は limiter を直接試し、network frame は送信しない。 |
+
+scenario runtime は seed と注入 clock を使い、revision history を記録する。fault は `none`、`delay`、`drop`、`reorder`、`disconnect`、`corrupt`、`version`、`future`、`duplicate` を扱う（[scenarios/types.ts](./scenarios/types.ts)、[scenarios/runtime.ts](./scenarios/runtime.ts)）。CLI の `pnpm preview` は別の in-memory handshake preview であり、このブラウザ UI ではない。
 
 ### スナップショット補間
 
@@ -103,8 +121,7 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
 - **mc-sim への状態反映は実装済み。** `src/application/server/command-application.ts` が
   対応する権威コマンドを mc-sim のサービスへ write-through し、
   `test/command-application.test.ts` で検証している。未対応のコマンドは明示的に拒否する。
-- **実 WebSocket アダプタが無い。** `TransportPort` の実装はプラットフォーム層に置く。
-  現在あるのはループバック(テスト用)と `disconnectedTransport` のみ
+- **ブラウザ用 WebSocket adapter がある。** `src/application/browser-transport.ts` は注入された `WebSocket` / `URL` constructor から `TransportPort` の実装を作る。WebSocket server は含まれない。`test/websocket-harness.test.ts` は実 WebSocket 接続を検証し、`test/browser-transport.test.ts` は `FakeSocket` を使う。
 - **ビルドとパッケージ検証がある。** `pnpm build` が `dist/` を生成し、`package.json` の `exports` は
   生成物を参照する。`pnpm package:verify` は tarball の内容とインストール可能性を検査する。
 - **カバレッジ閾値は4指標とも100%。** `vitest.config.ts` の statements / branches / functions / lines

@@ -2,7 +2,7 @@
 
 ## 1. 一行で
 
-**ネットワーク同期のトランスポートとプロトコルだけを持つ。**(plan.md §3.14)
+**ネットワーク同期のトランスポート、プロトコル、受信スナップショット補間を持つ。**(plan.md §3.14)
 
 ## 2. 持つもの
 
@@ -12,9 +12,10 @@
 | Frame codec | `encodeFrame` / `decodeFrame`; validates the C4 owner registry and typed frame bounds | `domain/codec.ts` |
 | 障害分類 | `ProtocolError`(再送無意味)/ `TransportError`(再送が正解) | `domain/errors.ts` |
 | 接続ライフサイクル | 明示的な状態機械。合法遷移の表 | `domain/connection.ts` |
-| トランスポート Port | `TransportPort` とループバック実装 | `domain/transport.ts` |
+| トランスポート Port / adapter | `TransportPort`、ループバック実装、ブラウザ WebSocket adapter | `src/domain/transport.ts`、`src/application/browser-transport.ts` |
 | State synchronization | Client applies C4 groups atomically; host projects owner state from the `mc-sim` WCC | `src/domain/authoritative-sync.ts` and `src/stages/registration.ts`; mx-multiplayer keeps no duplicate owner state |
 | stage 登録 | `StageRegistration`(`after` 制約のみ宣言) | 実装済 `src/stages/registration.ts`。配置は mc-compose の skeleton が所有 |
+| Reconnect authentication | reconnect token の TTL は既定で 24 時間。`tokenTtl` で変更可能 | `src/application/server/reconnect-auth.ts` |
 
 ### 2.1 登録した 2 stage と、mc-compose 側の配置
 
@@ -48,7 +49,7 @@ plan.md §3.14 設計注意:
 | サーバ一覧 / 接続ダイアログ / メインメニュー導線 | **mx-ui** | 同上 |
 | `packages/network/domain/schemas.ts` | **mx-multiplayer** | プロトコル |
 | `packages/network/application/codec.ts` | **mx-multiplayer** | コーデック |
-| `packages/network/infrastructure/*websocket*` | **mx-multiplayer** の Port + アダプタ | Port はここ、実 WebSocket 実装はプラットフォーム層 |
+| `packages/network/infrastructure/*websocket*` | **mx-multiplayer** の Port + ブラウザ WebSocket adapter | `src/application/browser-transport.ts` が注入された WebSocket constructor を使う。WebSocket server は含まない |
 | `packages/network/application/server-handlers.ts` の claim 調停 | **mc-sim + mx-gameplay** | §4 参照。ここはルールを持たない |
 
 ### 境界が守れているかの機械的チェック
@@ -84,7 +85,7 @@ plan.md §3.14 設計注意:
 | 「〜したら〜になる」というルールを書いている | mx-gameplay(または該当する mx-*) |
 | プレイヤーやエンティティの状態そのものを保持している | mc-sim |
 | ワールドデータを生成・変更している | mc-worldgen |
-| 実 WebSocket / TCP / WebRTC を直接叩いている | プラットフォームアダプタ(Port の実装として repo 外へ) |
+| WebSocket / TCP / WebRTC の platform API を直接使う | ブラウザ WebSocket adapter は `mx-multiplayer`、server / TCP / WebRTC adapter は各 platform host で Port の実装として置く |
 | 壁時計を読んでいる(`Date.now()`) | mc-kernel の `ClockPort` を注入して読む |
 
 最後の行は参照実装で実際に破られていた。[design-notes.md](./design-notes.md) の DN-3 を参照。

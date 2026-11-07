@@ -6,6 +6,8 @@ plan.md §6 Step 2 の完了条件は「テスト green **かつ** 内蔵プレ�
 **これはパッケージではない。** plan.md §4.1 のとおり `apps/preview-*/` に置かれた dev アプリであり、
 `index.ts` から export されず、他リポジトリから import できない。`pnpm verify` はこれを実行しない。
 
+これは terminal CLI preview であり、ブラウザの Debug UI (`apps/debug-ui/`) とは別アプリである。ブラウザ UI は `pnpm debug-ui` で起動する。panel と scenario runtime の説明は [README.md](../../README.md) を参照。
+
 ```console
 $ pnpm preview                                  # 対話モード。SPACE で 1 ステップ進む
 $ pnpm preview --list                           # ハンドシェイクの台本と、各ステップで何を見るか
@@ -75,9 +77,7 @@ $ pnpm preview --once --ascii --script --fault future-message --fault-at 1 --vie
 
 ## 何が見えないか
 
-- **ソケットは 1 つも開かない。** WebSocket も `ws` も再接続スケジュールもサーバプロセスもここには無い。
-  それらは Port の上のアダプタであり、プラットフォームを持つリポジトリのものである
-  （`domain/transport.ts` 冒頭、docs/testing.md §5）。
+- **この CLI preview はソケットを開かない。** `makeLoopbackPair` の同期 queue を使い、WebSocket server や再接続スケジュールも起動しない。本パッケージには別にブラウザ用 WebSocket adapter (`src/application/browser-transport.ts`) があり、実 WebSocket harness test は [docs/testing.md](../../docs/testing.md) §5 に記載する。
 - **遅延も帯域も順序入れ替えも無い。** ループバックは同期キューである。順序保存は測定している
   （`--stats` の round-trip チェック）が、「順序が入れ替わったら」は再現していない。
   それはアダプタの性質であってプロトコルの性質ではない。
