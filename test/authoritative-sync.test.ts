@@ -42,7 +42,7 @@ import {
   Base64Schema,
   LowercaseHexSha256Schema,
   TransferIdSchema,
-  WorldId,
+  PROTOCOL_VERSION, WorldId,
   type WorldSnapshot,
 } from '../src/index'
 
@@ -1181,15 +1181,12 @@ describe('C4 snapshot transfer receiver', () => {
       const maxChunkBytes = Math.ceil(fixtureChunkBytes * 1.25)
       const blocks = Array.from({ length: snapshotBlockLimit }, (_, index) => maximumAoiBlockRead(index))
       const maximumSnapshot = replicatedSnapshot(20, MAXIMUM_AOI_OWNER_CHANGES, blocks)
+      const maximumBlockChanges = Array.from(
+        { length: deltaBlockLimit },
+        (_arrayValue, blockIndex) => maximumAoiBlockChange(snapshotBlockLimit + blockIndex),
+      )
       const queuedDeltas = Array.from({ length: queuedDeltaCount }, (_, deltaIndex) =>
-        replicatedDelta(
-          21 + deltaIndex,
-          MAXIMUM_AOI_OWNER_CHANGES,
-          Array.from(
-            { length: deltaBlockLimit },
-            (_arrayValue, blockIndex) => maximumAoiBlockChange(snapshotBlockLimit + deltaIndex * deltaBlockLimit + blockIndex),
-          ),
-        ),
+        replicatedDelta(21 + deltaIndex, MAXIMUM_AOI_OWNER_CHANGES, maximumBlockChanges),
       )
       const maximumDelta = queuedDeltas[queuedDeltas.length - 1]
       if (maximumDelta === undefined) {
@@ -1208,13 +1205,12 @@ describe('C4 snapshot transfer receiver', () => {
         ownerStates: MAXIMUM_AOI_OWNER_STATE_BOUNDS,
       })
       const sizingOwners = Result.getOrThrow(createReplicatedOwnerRegistry(MAXIMUM_AOI_OWNER_REGISTRATIONS, sizingLimits))
-      const sizedSnapshotFrame = Result.getOrThrow(
-        encodeTransferredSnapshotFrame(maximumSnapshot, sizingOwners, sizingLimits.maxSnapshotFrameBytes),
-      )
-      const sizedSnapshotBytes = new TextEncoder().encode(sizedSnapshotFrame)
-      const sizedDeltaByteCounts = queuedDeltas.map((delta) =>
-        new TextEncoder().encode(Result.getOrThrow(encodeFrame(delta, sizingOwners))).length,
-      )
+      // Codec tests validate the profile message; this transfer test needs its byte and queue bounds.
+      const snapshotFrame = JSON.stringify({ message: maximumSnapshot, protocolVersion: PROTOCOL_VERSION })
+      const sizedSnapshotBytes = new TextEncoder().encode(snapshotFrame)
+      const maximumDeltaFrame = Result.getOrThrow(encodeFrame(maximumDelta, sizingOwners))
+      const maximumDeltaFrameBytes = new TextEncoder().encode(maximumDeltaFrame).length
+      const sizedDeltaByteCounts = queuedDeltas.map(() => maximumDeltaFrameBytes)
       const snapshotLimit = Math.ceil(sizedSnapshotBytes.length * 1.25)
       const deltaLimit = Math.ceil(Math.max(...sizedDeltaByteCounts) * 1.25)
       const fixtureShapeDepth = Math.max(snapshotShape.maxDepth, deltaShape.maxDepth)
