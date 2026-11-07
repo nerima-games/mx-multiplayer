@@ -1,0 +1,1 @@
+{"message":{"_tag":"ToggleLeverCommand","commandId":"command-1","expectedRevision":12,"player":"alice","world":"overworld","lever":{"x":1,"y":64,"z":2}},"protocolVersion":10}

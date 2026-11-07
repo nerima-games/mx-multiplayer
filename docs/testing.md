@@ -14,14 +14,21 @@ plan.md §3.14 検証:
 | サーバー側 command application | mc-sim service への反映と拒否 | `test/command-application.test.ts` |
 | プレビューが見つけたもの | 設計上の finding の測定 + プレビュー由来の新規チェック | `test/preview-findings.test.ts` |
 | セッション全体 | **ローカル 2 クライアントのプレビュー**（フォールト注入つき） | `apps/preview-two-clients/`（§8-9） |
-| 実 WebSocket | **ここでは検証しない**。アダプタの責務 | — |
-| 画面 | **ここでは検証しない**。mx-ui の責務 | — |
+| シナリオ catalog / determinism | 同じ seed での scenario 結果を比較 | `test/scenarios/catalog.test.ts`。個別実行は `pnpm exec vitest run test/scenarios/catalog.test.ts` |
+| Verification matrix | message tag と angle ごとの status・evidence を検査 | `test/verification-matrix.test.ts`。個別実行は `pnpm exec vitest run test/verification-matrix.test.ts` |
+| Protocol property test | schema 由来の message の codec round-trip と拒否条件 | `test/protocol-property.test.ts`。個別実行は `pnpm exec vitest run test/protocol-property.test.ts` |
+| Wire fixtures | 現行・旧 wire frame の bytes と decode 結果 | `test/wire-fixtures.test.ts`。個別実行は `pnpm exec vitest run test/wire-fixtures.test.ts` |
+| 実 WebSocket | local HTTP server と実 WebSocket client を使う transport harness | `test/websocket-harness.test.ts`。`pnpm test` に含まれる |
+| Browser transport | `FakeSocket` による adapter test | `test/browser-transport.test.ts`。`pnpm test` に含まれる |
+| Browser UI | Chromium で Debug UI の操作を検査 | `test-browser/`。`pnpm test:browser` |
+| 製品画面 | mx-multiplayer の責務外。開発用 Debug UI の browser test は §10 | mx-ui が所有 |
 | モジュール間相互作用 | **ここでは検証しない**。mc-compose の E2E が最終ゲート | — |
 
-`test/` 以下の全テストは `pnpm test` で実行する。変動するテスト数はこの文書に重複して書かない。
+`test/` 以下の Vitest test は `pnpm test` で実行する。変動するテスト数はこの文書に重複して書かない。
 
-`pnpm verify` はプレビューを**実行しない**。プレビューは完成条件であってゲートではない。
-型検査（`tsconfig.preview.json`）と lint（`oxlint … apps`）は掛かる。
+Verification matrix の status は [test/matrix/index.ts](../test/matrix/index.ts) で定義する。`covered` は test reference あり、`excluded` は対象外の理由あり、`pending` は未完了、`blocked-on-mc-sim` は mc-sim 依存で停止中、`gap` は対象だが mx-multiplayer の経路が無い状態で理由と evidence を記録する。test は manifest の構造と evidence を検査する。status の件数は固定して記載しない。
+
+`pnpm verify` は CLI preview と Debug UI を**実行しない**。typecheck は `tsconfig.preview.json`、`tsconfig.scenarios.json`、`tsconfig.debug-ui.json` を含み、lint は `apps/`、`scenarios/`、`test-browser/` も対象にする。Browser specs と coverage は別コマンドである。
 
 ## 2. 主 API は `@effect/vitest` の `it.effect`
 
@@ -80,12 +87,13 @@ it.effect('rejects a coordinate that arrived as null, which is what a NaN turns 
 コメントの `REGRESSION:` に**なぜそれが問題なのか**を書く。
 「どう動くか」はコードが言うので、テストが言うべきは「壊れたときに何が起きるか」である。
 
-## 5. ネットワークを実際には使わない
+## 5. ループバックと実 WebSocket のテスト
 
-このリポジトリのテストは **1 つもソケットを開かない。**
-`pnpm test` は素の Node vitest プール(`environment: 'node'`, `pool: 'forks'`)で走る。
+ループバック同期テストはソケットを開かず、Port が運ぶ `WireText` の encode/decode を検査する。一方、[test/websocket-harness.test.ts](../test/websocket-harness.test.ts) は local HTTP server の WebSocket upgrade を受け、Node の実 WebSocket client から接続する。frame、heartbeat、timeout、queue / rate limit、fuzz の経路を検査する。[test/browser-transport.test.ts](../test/browser-transport.test.ts) は `FakeSocket` を使い、network socket は開かない。
 
-これは Port とアダプタを分けた直接の見返りである。
+`pnpm test` は Node Vitest pool (`environment: 'node'`, `pool: 'forks'`) で走るが、WebSocket harness は localhost socket を開く。
+
+Port と loopback を分けたテストでは socket に依存しない。実 WebSocket adapter も別の harness で検査する。
 参照実装は `<reference-impl>/packages/network` の中にブラウザクライアント・Node サーバ・
 `<reference-impl>/packages/network/scripts/multiplayer-server.ts` を同居させていたため、
 テストが実ソケットとポート番号に依存していた
@@ -94,7 +102,7 @@ it.effect('rejects a coordinate that arrived as null, which is what a NaN turns 
 
 ## 6. カバレッジ
 
-計測は `pnpm test:coverage` で常に動く。**閾値は 4 指標(branches/functions/lines/statements)とも
+計測は `pnpm test:coverage` で実行する。coverage 対象は `src/**/*.ts`。**閾値は 4 指標(branches/functions/lines/statements)とも
 100% で有効**(`vitest.config.ts` の `coverage.thresholds` と plan.md §2.2/§2.8)。
 CI では `Coverage` step が同じコマンドを実行し、非ゼロ終了でゲートになる。
 
@@ -103,15 +111,16 @@ CI では `Coverage` step が同じコマンドを実行し、非ゼロ終了で
 | テスト | 前提 |
 | --- | --- |
 | ~~`no message schema declares a wall-clock field`~~ | **書いた**（`test/preview-findings.test.ts`）。メッセージ集合の確定を待つ必要は無かった —— 今の `MESSAGE_TAGS` を掃けば今の答えが出るし、集合が増えれば増えたまま答え続ける |
-| プロパティテスト(任意の `NetworkMessage` でラウンドトリップ) | `effect/FastCheck` の Arbitrary 生成。`.npmrc` の `fast-check` hoist は既に用意済み |
 | mc-sim 反映のシナリオテスト | `test/command-application.test.ts` |
-| プロトコル後方互換テスト(旧バージョンのフレーム fixture) | 旧バージョンとの同時運用が必要になった時点。fixture は**コミットして凍結**する |
-| アダプタの実ソケットテスト | アダプタの所在確定後。**このリポジトリには置かない** |
+
+schema 由来の property test は [test/protocol-property.test.ts](../test/protocol-property.test.ts)、旧・現行 wire fixture は [test/wire-fixtures.test.ts](../test/wire-fixtures.test.ts)、実 WebSocket harness は [test/websocket-harness.test.ts](../test/websocket-harness.test.ts) にある。各 command は §1 を参照。
 
 ## 8. ローカル 2 クライアントのプレビュー
 
 plan.md §3.14 が要求する 2 本目の検証手段であり、plan.md §6 Step 2 の完了条件の後半である。
 実装は `apps/preview-two-clients/`（[README](../apps/preview-two-clients/README.md)）。
+
+これは terminal CLI preview であり、ブラウザの Debug UI (`apps/debug-ui/`) とは別アプリである。Debug UI の起動と panel は [README.md](../README.md) を参照。
 
 ```console
 $ pnpm preview                          # 対話モード。SPACE で 1 ステップ
@@ -194,3 +203,7 @@ DN-2 / DN-3 / DN-5 / DN-6 / DN-7 とラウンドトリップの 6 つ。うち 3
 - 「**知らないフィールドは無視される**」—— DN-6 の前方互換の半分。
   今は `Schema` の既定（`onExcessProperty: 'ignore'`）であって決定ではないので、
   将来 `'error'` に変えると前方互換フレームが全部パースエラーになり、何も検知しない。
+
+## 10. ブラウザ仕様テスト
+
+`pnpm test:browser` は [test-browser/](../test-browser/) の `*.spec.ts` を Playwright の Chromium project で実行する。設定は [playwright.config.ts](../playwright.config.ts) にあり、`pnpm preview:browser` で Vite Debug UI を loopback 上に起動する。`HARNESS_PORT` の既定値は `5182`。既存 server は再利用しない。これは開発用 Debug UI の browser test であり、`pnpm verify` には含まれない。

@@ -1,5 +1,13 @@
 # @nerima-games/mx-multiplayer
 
+## 0.15.0
+
+### Minor Changes
+
+- Protocol message optional fields now require omission or a defined value in TypeScript. Numeric message schemas normalize negative zero to zero before wire encoding.
+
+- Reconnect tokens now expire after 24 hours by default. Pass a finite positive Effect `Duration.Input` as `tokenTtl` in the optional `createReconnectAuth` options to configure the lifetime. See `docs/public-api.md` for an example.
+
 ## 0.14.0
 
 ### Minor Changes

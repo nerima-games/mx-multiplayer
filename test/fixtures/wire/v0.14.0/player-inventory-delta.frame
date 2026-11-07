@@ -1,0 +1,1 @@
+{"message":{"_tag":"PlayerInventoryDelta","revision":13,"world":"overworld","player":"alice","state":{"selectedSlot":0,"slots":[{"count":2,"durability":{"current":63,"max":64},"item":"stone"}]}},"protocolVersion":10}

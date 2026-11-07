@@ -3,6 +3,10 @@
  * `application/browser-transport.ts`'s `PlayerResume` / `PlayerResumeAccepted`
  * handshake.
  *
+ * Reconnect tokens expire 24 hours after issuance by default. This gives
+ * disconnected players time to return while bounding how long a leaked token
+ * remains valid.
+ *
  * Lowered from the composing app's `multiplayer-server/reconnect-auth.ts`,
  * restructured for this repository's platform-free build. Neither
  * `AuthoritativeCommand` nor `SurvivalCommand` appears anywhere in this file
@@ -28,17 +32,31 @@
  * had — that contract is documented on `ReconnectAuthStore.save` below, not
  * re-implemented here).
  */
-import { Effect, Exit, Result, Schema, Semaphore } from 'effect'
+import { Clock, Duration, Effect, Exit, Result, Schema, Semaphore } from 'effect'
 import { PlayerId } from '../../domain/protocol/identifiers.js'
 
 export const RECONNECT_TOKEN_BYTES = 32
 const LEGACY_PERSISTED_FORMAT = 1
-const PERSISTED_FORMAT = 2
+const CURRENT_PERSISTED_FORMAT = 2
+const PERSISTED_FORMAT = 3
 const MUTATION_PERMITS = 1
+const DEFAULT_RECONNECT_TOKEN_TTL_HOURS = 24
+const MIN_RECONNECT_TOKEN_TTL_MILLIS = 0
+
+const DEFAULT_RECONNECT_TOKEN_TTL = Duration.hours(DEFAULT_RECONNECT_TOKEN_TTL_HOURS)
+
+type IssuedHash = {
+  readonly hash: string
+  readonly issuedAt: number
+}
 
 type ReconnectTokenHashes = {
-  readonly current: string
-  readonly previous?: string
+  readonly current: IssuedHash
+  readonly previous?: IssuedHash
+}
+
+export type ReconnectAuthOptions = {
+  readonly tokenTtl?: Duration.Input
 }
 
 /** Raw resume input is branded to distinguish it from unrelated strings, then checked before use. */
@@ -89,51 +107,74 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const SINGLE_HASH_KEY_COUNT = 1
 const HASH_WITH_PREVIOUS_KEY_COUNT = 2
+const ISSUED_HASH_KEY_COUNT = 2
 
-const decodeHashesWithoutPrevious = (current: string, keyCount: number): ReconnectTokenHashes | undefined => {
-  if (keyCount !== SINGLE_HASH_KEY_COUNT) {
-    return undefined
-  }
-  return { current }
-}
-
-const decodeHashesWithPrevious = (
-  current: string,
-  previous: unknown,
-  keyCount: number,
-): ReconnectTokenHashes | undefined => {
-  if (!isHash(previous) || keyCount !== HASH_WITH_PREVIOUS_KEY_COUNT) {
-    return undefined
-  }
-  return { current, previous }
-}
-
-const decodeTokenHashes = (value: unknown): ReconnectTokenHashes | undefined => {
+const decodeLegacyTokenHashes = (value: unknown, issuedAt: number): ReconnectTokenHashes | undefined => {
   if (!isRecord(value) || !isHash(value['current'])) {
     return undefined
   }
   const { current, previous } = value
   const keyCount = Object.keys(value).length
-  if (previous === undefined) {
-    return decodeHashesWithoutPrevious(current, keyCount)
+  if (previous === undefined && keyCount === SINGLE_HASH_KEY_COUNT) {
+    return { current: { hash: current, issuedAt } }
   }
-  return decodeHashesWithPrevious(current, previous, keyCount)
+  if (isHash(previous) && keyCount === HASH_WITH_PREVIOUS_KEY_COUNT) {
+    return { current: { hash: current, issuedAt }, previous: { hash: previous, issuedAt } }
+  }
+  return undefined
+}
+
+const isIssuedHash = (value: unknown): value is IssuedHash =>
+  isRecord(value) &&
+  isHash(value['hash']) &&
+  Number.isSafeInteger(value['issuedAt']) &&
+  Object.keys(value).length === ISSUED_HASH_KEY_COUNT
+
+const decodeTokenHashes = (value: unknown): ReconnectTokenHashes | undefined => {
+  if (!isRecord(value) || !isIssuedHash(value['current'])) {
+    return undefined
+  }
+  const { current, previous } = value
+  const keyCount = Object.keys(value).length
+  if (previous === undefined && keyCount === SINGLE_HASH_KEY_COUNT) {
+    return { current }
+  }
+  if (isIssuedHash(previous) && keyCount === HASH_WITH_PREVIOUS_KEY_COUNT) {
+    return { current, previous }
+  }
+  return undefined
 }
 
 const decodeLegacyPlayers = (
   entries: ReadonlyArray<readonly [string, unknown]>,
+  issuedAt: number,
 ): Result.Result<Map<string, ReconnectTokenHashes>, Error> => {
   const decoded = new Map<string, ReconnectTokenHashes>()
   for (const [player, hash] of entries) {
     if (player === '' || !isHash(hash)) {
       return Result.fail(new Error('invalid reconnect auth file: legacy format'))
     }
-    decoded.set(player, { current: hash })
+    decoded.set(player, { current: { hash, issuedAt } })
   }
   return Result.succeed(decoded)
 }
 
-const decodeCurrentPlayers = (
+const decodeV2Players = (
+  entries: ReadonlyArray<readonly [string, unknown]>,
+  issuedAt: number,
+): Result.Result<Map<string, ReconnectTokenHashes>, Error> => {
+  const decoded = new Map<string, ReconnectTokenHashes>()
+  for (const [player, hashesValue] of entries) {
+    const hashes = decodeLegacyTokenHashes(hashesValue, issuedAt)
+    if (player === '' || hashes === undefined) {
+      return Result.fail(new Error('invalid reconnect auth file'))
+    }
+    decoded.set(player, hashes)
+  }
+  return Result.succeed(decoded)
+}
+
+const decodeV3Players = (
   entries: ReadonlyArray<readonly [string, unknown]>,
 ): Result.Result<Map<string, ReconnectTokenHashes>, Error> => {
   const decoded = new Map<string, ReconnectTokenHashes>()
@@ -149,20 +190,35 @@ const decodeCurrentPlayers = (
 
 const PERSISTED_HASHES_JSON_SCHEMA = Schema.fromJsonString(Schema.Unknown)
 
-const decodePersisted = (source: string): Result.Result<Map<string, ReconnectTokenHashes>, unknown> => {
+const decodePersistedPlayers = (
+  format: unknown,
+  players: Record<string, unknown>,
+  loadedAt: number,
+): Result.Result<Map<string, ReconnectTokenHashes>, Error> => {
+  const entries = Object.entries(players)
+  switch (format) {
+    case LEGACY_PERSISTED_FORMAT:
+      return decodeLegacyPlayers(entries, loadedAt)
+    case CURRENT_PERSISTED_FORMAT:
+      return decodeV2Players(entries, loadedAt)
+    case PERSISTED_FORMAT:
+      return decodeV3Players(entries)
+    default:
+      return Result.fail(new Error('invalid reconnect auth file'))
+  }
+}
+
+const decodePersisted = (source: string, loadedAt: number): Result.Result<Map<string, ReconnectTokenHashes>, unknown> => {
   const parsed = Schema.decodeUnknownResult(PERSISTED_HASHES_JSON_SCHEMA)(source)
   if (Result.isFailure(parsed)) {
     return Result.fail(parsed.failure)
   }
   const value = parsed.success
-  if (!isRecord(value) || (value['format'] !== LEGACY_PERSISTED_FORMAT && value['format'] !== PERSISTED_FORMAT) || !isRecord(value['players'])) {
+  if (!isRecord(value) || !isRecord(value['players'])) {
     return Result.fail(new Error('invalid reconnect auth file'))
   }
-  const entries = Object.entries(value['players'])
-  if (value['format'] === LEGACY_PERSISTED_FORMAT) {
-    return decodeLegacyPlayers(entries)
-  }
-  return decodeCurrentPlayers(entries)
+  const { format, players } = value
+  return decodePersistedPlayers(format, players, loadedAt)
 }
 
 const loadHashes = (store: ReconnectAuthStore): Effect.Effect<Map<string, ReconnectTokenHashes>, unknown> =>
@@ -171,7 +227,9 @@ const loadHashes = (store: ReconnectAuthStore): Effect.Effect<Map<string, Reconn
     if (source === undefined) {
       return new Map()
     }
-    const decoded = decodePersisted(source)
+    // Formats 1 and 2 have no issue times, so their TTL starts at load time.
+    const loadedAt = yield* Clock.currentTimeMillis
+    const decoded = decodePersisted(source, loadedAt)
     if (Result.isFailure(decoded)) {
       return yield* Effect.fail(decoded.failure)
     }
@@ -181,8 +239,49 @@ const loadHashes = (store: ReconnectAuthStore): Effect.Effect<Map<string, Reconn
 const captureSyncFailure = <Value>(run: () => Value): Effect.Effect<Value, unknown> =>
   Effect.try({ catch: (error) => error, try: run })
 
-const serializeHashes = (hashes: ReadonlyMap<string, ReconnectTokenHashes>): string =>
-  `${JSON.stringify({ format: PERSISTED_FORMAT, players: Object.fromEntries(hashes) })}\n`
+const isExpired = (hash: IssuedHash, now: number, tokenTtlMillis: number): boolean =>
+  now < hash.issuedAt || hash.issuedAt + tokenTtlMillis <= now
+
+const retainValidHash = (hash: IssuedHash | undefined, now: number, tokenTtlMillis: number): IssuedHash | undefined => {
+  if (hash === undefined || isExpired(hash, now, tokenTtlMillis)) {
+    return undefined
+  }
+  return hash
+}
+
+const retainValidHashes = (hashes: ReconnectTokenHashes, now: number, tokenTtlMillis: number): ReconnectTokenHashes | undefined => {
+  const { current, previous } = hashes
+  const validCurrent = retainValidHash(current, now, tokenTtlMillis)
+  const validPrevious = retainValidHash(previous, now, tokenTtlMillis)
+  if (validCurrent !== undefined && validPrevious !== undefined) {
+    return { current: validCurrent, previous: validPrevious }
+  }
+  if (validCurrent !== undefined) {
+    return { current: validCurrent }
+  }
+  if (validPrevious !== undefined) {
+    return { current: validPrevious }
+  }
+  return undefined
+}
+
+type SerializedHashes = {
+  readonly hashes: Map<string, ReconnectTokenHashes>
+  readonly contents: string
+}
+
+const serializePrunedHashes = (hashes: ReadonlyMap<string, ReconnectTokenHashes>, now: number, tokenTtlMillis: number): SerializedHashes => {
+  const retained = new Map<string, ReconnectTokenHashes>()
+  const players: Record<string, ReconnectTokenHashes> = Object.create(null)
+  for (const [player, entry] of hashes) {
+    const validHashes = retainValidHashes(entry, now, tokenTtlMillis)
+    if (validHashes !== undefined) {
+      retained.set(player, validHashes)
+      players[player] = validHashes
+    }
+  }
+  return { contents: `${JSON.stringify({ format: PERSISTED_FORMAT, players })}\n`, hashes: retained }
+}
 
 /** A decoded, format-validated reconnect token, or `undefined` if `token` is not one this module could have issued. */
 export const ReconnectToken: Schema.brand<typeof ReconnectTokenInput, 'ReconnectToken'> = ReconnectTokenInput.pipe(
@@ -193,28 +292,39 @@ export type ReconnectToken = typeof ReconnectToken.Type
 
 const isWellFormedToken = (token: string): token is ReconnectToken => RECONNECT_TOKEN_PATTERN.test(token)
 
-const issueToken = (crypto: ReconnectAuthCrypto): Effect.Effect<{ readonly hashes: ReconnectTokenHashes; readonly token: ReconnectToken }, unknown> =>
+const issueToken = (crypto: ReconnectAuthCrypto, issuedAt: number): Effect.Effect<{ readonly hashes: ReconnectTokenHashes; readonly token: ReconnectToken }, unknown> =>
   Effect.gen(function* () {
     const token = yield* captureSyncFailure(() => crypto.randomToken())
     const current = yield* captureSyncFailure(() => crypto.hashHex(token))
-    return { hashes: { current }, token }
+    return { hashes: { current: { hash: current, issuedAt } }, token }
   })
 
 /** Everything a mutating operation needs, bundled so no function here takes more than three parameters. */
 type ReconnectAuthContext = {
   readonly crypto: ReconnectAuthCrypto
-  readonly hashes: Map<string, ReconnectTokenHashes>
+  hashes: Map<string, ReconnectTokenHashes>
   readonly store: ReconnectAuthStore
+  readonly tokenTtlMillis: number
 }
 
-const persistOrRevert = (
-  ctx: ReconnectAuthContext,
-  player: string,
-  previousEntry: ReconnectTokenHashes | undefined,
-): Effect.Effect<void, unknown> =>
+type PlayerMutation = {
+  readonly ctx: ReconnectAuthContext
+  readonly now: number
+  readonly player: string
+  readonly previousEntry: ReconnectTokenHashes | undefined
+}
+
+const persistOrRevert = ({ ctx, now, player, previousEntry }: PlayerMutation): Effect.Effect<void, unknown> =>
   Effect.gen(function* () {
-    const saved = yield* Effect.exit(ctx.store.save(serializeHashes(ctx.hashes)))
+    const saved = yield* Effect.exit(Effect.gen(function* () {
+      const serialized = yield* captureSyncFailure(() => serializePrunedHashes(ctx.hashes, now, ctx.tokenTtlMillis))
+      yield* ctx.store.save(serialized.contents)
+      return serialized.hashes
+    }))
     if (Exit.isSuccess(saved)) {
+      yield* Effect.sync(() => {
+        ctx.hashes = saved.value
+      })
       return
     }
     yield* Effect.sync(() => {
@@ -227,44 +337,55 @@ const persistOrRevert = (
     return yield* Effect.failCause(saved.cause)
   })
 
-const applyIssue = (
-  ctx: ReconnectAuthContext,
-  player: string,
-  previousEntry: ReconnectTokenHashes | undefined,
-): Effect.Effect<string, unknown> =>
+const applyIssue = ({ ctx, now, player, previousEntry }: PlayerMutation): Effect.Effect<string, unknown> =>
   Effect.gen(function* () {
-    const { hashes: nextHashes, token } = yield* issueToken(ctx.crypto)
+    const { hashes: nextHashes, token } = yield* issueToken(ctx.crypto, now)
     yield* Effect.sync(() => ctx.hashes.set(player, nextHashes))
-    yield* persistOrRevert(ctx, player, previousEntry)
+    yield* persistOrRevert({ ctx, now, player, previousEntry })
     return token
   })
 
-const rotatedHashes = (
-  crypto: ReconnectAuthCrypto,
-  expected: ReconnectTokenHashes,
-  matchesCurrent: boolean,
-): Effect.Effect<{ readonly hashes: ReconnectTokenHashes; readonly token: ReconnectToken }, unknown> =>
+const rotatedHashes = ({
+  crypto,
+  expected,
+  matchesCurrent,
+  issuedAt,
+}: {
+  readonly crypto: ReconnectAuthCrypto
+  readonly expected: ReconnectTokenHashes
+  readonly matchesCurrent: boolean
+  readonly issuedAt: number
+}): Effect.Effect<{ readonly hashes: ReconnectTokenHashes; readonly token: ReconnectToken }, unknown> =>
   Effect.gen(function* () {
     const rotated = yield* captureSyncFailure(() => crypto.randomToken())
     const current = yield* captureSyncFailure(() => crypto.hashHex(rotated))
-    let hashes: ReconnectTokenHashes = { current }
+    let hashes: ReconnectTokenHashes = { current: { hash: current, issuedAt } }
     if (matchesCurrent) {
-      hashes = { current, previous: expected.current }
+      hashes = { current: { hash: current, issuedAt }, previous: expected.current }
     }
     return { hashes, token: rotated }
   })
 
-const matchesToken = (
-  crypto: ReconnectAuthCrypto,
-  actual: string,
-  expected: ReconnectTokenHashes,
-): Effect.Effect<{ readonly matchesCurrent: boolean; readonly matchesPrevious: boolean }, unknown> =>
+type TokenMatchRequest = {
+  readonly crypto: ReconnectAuthCrypto
+  readonly actual: string
+  readonly expected: ReconnectTokenHashes
+  readonly now: number
+  readonly tokenTtlMillis: number
+}
+
+const matchesToken = ({ crypto, actual, expected, now, tokenTtlMillis }: TokenMatchRequest): Effect.Effect<{
+  readonly matchesCurrent: boolean
+  readonly matchesPrevious: boolean
+}, unknown> =>
   Effect.gen(function* () {
-    const matchesCurrent = yield* captureSyncFailure(() => crypto.timingSafeEqualHex(actual, expected.current))
+    const equalsCurrent = yield* captureSyncFailure(() => crypto.timingSafeEqualHex(actual, expected.current.hash))
+    const matchesCurrent = equalsCurrent && !isExpired(expected.current, now, tokenTtlMillis)
     const { previous } = expected
     let matchesPrevious = false
     if (previous !== undefined) {
-      matchesPrevious = yield* captureSyncFailure(() => crypto.timingSafeEqualHex(actual, previous))
+      const equalsPrevious = yield* captureSyncFailure(() => crypto.timingSafeEqualHex(actual, previous.hash))
+      matchesPrevious = equalsPrevious && !isExpired(previous, now, tokenTtlMillis)
     }
     return { matchesCurrent, matchesPrevious }
   })
@@ -281,24 +402,33 @@ type RotationTarget = {
   readonly player: string
 }
 
-const matchingOwner = (
-  ctx: ReconnectAuthContext,
-  actual: string,
-  candidate: { readonly player: string; readonly expected: ReconnectTokenHashes },
-): Effect.Effect<RotationTarget | undefined, unknown> =>
+type MatchingOwnerRequest = {
+  readonly ctx: ReconnectAuthContext
+  readonly actual: string
+  readonly candidate: { readonly player: string; readonly expected: ReconnectTokenHashes }
+  readonly now: number
+}
+
+const matchingOwner = ({ ctx, actual, candidate, now }: MatchingOwnerRequest): Effect.Effect<RotationTarget | undefined, unknown> =>
   Effect.gen(function* () {
-    const { matchesCurrent, matchesPrevious } = yield* matchesToken(ctx.crypto, actual, candidate.expected)
+    const { matchesCurrent, matchesPrevious } = yield* matchesToken({
+      actual,
+      crypto: ctx.crypto,
+      expected: candidate.expected,
+      now,
+      tokenTtlMillis: ctx.tokenTtlMillis,
+    })
     if (!matchesCurrent && !matchesPrevious) {
       return undefined
     }
     return { expected: candidate.expected, matchesCurrent, player: candidate.player }
   })
 
-const findUniqueTokenOwner = (ctx: ReconnectAuthContext, actual: string): Effect.Effect<RotationTarget | undefined, unknown> =>
+const findUniqueTokenOwner = (ctx: ReconnectAuthContext, actual: string, now: number): Effect.Effect<RotationTarget | undefined, unknown> =>
   Effect.gen(function* () {
     let owner: RotationTarget | undefined = undefined
     for (const [player, expected] of ctx.hashes) {
-      const match = yield* matchingOwner(ctx, actual, { expected, player })
+      const match = yield* matchingOwner({ actual, candidate: { expected, player }, ctx, now })
       if (match !== undefined) {
         if (owner !== undefined) {
           return undefined
@@ -312,24 +442,101 @@ const findUniqueTokenOwner = (ctx: ReconnectAuthContext, actual: string): Effect
 const applyMatchedRotation = (
   ctx: ReconnectAuthContext,
   target: RotationTarget,
+  now: number,
 ): Effect.Effect<ReconnectToken, unknown> =>
   Effect.gen(function* () {
-    const { hashes: nextHashes, token } = yield* rotatedHashes(ctx.crypto, target.expected, target.matchesCurrent)
+    const { hashes: nextHashes, token } = yield* rotatedHashes({
+      crypto: ctx.crypto,
+      expected: target.expected,
+      issuedAt: now,
+      matchesCurrent: target.matchesCurrent,
+    })
     yield* Effect.sync(() => ctx.hashes.set(target.player, nextHashes))
-    yield* persistOrRevert(ctx, target.player, target.expected)
+    yield* persistOrRevert({ ctx, now, player: target.player, previousEntry: target.expected })
     return token
   })
 
 const applyRotation = (
   ctx: ReconnectAuthContext,
   request: RotationRequest,
+  now: number,
 ): Effect.Effect<string | undefined, unknown> =>
   Effect.gen(function* () {
-    const { matchesCurrent, matchesPrevious } = yield* matchesToken(ctx.crypto, request.actual, request.expected)
+    const { matchesCurrent, matchesPrevious } = yield* matchesToken({
+      actual: request.actual,
+      crypto: ctx.crypto,
+      expected: request.expected,
+      now,
+      tokenTtlMillis: ctx.tokenTtlMillis,
+    })
     if (!matchesCurrent && !matchesPrevious) {
       return undefined
     }
-    return yield* applyMatchedRotation(ctx, { expected: request.expected, matchesCurrent, player: request.player })
+    return yield* applyMatchedRotation(ctx, { expected: request.expected, matchesCurrent, player: request.player }, now)
+  })
+
+const resolveReconnectTokenTtl = (options: ReconnectAuthOptions | undefined): Effect.Effect<number, unknown> =>
+  Effect.gen(function* () {
+    const tokenTtlMillis = yield* captureSyncFailure(() => Duration.toMillis(options?.tokenTtl ?? DEFAULT_RECONNECT_TOKEN_TTL))
+    if (!Number.isFinite(tokenTtlMillis) || tokenTtlMillis <= MIN_RECONNECT_TOKEN_TTL_MILLIS) {
+      return yield* Effect.fail(new Error('reconnect token TTL must be a finite positive duration'))
+    }
+    return tokenTtlMillis
+  })
+
+const makeReconnectAuthOperations = (ctx: ReconnectAuthContext): Effect.Effect<ReconnectAuth, unknown> =>
+  Effect.gen(function* () {
+    const queue = yield* Semaphore.make(MUTATION_PERMITS)
+
+    // `has` reports a stored player entry; resume/rotate check whether its hashes are still valid.
+    const has = (player: string): boolean => ctx.hashes.has(player)
+
+    const issue = (player: string): Effect.Effect<string | undefined, unknown> =>
+      queue.withPermit(Effect.gen(function* () {
+        if (player === '' || ctx.hashes.has(player)) {
+          return undefined
+        }
+        const now = yield* Clock.currentTimeMillis
+        return yield* applyIssue({ ctx, now, player, previousEntry: undefined })
+      }))
+
+    const reissue = (player: string): Effect.Effect<string | undefined, unknown> =>
+      queue.withPermit(Effect.gen(function* () {
+        const previousEntry = ctx.hashes.get(player)
+        if (player === '' || previousEntry === undefined) {
+          return undefined
+        }
+        const now = yield* Clock.currentTimeMillis
+        return yield* applyIssue({ ctx, now, player, previousEntry })
+      }))
+
+    const rotate = (player: string, token: string): Effect.Effect<string | undefined, unknown> =>
+      queue.withPermit(Effect.gen(function* () {
+        const expected = ctx.hashes.get(player)
+        if (!isWellFormedToken(token) || expected === undefined) {
+          return undefined
+        }
+        const now = yield* Clock.currentTimeMillis
+        const actual = yield* captureSyncFailure(() => ctx.crypto.hashHex(token))
+        return yield* applyRotation(ctx, { actual, expected, player }, now)
+      }))
+
+    const resume = (token: ReconnectTokenInput): Effect.Effect<{ readonly player: PlayerId; readonly token: ReconnectToken } | undefined, unknown> =>
+      queue.withPermit(Effect.gen(function* () {
+        if (!isWellFormedToken(token)) {
+          return undefined
+        }
+        const now = yield* Clock.currentTimeMillis
+        const actual = yield* captureSyncFailure(() => ctx.crypto.hashHex(token))
+        const target = yield* findUniqueTokenOwner(ctx, actual, now)
+        if (target === undefined) {
+          return undefined
+        }
+        const rotated = yield* applyMatchedRotation(ctx, target, now)
+        return { player: PlayerId.make(target.player), token: rotated }
+      }))
+
+    return { has, issue, reissue, resume, rotate }
   })
 
 /**
@@ -339,54 +546,13 @@ const applyRotation = (
  * queue per instance, so concurrent requests cannot interleave their
  * read-modify-write of the hash table.
  */
-export const createReconnectAuth = (crypto: ReconnectAuthCrypto, store: ReconnectAuthStore): Effect.Effect<ReconnectAuth, unknown> =>
+export const createReconnectAuth = (
+  crypto: ReconnectAuthCrypto,
+  store: ReconnectAuthStore,
+  options?: ReconnectAuthOptions,
+): Effect.Effect<ReconnectAuth, unknown> =>
   Effect.gen(function* () {
+    const tokenTtlMillis = yield* resolveReconnectTokenTtl(options)
     const hashes = yield* loadHashes(store)
-    const ctx: ReconnectAuthContext = { crypto, hashes, store }
-    const queue = yield* Semaphore.make(MUTATION_PERMITS)
-
-    const has = (player: string): boolean => hashes.has(player)
-
-    const issue = (player: string): Effect.Effect<string | undefined, unknown> =>
-      queue.withPermit(Effect.gen(function* () {
-        if (player === '' || hashes.has(player)) {
-          return undefined
-        }
-        return yield* applyIssue(ctx, player, undefined)
-      }))
-
-    const reissue = (player: string): Effect.Effect<string | undefined, unknown> =>
-      queue.withPermit(Effect.gen(function* () {
-        const previousEntry = hashes.get(player)
-        if (player === '' || previousEntry === undefined) {
-          return undefined
-        }
-        return yield* applyIssue(ctx, player, previousEntry)
-      }))
-
-    const rotate = (player: string, token: string): Effect.Effect<string | undefined, unknown> =>
-      queue.withPermit(Effect.gen(function* () {
-        const expected = hashes.get(player)
-        if (!isWellFormedToken(token) || expected === undefined) {
-          return undefined
-        }
-        const actual = yield* captureSyncFailure(() => crypto.hashHex(token))
-        return yield* applyRotation(ctx, { actual, expected, player })
-      }))
-
-    const resume = (token: ReconnectTokenInput): Effect.Effect<{ readonly player: PlayerId; readonly token: ReconnectToken } | undefined, unknown> =>
-      queue.withPermit(Effect.gen(function* () {
-        if (!isWellFormedToken(token)) {
-          return undefined
-        }
-        const actual = yield* captureSyncFailure(() => crypto.hashHex(token))
-        const target = yield* findUniqueTokenOwner(ctx, actual)
-        if (target === undefined) {
-          return undefined
-        }
-        const rotated = yield* applyMatchedRotation(ctx, target)
-        return { player: PlayerId.make(target.player), token: rotated }
-      }))
-
-    return { has, issue, reissue, resume, rotate }
+    return yield* makeReconnectAuthOperations({ crypto, hashes, store, tokenTtlMillis })
   })

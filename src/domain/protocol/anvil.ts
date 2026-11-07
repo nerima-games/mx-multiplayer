@@ -11,7 +11,7 @@
  * the same idea, and the shared `codec.ts` gets the decoding for free instead
  * of a bespoke parser.
  */
-import { CommandId, PlayerId, Revision, WorldId } from '../protocol/identifiers.js'
+import { CommandId, PlayerId, Revision, WireNumber, WorldId } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
 /** Anvils have 36 slots; the renamed item always sits in the first (input) slot in the reference implementation's layout. */
@@ -19,7 +19,7 @@ const ZERO = 0
 const ANVIL_SLOT_COUNT = 36
 const ANVIL_MAX_NAME_LENGTH = 50
 
-export const AnvilSlotIndex: typeof Schema.Number = Schema.Number.pipe(
+export const AnvilSlotIndex: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
   Schema.check(Schema.isLessThan(ANVIL_SLOT_COUNT)),

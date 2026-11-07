@@ -1,0 +1,1 @@
+{"message":{"_tag":"ContainerDelta","revision":13,"world":"overworld","state":{"containerId":"dropper:1","kind":"dropper","slots":[{"count":2,"durability":{"current":63,"max":64},"item":"stone"}]}},"protocolVersion":8}

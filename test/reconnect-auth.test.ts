@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Duration, Effect } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { PlayerId } from '../src/domain/protocol/identifiers'
 import {
@@ -70,6 +71,21 @@ const inMemoryStore = (): ReconnectAuthStore & { readonly writes: string[] } => 
     },
     writes,
   }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const readPersistedPlayers = (source: string | undefined): Record<string, unknown> => {
+  const saved: unknown = JSON.parse(source ?? '{}')
+  if (!isRecord(saved)) {
+    throw new Error('expected reconnect auth file object')
+  }
+  const players = saved['players']
+  if (!isRecord(players)) {
+    throw new Error('expected reconnect auth players object')
+  }
+  return players
 }
 
 describe('createReconnectAuth', () => {
@@ -370,6 +386,270 @@ describe('createReconnectAuth', () => {
   it('starts empty when the store has nothing persisted', async () => {
     const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
     expect(auth.has('alice')).toBe(false)
+  })
+
+  // This catches an omitted-option regression and proves the documented default expires at exactly one day.
+  it.effect('uses the 24-hour default when options are omitted', () =>
+    Effect.gen(function* () {
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, inMemoryStore())
+      const token = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.hours(24))
+
+      expect(yield* auth.rotate('alice', token)).toBeUndefined()
+    }),
+  )
+
+  // This catches an off-by-one expiry comparison and tokens expiring early or late.
+  it.effect('accepts just before TTL and rejects at and after TTL', () =>
+    Effect.gen(function* () {
+      const ttl = Duration.seconds(10)
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, inMemoryStore(), { tokenTtl: ttl })
+      const before = definedOrThrow(yield* auth.issue('before'))
+      const exact = definedOrThrow(yield* auth.issue('exact'))
+      const after = definedOrThrow(yield* auth.issue('after'))
+
+      yield* TestClock.adjust(Duration.seconds(9))
+      expect(yield* auth.rotate('before', before)).toBeDefined()
+      yield* TestClock.adjust(Duration.seconds(1))
+      expect(yield* auth.rotate('exact', exact)).toBeUndefined()
+      yield* TestClock.adjust(Duration.millis(1))
+      expect(yield* auth.rotate('after', after)).toBeUndefined()
+    }),
+  )
+
+  // This catches resetting the previous token's age during rotation or failing to start the replacement's TTL at rotation.
+  it.effect('keeps the previous issue time and gives a rotated token a fresh TTL', () =>
+    Effect.gen(function* () {
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, inMemoryStore(), { tokenTtl: Duration.seconds(10) })
+      const original = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.seconds(9))
+      const rotated = definedOrThrow(yield* auth.rotate('alice', original))
+      yield* TestClock.adjust(Duration.seconds(1))
+
+      expect(yield* auth.rotate('alice', original)).toBeUndefined()
+      expect(yield* auth.rotate('alice', rotated)).toBeDefined()
+    }),
+  )
+
+  // This catches ignoring TTL in resume() while rotate() enforces it.
+  it.effect('rejects an expired token from resume without saving a rotation', () =>
+    Effect.gen(function* () {
+      const store = inMemoryStore()
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.seconds(10) })
+      const token = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.seconds(10))
+
+      expect(yield* auth.resume(ReconnectTokenInput.make(token))).toBeUndefined()
+      expect(store.writes).toHaveLength(1)
+    }),
+  )
+
+  // This catches migration timestamps anchored to an old epoch instead of the time v1 data is loaded.
+  it.effect('starts a v1 token TTL when the file is loaded', () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust(Duration.hours(1))
+      const token = randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url')
+      const store: ReconnectAuthStore = {
+        load: () => Effect.succeed(JSON.stringify({ format: 1, players: { alice: nodeCrypto.hashHex(token) } })),
+        save: () => Effect.void,
+      }
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.seconds(10) })
+
+      expect(yield* auth.rotate('alice', token)).toBeDefined()
+      yield* TestClock.adjust(Duration.seconds(10))
+      expect(yield* auth.rotate('alice', token)).toBeUndefined()
+    }),
+  )
+
+  // This catches v2 current or previous hashes being migrated with different or stale issue times.
+  it.effect('starts both v2 hash TTLs when the file is loaded', () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust(Duration.hours(1))
+      const currentToken = randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url')
+      const previousToken = randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url')
+      const source = JSON.stringify({
+        format: 2,
+        players: {
+          alice: { current: nodeCrypto.hashHex(currentToken), previous: nodeCrypto.hashHex(previousToken) },
+        },
+      })
+      const makeStore = (): ReconnectAuthStore => ({ load: () => Effect.succeed(source), save: () => Effect.void })
+      const options = { tokenTtl: Duration.seconds(10) }
+      const currentAuth = yield* createReconnectAuthEffect(nodeCrypto, makeStore(), options)
+      const previousAuth = yield* createReconnectAuthEffect(nodeCrypto, makeStore(), options)
+      const expiredAuth = yield* createReconnectAuthEffect(nodeCrypto, makeStore(), options)
+
+      expect(yield* currentAuth.rotate('alice', currentToken)).toBeDefined()
+      expect(yield* previousAuth.rotate('alice', previousToken)).toBeDefined()
+      yield* TestClock.adjust(Duration.seconds(10))
+      expect(yield* expiredAuth.resume(ReconnectTokenInput.make(previousToken))).toBeUndefined()
+    }),
+  )
+
+  // This catches accepting a hash issued in the future after the system clock moves backwards.
+  it.effect('rejects a token after the clock moves before its issue time', () =>
+    Effect.gen(function* () {
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, inMemoryStore(), { tokenTtl: Duration.seconds(10) })
+      const token = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.millis(-1))
+
+      expect(yield* auth.rotate('alice', token)).toBeUndefined()
+    }),
+  )
+
+  // This catches expiring a still-live previous hash when a rollback makes the newer current hash future-dated.
+  it.effect('keeps a valid previous hash when pruning a future-dated current hash', () =>
+    Effect.gen(function* () {
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, inMemoryStore(), { tokenTtl: Duration.seconds(10) })
+      const previous = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.seconds(5))
+      const futureCurrent = definedOrThrow(yield* auth.rotate('alice', previous))
+      yield* TestClock.adjust(Duration.seconds(-4))
+      expect(yield* auth.rotate('alice', futureCurrent)).toBeUndefined()
+
+      expect(yield* auth.issue('bob')).toBeDefined()
+      expect(yield* auth.rotate('alice', previous)).toBeDefined()
+    }),
+  )
+
+  // This catches expired records lingering after another player's successful save and verifies has() stays membership-only.
+  it.effect('rejects expired hashes and removes them on the next successful save', () =>
+    Effect.gen(function* () {
+      const store = inMemoryStore()
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.seconds(10) })
+      const token = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.seconds(10))
+
+      expect(auth.has('alice')).toBe(true)
+      expect(yield* auth.rotate('alice', token)).toBeUndefined()
+      expect(yield* auth.resume(ReconnectTokenInput.make(token))).toBeUndefined()
+      expect(yield* auth.issue('bob')).toBeDefined()
+      expect(auth.has('alice')).toBe(false)
+      expect(auth.has('bob')).toBe(true)
+      const players = readPersistedPlayers(store.writes.at(-1))
+      expect(Object.keys(players)).toEqual(['bob'])
+    }),
+  )
+
+  // This catches an expired previous hash surviving serialization after another player's successful save.
+  it.effect('removes an expired previous hash while retaining the current hash', () =>
+    Effect.gen(function* () {
+      const store = inMemoryStore()
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.seconds(10) })
+      const previous = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.seconds(9))
+      const current = definedOrThrow(yield* auth.rotate('alice', previous))
+      yield* TestClock.adjust(Duration.seconds(1))
+      expect(yield* auth.rotate('alice', previous)).toBeUndefined()
+
+      expect(yield* auth.issue('bob')).toBeDefined()
+      const players = readPersistedPlayers(store.writes.at(-1))
+      const aliceEntry = players['alice']
+      if (!isRecord(aliceEntry)) {
+        throw new Error('expected alice reconnect auth entry')
+      }
+      expect(Object.keys(aliceEntry)).toEqual(['current'])
+      const currentHash = aliceEntry['current']
+      if (!isRecord(currentHash)) {
+        throw new Error('expected current reconnect token hash')
+      }
+      expect(typeof currentHash['issuedAt']).toBe('number')
+      expect(current).toBeDefined()
+    }),
+  )
+
+  // This catches cleanup changing in-memory state before its serialized save succeeds.
+  it.effect('keeps expired records when the cleanup save fails', () =>
+    Effect.gen(function* () {
+      let allowSave = true
+      const contents: { value: string | undefined } = { value: undefined }
+      const store: ReconnectAuthStore = {
+        load: () => Effect.sync(() => contents.value),
+        save: (next) => {
+          if (!allowSave) {
+            return Effect.fail(new Error('disk full'))
+          }
+          contents.value = next
+          return Effect.void
+        },
+      }
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.seconds(10) })
+      yield* auth.issue('alice')
+      yield* TestClock.adjust(Duration.seconds(10))
+      allowSave = false
+
+      const failed = yield* Effect.exit(auth.issue('bob'))
+      expect(failed._tag).toBe('Failure')
+      expect(auth.has('alice')).toBe(true)
+      expect(auth.has('bob')).toBe(false)
+      expect(Object.keys(JSON.parse(contents.value ?? '{}').players)).toEqual(['alice'])
+
+      allowSave = true
+      yield* auth.issue('bob')
+      expect(auth.has('alice')).toBe(false)
+      expect(auth.has('bob')).toBe(true)
+      expect(Object.keys(JSON.parse(contents.value ?? '{}').players)).toEqual(['bob'])
+    }),
+  )
+
+  // This catches an accidentally short configured TTL by checking a token beyond the default reconnect window.
+  it.effect('accepts a token within a configured long TTL', () =>
+    Effect.gen(function* () {
+      const auth = yield* createReconnectAuthEffect(nodeCrypto, inMemoryStore(), { tokenTtl: Duration.days(30) })
+      const token = definedOrThrow(yield* auth.issue('alice'))
+
+      yield* TestClock.adjust(Duration.hours(24))
+
+      expect(yield* auth.rotate('alice', token)).toBeDefined()
+    }),
+  )
+
+  // This catches a format 3 parser that accepts malformed issue times, hash objects, or file envelopes.
+  it('rejects format 3 entries with invalid issue times or extra fields', async () => {
+    const hash = nodeCrypto.hashHex('seed-token')
+    const malformedFiles = [
+      JSON.stringify({ format: 3, players: { alice: { current: { hash, issuedAt: 'yesterday' } } } }),
+      JSON.stringify({ format: 3, players: { alice: { current: { hash, issuedAt: 0, extra: true } } } }),
+      JSON.stringify({ format: 3, players: { alice: { current: { hash, issuedAt: 0 }, previous: 'not-a-hash' } } }),
+      JSON.stringify([]),
+      JSON.stringify({ format: 3, players: null }),
+    ]
+
+    await Promise.all(malformedFiles.map(async (source) => {
+      const store: ReconnectAuthStore = { load: () => Effect.succeed(source), save: () => Effect.void }
+      await expect(createReconnectAuth(nodeCrypto, store)).rejects.toThrow()
+    }))
+  })
+
+  // This catches changes that write format 3 but cannot read the new current-only or current-plus-previous shape.
+  it('reloads format 3 files with current-only and current-plus-previous entries', async () => {
+    const currentOnlyStore = inMemoryStore()
+    const currentOnlyAuth = await createReconnectAuth(nodeCrypto, currentOnlyStore)
+    const currentOnlyToken = definedOrThrow(await currentOnlyAuth.issue('alice'))
+    const currentOnlyRestart = await createReconnectAuth(nodeCrypto, currentOnlyStore)
+    expect(await currentOnlyRestart.rotate('alice', currentOnlyToken)).toBeDefined()
+
+    const previousStore = inMemoryStore()
+    const previousAuth = await createReconnectAuth(nodeCrypto, previousStore)
+    const previousToken = definedOrThrow(await previousAuth.issue('alice'))
+    await previousAuth.rotate('alice', previousToken)
+    const previousRestart = await createReconnectAuth(nodeCrypto, previousStore)
+    expect(await previousRestart.rotate('alice', previousToken)).toBeDefined()
+  })
+
+  // This catches TTL values that would make tokens immortal or immediately unusable without an explicit failure.
+  it('rejects non-finite and non-positive token TTL values', async () => {
+    const store = inMemoryStore()
+    await expect(Effect.runPromise(createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.infinity }))).rejects.toThrow()
+    await expect(Effect.runPromise(createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.millis(0) }))).rejects.toThrow()
+    await expect(Effect.runPromise(createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.millis(-1) }))).rejects.toThrow()
   })
 
   // SECOND VERIFICATION ANGLE (ordering/conflict, per the dispatch instruction):

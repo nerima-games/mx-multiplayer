@@ -1,0 +1,11 @@
+{
+  "family": "world-sync",
+  "messageTag": "PlayerMove",
+  "protocolVersion": 8,
+  "sourceVersion": "0.11.0",
+  "sourceTag": "v0.11.0",
+  "tarballShasum": "52871b87f3abae2d553cc607755c3c26ab731f4f",
+  "generatingCommand": "nix develop <project-flake> --command node generate-wire-frames.mjs",
+  "generatingWorkingDirectory": "/tmp/x2-old/0.11.0/codec-runtime",
+  "sourceCommit": "041098142dece173649b091d29d3fa94991fffe8"
+}

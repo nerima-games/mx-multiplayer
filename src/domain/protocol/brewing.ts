@@ -26,7 +26,7 @@
  * is what lets it be versioned independently, the same rule `ItemStack` and
  * `MobState` already follow inside `protocol.ts` itself.
  */
-import { BlockPos, CommandId, PlayerId, Revision, WorldId } from '../protocol/identifiers.js'
+import { BlockPos, CommandId, PlayerId, Revision, WireNumber, WorldId } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `BREWING_INGREDIENTS`. Not imported — see the file header. */
@@ -57,20 +57,20 @@ export type BrewingBottle = typeof BrewingBottle.Type
 const BrewingProgress: Schema.Struct<{ output: typeof PotionType; remainingSecs: typeof Schema.Number }> =
   Schema.Struct({
     output: PotionType,
-    remainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+    remainingSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   })
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `BrewingStandState`. Not imported — see the file header. */
 export const BrewingStandState: Schema.Struct<{
-  bottle: Schema.optional<typeof BrewingBottle>
-  brewing: Schema.optional<typeof BrewingProgress>
+  bottle: Schema.optionalKey<typeof BrewingBottle>
+  brewing: Schema.optionalKey<typeof BrewingProgress>
   fuelUnits: typeof Schema.Number
-  ingredient: Schema.optional<typeof BrewingIngredient>
+  ingredient: Schema.optionalKey<typeof BrewingIngredient>
 }> = Schema.Struct({
-  bottle: Schema.optional(BrewingBottle),
-  brewing: Schema.optional(BrewingProgress),
-  fuelUnits: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  ingredient: Schema.optional(BrewingIngredient),
+  bottle: Schema.optionalKey(BrewingBottle),
+  brewing: Schema.optionalKey(BrewingProgress),
+  fuelUnits: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  ingredient: Schema.optionalKey(BrewingIngredient),
 })
 export type BrewingStandState = typeof BrewingStandState.Type
 
@@ -86,14 +86,14 @@ export type StatusEffectType = typeof StatusEffectType.Type
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `ActiveStatusEffect`. Not imported — see the file header. */
 export const ActiveStatusEffect: Schema.Struct<{
-  amplifier: Schema.optional<typeof Schema.Number>
+  amplifier: Schema.optionalKey<typeof Schema.Number>
   pulseClockSecs: typeof Schema.Number
   remainingSecs: typeof Schema.Number
   type: typeof StatusEffectType
 }> = Schema.Struct({
-  amplifier: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
-  pulseClockSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  remainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
+  amplifier: Schema.optionalKey(WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
+  pulseClockSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  remainingSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   type: StatusEffectType,
 })
 export type ActiveStatusEffect = typeof ActiveStatusEffect.Type
@@ -106,7 +106,7 @@ export type StatusEffectState = typeof StatusEffectState.Type
 
 const BREWING_SLOT_COUNT = 36
 
-export const BrewingSlotIndex: typeof Schema.Number = Schema.Number.pipe(
+export const BrewingSlotIndex: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
   Schema.check(Schema.isLessThan(BREWING_SLOT_COUNT)),

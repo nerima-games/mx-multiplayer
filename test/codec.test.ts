@@ -3046,3 +3046,57 @@ describe('codec properties', () => {
     }),
   )
 })
+
+describe('wire value normalization', () => {
+  it.effect('normalizes nested owner state and preserves shared references', () =>
+    Effect.sync(() => {
+      const sharedState = { values: [-0] }
+      const decoded = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
+        _tag: 'ReplicatedWorldDelta',
+        world: overworld,
+        revision: replicatedWorldRevision,
+        changes: [{ owner: OWNER_ID, state: { left: sharedState, right: sharedState } }],
+        blockChanges: [],
+      }))
+      const normalizedState = decoded.changes[0]?.state
+      if (!isRecordValue(normalizedState)) {
+        throw new Error('normalized owner state is not a record')
+      }
+      expect(normalizedState).toStrictEqual({ left: { values: [0] }, right: { values: [0] } })
+      expect(normalizedState?.['left']).toBe(normalizedState?.['right'])
+    }),
+  )
+
+  it.effect('rejects optional fields explicitly set to undefined at encode time', () =>
+    Effect.sync(() => {
+      // Present-but-undefined optional keys disappear when JSON serializes the frame.
+      expect(failure(encodeFrame({ _tag: 'BlockBreak', at: { x: 0, y: 0, z: 0 }, player: alice, world: undefined }))?.reason).toBe('unencodable-message')
+    }),
+  )
+
+  it.effect('canonicalizes negative zero in a wire number before the round trip', () =>
+    Effect.sync(() => {
+      // JSON serialization turns negative zero into positive zero and breaks strict round trips.
+      const encodedDragonSnapshotFrame = encodeFrame({
+        _tag: 'EnderDragonSnapshotDelta',
+        revision: 13,
+        snapshot: { health: 200, phase: 'circling', phaseTimerSecs: -0, rewardEmitted: false },
+      })
+      expect(Result.isSuccess(encodedDragonSnapshotFrame)).toBe(true)
+      const decoded = decodeFrame(Result.getOrThrow(encodedDragonSnapshotFrame))
+      expect(Result.getOrThrow(decoded)).toStrictEqual({
+        _tag: 'EnderDragonSnapshotDelta',
+        revision: 13,
+        snapshot: { health: 200, phase: 'circling', phaseTimerSecs: 0, rewardEmitted: false },
+      })
+      const received = decodeFrame(
+        `{"message":{"_tag":"EnderDragonSnapshotDelta","revision":13,"snapshot":{"health":200,"phase":"circling","phaseTimerSecs":-0,"rewardEmitted":false}},"protocolVersion":${PROTOCOL_VERSION}}`,
+      )
+      expect(Result.getOrThrow(received)).toStrictEqual({
+        _tag: 'EnderDragonSnapshotDelta',
+        revision: 13,
+        snapshot: { health: 200, phase: 'circling', phaseTimerSecs: 0, rewardEmitted: false },
+      })
+    }),
+  )
+})
