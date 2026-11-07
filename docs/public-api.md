@@ -300,6 +300,24 @@ stage 実装の詳細と追加の host adapter は `src/stages/registration.ts` 
 全体の stage 順序は [responsibility.md](./responsibility.md) §2.1 を参照。これは
 mx-multiplayer の公開 API ではなく、mc-compose が所有するフレーム契約である。
 
+### 8.2 Reconnect token expiration
+
+`createReconnectAuth` is exported from the package root and accepts an optional options object:
+
+```ts
+createReconnectAuth(
+  crypto: ReconnectAuthCrypto,
+  store: ReconnectAuthStore,
+  options?: { readonly tokenTtl?: Duration.Input },
+): Effect.Effect<ReconnectAuth, unknown>
+```
+
+Each reconnect token expires 24 hours after issuance by default. This gives a player time to reconnect after a disconnect while bounding how long a leaked token remains valid. Pass a finite positive Effect `Duration.Input` as `options.tokenTtl` to configure the lifetime, for example `Duration.hours(12)`.
+
+`has(player)` reports whether an auth record exists; `resume` and `rotate` check whether a matching token is still valid. The current and previous token hashes keep separate issuance times, so rotating a token starts a new lifetime for the new token while preserving the previous token's original expiry.
+
+Persisted formats 1 and 2 are earlier reconnect-auth file layouts. When the implementation loads either format, it treats each existing hash as issued at load time. This preserves those tokens during migration and starts their configured TTL when the file is read.
+
 ## 9. 公開パッケージの境界
 
 公開範囲の正本は `package.json` である。
