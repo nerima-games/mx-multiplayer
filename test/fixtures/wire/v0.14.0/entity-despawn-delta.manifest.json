@@ -1,0 +1,9 @@
+{
+  "family": "entities",
+  "messageTag": "EntityDespawnDelta",
+  "protocolVersion": 10,
+  "sourceVersion": "0.14.0",
+  "sourceTag": "v0.14.0",
+  "sourceCommit": "f01d7083c833d171190eb3579882c0feec970fee",
+  "generatingCommand": "nix develop --command pnpm exec tsx /tmp/x2-old/current/generate-wire-frames.mjs"
+}
