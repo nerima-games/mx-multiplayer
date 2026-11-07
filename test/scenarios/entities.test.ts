@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import {
   ENTITIES_COMMAND_TAGS,
   ENTITIES_MESSAGE_TAGS,

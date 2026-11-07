@@ -25,7 +25,7 @@ import {
   makeLoopbackPair,
   receiveMessage,
   sendMessage,
-} from '../src/index.js'
+} from '../../../../src/index.js'
 import { BlockIdSchema, BlockPositionSchema, DimensionRevisionSchema, SimulationTickSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { Effect, Queue, Result, Schema } from 'effect'
 import type {
@@ -35,6 +35,7 @@ import type {
   ScenarioClientState,
   ScenarioClock,
   ScenarioDefinition,
+  ScenarioEvaluation,
   ScenarioEntityRevision,
   ScenarioEvaluationInput,
   ScenarioFault,
@@ -48,8 +49,8 @@ import type {
   ScenarioSpeed,
   ScenarioStepContext,
   ScenarioWireLogEntry,
-} from './types.js'
-import type { NetworkMessage } from '../src/domain/protocol.js'
+} from '../../../../scenarios/types.js'
+import type { NetworkMessage } from '../../../../src/domain/protocol.js'
 import type { WorldBlockRead } from '@nerima-games/mc-sim'
 
 const CLIENT_IDS: ReadonlyArray<ScenarioClientId> = ['client-a', 'client-b']
@@ -74,6 +75,10 @@ const MAXIMUM_FRAME_BYTES = 1_048_576
 const MAXIMUM_FRAME_DEPTH = 13
 const MAXIMUM_FRAME_ITEMS = 1_024
 const MAXIMUM_REPLICATED_OWNERS = ZERO
+
+const isScenarioEffect = (
+  result: ScenarioEvaluation,
+): result is Effect.Effect<ScenarioResult['verdict'], unknown, never> => Effect.isEffect(result)
 
 const EMPTY_OWNER_REGISTRY_LIMITS = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxCollectionItems: MAXIMUM_FRAME_ITEMS,
@@ -400,6 +405,10 @@ class DeterministicScenarioRuntime implements ScenarioRuntime {
       frame: this.#frame,
       wireLog,
     }
+    const evaluationResult = this.#definition.evaluate(evaluation)
+    const verdict = isScenarioEffect(evaluationResult)
+      ? Effect.runSync(evaluationResult)
+      : evaluationResult
     return {
       angle: this.#definition.angle,
       authority,
@@ -419,7 +428,7 @@ class DeterministicScenarioRuntime implements ScenarioRuntime {
       seed: this.#seed,
       speed: this.#speed,
       title: this.#definition.title,
-      verdict: this.#definition.evaluate(evaluation),
+      verdict,
       wireLog,
     }
   }

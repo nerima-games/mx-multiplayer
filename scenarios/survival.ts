@@ -39,13 +39,13 @@ const unreachableEvidence = (details: string, ...evidence: Array<string>): Reaso
 const commandGameRuleUnreachable = unreachableEvidence(
   'The command application returns a C2 intent and does not apply game rules or world state.',
   'src/application/server/command-application.ts:204-216',
-  'scenarios/runtime.ts:152-163',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:157-168',
 )
 const damageRejectionUnreachable = unreachableEvidence(
   'PlayerDamageCommand has no authoritative-command handler in this runtime.',
   'src/domain/protocol/player-damage.ts:30-54',
-  'src/domain/protocol.ts:1102-1147',
-  'scenarios/runtime.ts:678-696',
+  'src/domain/protocol.ts:1109-1154',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:687-705',
 )
 const survivalStateUnreachable = unreachableEvidence(
   'The current authority validates and maps command payloads without reading owner state.',
@@ -77,7 +77,7 @@ export const survivalRejectionCoverage: {
     'snapshot-required': unreachableEvidence(
       'The runtime restores the overworld snapshot before connecting either client.',
       'src/domain/authoritative-session.ts:349-361',
-      'scenarios/runtime.ts:355-363',
+      'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:360-368',
     ),
     'stale-revision': scenarioEvidence(
       `PlayerVitalsCommand eat with expectedRevision ${String(STALE_REVISION)} at frame ${String(STALE_REVISION_FRAME)}`,

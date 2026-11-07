@@ -4,7 +4,7 @@ import type { ScenarioDefinition } from './types.js'
 const WORLD = WorldId.make('overworld')
 const ZERO = 0
 const ONE = 1
-// These IDs match the fixed clientPlayer mapping in scenarios/runtime.ts.
+// These IDs match the fixed clientPlayer mapping in apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts.
 const PLAYER_A = PlayerId.make('scenario-player-a')
 const PLAYER_B = PlayerId.make('scenario-player-b')
 const AUTHORITY_LAST_FRAME = 4

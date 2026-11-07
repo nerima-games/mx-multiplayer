@@ -92,7 +92,7 @@ describe('verification matrix', () => {
   it('rejects a gap without a reason or evidence', () => {
     expect(() => assertGapCell('negative-control', 'A1', {
       status: 'gap',
-      evidence: ['src/domain/protocol.ts:1102-1147'],
+      evidence: ['src/domain/protocol.ts:1109-1154'],
     })).toThrow('negative-control A1 (gap) has no reason')
     expect(() => assertGapCell('negative-control', 'A1', {
       status: 'gap',

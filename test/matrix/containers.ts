@@ -39,26 +39,26 @@ const resyncAfterGap: TestReference = {
 const coveredShape: MatrixCell = { status: 'covered', tests: [roundTrip, containerShapes] }
 const deltaNotCommand: MatrixCell = {
   status: 'excluded',
-  reason: 'This server-authored state message is not a command, so A2 command application or CommandUnsupported does not apply (src/domain/protocol.ts:694-714).',
+  reason: 'This server-authored state message is not a command, so A2 command application or CommandUnsupported does not apply (src/domain/protocol.ts:701-721).',
 }
 const deltaNotUntrustedOperation: MatrixCell = {
   status: 'excluded',
-  reason: 'The delta carries world, revision, and state but no player identity or client operation, so A7 command spoof checks do not apply (src/domain/protocol.ts:694-714).',
+  reason: 'The delta carries world, revision, and state but no player identity or client operation, so A7 command spoof checks do not apply (src/domain/protocol.ts:701-721).',
 }
 const containerDeltaReconnectGap: MatrixCell = {
   status: 'gap',
   reason: 'A5 applies because container state must be restored after a mid-session join or reconnect. AuthoritativeSnapshot includes containers, but the scenario runtime has no ContainerDelta receive or reconnect restore path.',
-  evidence: ['scenarios/types.ts:41', 'src/domain/protocol.ts:694', 'src/domain/protocol.ts:596-620', 'scenarios/runtime.ts:332-407', 'scenarios/runtime.ts:751-765'],
+  evidence: ['scenarios/types.ts:42', 'src/domain/protocol.ts:701', 'src/domain/protocol.ts:603-627', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337-416', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774'],
 }
 const furnaceDeltaReconnectGap: MatrixCell = {
   status: 'gap',
   reason: 'A5 applies because furnace state must be restored after a mid-session join or reconnect. AuthoritativeSnapshot includes furnaces, but the scenario runtime has no FurnaceDelta receive or reconnect restore path.',
-  evidence: ['scenarios/types.ts:41', 'src/domain/protocol.ts:701', 'src/domain/protocol.ts:596-620', 'scenarios/runtime.ts:332-407', 'scenarios/runtime.ts:751-765'],
+  evidence: ['scenarios/types.ts:42', 'src/domain/protocol.ts:708', 'src/domain/protocol.ts:603-627', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337-416', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774'],
 }
 const villagerTradeDeltaReconnectGap: MatrixCell = {
   status: 'gap',
   reason: 'A5 applies because villager trade state must be restored after a mid-session join or reconnect. AuthoritativeSnapshot includes villager trades, but the scenario runtime has no VillagerTradeDelta receive or reconnect restore path.',
-  evidence: ['scenarios/types.ts:41', 'src/domain/protocol.ts:708', 'src/domain/protocol.ts:596-620', 'scenarios/runtime.ts:332-407', 'scenarios/runtime.ts:751-765'],
+  evidence: ['scenarios/types.ts:42', 'src/domain/protocol.ts:715', 'src/domain/protocol.ts:603-627', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337-416', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774'],
 }
 const noStateAfterUnsupportedCommand: MatrixCell = {
   status: 'excluded',
@@ -66,7 +66,7 @@ const noStateAfterUnsupportedCommand: MatrixCell = {
 }
 const commandNotVisibilityUpdate: MatrixCell = {
   status: 'excluded',
-  reason: 'These client-to-authority requests do not carry recipient-projected state updates; A6 concerns AOI leakage and delivery of server updates (scenarios/runtime.ts:620-623; src/application/server/command-application.ts:202-210).',
+  reason: 'These client-to-authority requests do not carry recipient-projected state updates; A6 concerns AOI leakage and delivery of server updates (apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:629-632; src/application/server/command-application.ts:202-210).',
 }
 const optionalCompatibility: MatrixCell = {
   status: 'excluded',
@@ -81,17 +81,17 @@ const unauthorizedCommand: MatrixCell = { status: 'covered', tests: [spoofedComm
 const tradeApplicationGap: MatrixCell = {
   status: 'gap',
   reason: 'A2 requires game-state application, but applyAuthoritativeCommand only returns a canonical intent and mx-multiplayer has no TradeVillager execution path.',
-  evidence: ['src/application/server/command-application.ts:202-210', 'scenarios/runtime.ts:804-810', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:68-72'],
+  evidence: ['src/application/server/command-application.ts:202-210', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:813-819', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:68-72'],
 }
 const tradeConvergenceGap: MatrixCell = {
   status: 'gap',
   reason: 'A3 requires the resulting trade state on both clients, but mx-multiplayer only accepts the canonical intent and does not produce game state.',
-  evidence: ['src/application/server/command-application.ts:202-210', 'scenarios/runtime.ts:804-810', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:68-72'],
+  evidence: ['src/application/server/command-application.ts:202-210', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:813-819', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:68-72'],
 }
 const tradeReconnectGap: MatrixCell = {
   status: 'gap',
   reason: 'A5 requires the resulting trade state to be restored after reconnect, but mx-multiplayer does not produce trade state for a snapshot.',
-  evidence: ['src/application/server/command-application.ts:202-210', 'scenarios/runtime.ts:804-810', 'src/domain/protocol.ts:596-620', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:68-72'],
+  evidence: ['src/application/server/command-application.ts:202-210', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:813-819', 'src/domain/protocol.ts:603-627', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:68-72'],
 }
 const unsupportedCommand = (): MatrixCell => ({
   status: 'covered',
@@ -101,47 +101,47 @@ const unsupportedCommand = (): MatrixCell => ({
 const containerDeltaA3: MatrixCell = {
   status: 'gap',
   reason: 'No client-side path converts ContainerDelta into authoritative post-delta state, so two-client convergence cannot be checked.',
-  evidence: ['scenarios/runtime.ts:763', 'src/domain/authoritative-sync.ts:1293', 'src/domain/protocol.ts:694'],
+  evidence: ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772', 'src/domain/authoritative-sync.ts:1293', 'src/domain/protocol.ts:701'],
 }
 const containerDeltaA4: MatrixCell = {
   status: 'gap',
   reason: 'No revision, ordering, or resync path applies ContainerDelta; the client cache only applies the generic replicated world messages.',
-  evidence: ['src/domain/authoritative-sync.ts:1313', 'scenarios/runtime.ts:763', 'src/domain/protocol.ts:694'],
+  evidence: ['src/domain/authoritative-sync.ts:1313', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772', 'src/domain/protocol.ts:701'],
 }
 const containerDeltaA6: MatrixCell = {
   status: 'gap',
   reason: 'No recipient projection path handles ContainerDelta; the current AOI projector accepts only ReplicatedWorldDelta and the container state has no position.',
-  evidence: ['src/domain/chunk-delta.ts:370', 'src/domain/protocol.ts:425', 'scenarios/runtime.ts:763'],
+  evidence: ['src/domain/chunk-delta.ts:370', 'src/domain/protocol.ts:432', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772'],
 }
 const furnaceDeltaA3: MatrixCell = {
   status: 'gap',
   reason: 'No client-side path converts FurnaceDelta into authoritative post-delta state, so two-client convergence cannot be checked.',
-  evidence: ['scenarios/runtime.ts:763', 'src/domain/authoritative-sync.ts:1293', 'src/domain/protocol.ts:701'],
+  evidence: ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772', 'src/domain/authoritative-sync.ts:1293', 'src/domain/protocol.ts:708'],
 }
 const furnaceDeltaA4: MatrixCell = {
   status: 'gap',
   reason: 'No revision, ordering, or resync path applies FurnaceDelta; the client cache only applies the generic replicated world messages.',
-  evidence: ['src/domain/authoritative-sync.ts:1313', 'scenarios/runtime.ts:763', 'src/domain/protocol.ts:701'],
+  evidence: ['src/domain/authoritative-sync.ts:1313', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772', 'src/domain/protocol.ts:708'],
 }
 const furnaceDeltaA6: MatrixCell = {
   status: 'gap',
   reason: 'No recipient projection path handles FurnaceDelta; the current AOI projector accepts only ReplicatedWorldDelta and the furnace state has no position.',
-  evidence: ['src/domain/chunk-delta.ts:370', 'src/domain/protocol.ts:435', 'scenarios/runtime.ts:763'],
+  evidence: ['src/domain/chunk-delta.ts:370', 'src/domain/protocol.ts:442', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772'],
 }
 const villagerTradeDeltaA3: MatrixCell = {
   status: 'gap',
   reason: 'No client-side path converts VillagerTradeDelta into authoritative post-delta state, so two-client convergence cannot be checked.',
-  evidence: ['scenarios/runtime.ts:763', 'src/domain/authoritative-sync.ts:1293', 'src/domain/protocol.ts:708'],
+  evidence: ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772', 'src/domain/authoritative-sync.ts:1293', 'src/domain/protocol.ts:715'],
 }
 const villagerTradeDeltaA4: MatrixCell = {
   status: 'gap',
   reason: 'No revision, ordering, or resync path applies VillagerTradeDelta; the client cache only applies the generic replicated world messages.',
-  evidence: ['src/domain/authoritative-sync.ts:1313', 'scenarios/runtime.ts:763', 'src/domain/protocol.ts:708'],
+  evidence: ['src/domain/authoritative-sync.ts:1313', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772', 'src/domain/protocol.ts:715'],
 }
 const villagerTradeDeltaA6: MatrixCell = {
   status: 'gap',
   reason: 'No recipient projection path handles VillagerTradeDelta; the current AOI projector accepts only ReplicatedWorldDelta and the trade state has no position.',
-  evidence: ['src/domain/chunk-delta.ts:370', 'src/domain/protocol.ts:451', 'scenarios/runtime.ts:763'],
+  evidence: ['src/domain/chunk-delta.ts:370', 'src/domain/protocol.ts:458', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772'],
 }
 
 const deltaRow = (a3: MatrixCell, a4: MatrixCell, a5: MatrixCell, a6: MatrixCell, a8: MatrixCell = optionalCompatibility): MatrixRow => ({

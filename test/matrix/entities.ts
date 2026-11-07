@@ -46,53 +46,53 @@ const unsupported = (reason: CommandUnsupportedReason): MatrixCell => ({
 })
 
 const notAnAuthoritativeCommand = excluded(
-  'This authoritative state or event delta is not a client command, so A2 does not apply (src/domain/protocol.ts:760-785,1102-1147).',
+  'This authoritative state or event delta is not a client command, so A2 does not apply (src/domain/protocol.ts:767-792,1102-1147).',
 )
 const noClientStateApplication = gap(
   'A3 requires comparing client snapshots and post-delta state. This runtime records non-command G5 messages as decoded without applying or broadcasting them.',
-  ['scenarios/runtime.ts:751', 'scenarios/runtime.ts:763'],
+  ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772'],
 )
 const noCommandStateApplication = gap(
   'A3 requires comparing client snapshots after an authoritative state change. Accepted G5 commands produce a canonical intent, but this runtime does not apply game state or emit a delta.',
-  ['scenarios/runtime.ts:758', 'scenarios/runtime.ts:806'],
+  ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:767', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:815'],
 )
 const noServerDirectionRejection = gap(
   'A7 applies because a client can submit a server-authoritative G5 delta or event, but the runtime records decoded non-command messages instead of rejecting the wrong direction.',
-  ['src/domain/protocol.ts:760-787', 'scenarios/runtime.ts:751', 'scenarios/runtime.ts:763-765'],
+  ['src/domain/protocol.ts:767-794', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772-774'],
 )
 const entityAttackStateGap = gap(
   'A3 requires comparing client state after an entity attack. mc-sim MeleeAttack carries no target EntityId, so mx-multiplayer cannot apply or project the resulting target state.',
-  ['src/application/server/command-application.ts:202-210', 'scenarios/runtime.ts:804-810', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:56-58,128-130'],
+  ['src/application/server/command-application.ts:202-210', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:813-819', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:56-58,128-130'],
 )
 const noDeltaOrderingAndResync = gap(
   'A4 requires observing G5 state after loss, duplication, reordering, delay, and resync. The scenario runtime only decodes non-command G5 messages and has no receiver for their applied state.',
-  ['scenarios/runtime.ts:718', 'scenarios/runtime.ts:751', 'scenarios/runtime.ts:763', 'scenarios/types.ts:86', 'scenarios/types.ts:103'],
+  ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:727', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772', 'scenarios/types.ts:87', 'scenarios/types.ts:104'],
 )
 const noCommandOrderingAndResync = gap(
   'A4 requires observing resulting G5 state after faults and AuthoritativeResyncRequest. The command path accepts an intent without applying or broadcasting its result.',
-  ['scenarios/runtime.ts:758', 'scenarios/runtime.ts:806', 'scenarios/types.ts:86'],
+  ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:767', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:815', 'scenarios/types.ts:87'],
 )
 const noDeltaReconnectSnapshot = gap(
   'A5 requires a G5 delta receiver and authoritative snapshot on reconnect. The current runtime resets its connections and creates fresh clients without applying a G5 snapshot.',
-  ['scenarios/runtime.ts:332', 'scenarios/runtime.ts:377', 'scenarios/runtime.ts:402', 'scenarios/runtime.ts:751'],
+  ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:382', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:407', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760'],
 )
 const noCommandReconnectResult = gap(
   'A5 requires comparing G5 state before and after reconnect. This command is accepted as a C2 intent, but the runtime has no G5 state result or snapshot to restore.',
-  ['scenarios/runtime.ts:332', 'scenarios/runtime.ts:377', 'scenarios/runtime.ts:806'],
+  ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:382', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:815'],
 )
 const noDeltaVisibilityProjection = gap(
   'A6 requires G5 recipient filtering and update-load checks. The current AOI scenario projects ReplicatedWorldDelta block changes, while this runtime has no G5 broadcaster.',
-  ['scenarios/visibility-load.ts:83', 'scenarios/visibility-load.ts:105', 'scenarios/visibility-load.ts:195', 'scenarios/runtime.ts:763'],
+  ['scenarios/visibility-load.ts:83', 'scenarios/visibility-load.ts:105', 'scenarios/visibility-load.ts:195', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772'],
 )
 const noCommandVisibilityProjection = gap(
   'A6 requires observing G5 state publication under recipient filtering and load. This tag enters the authority as a command and the current runtime does not produce its G5 delta.',
-  ['scenarios/runtime.ts:758', 'scenarios/runtime.ts:806', 'scenarios/visibility-load.ts:195'],
+  ['apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:767', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:815', 'scenarios/visibility-load.ts:195'],
 )
 const lightningHasNoPersistentConvergence = excluded(
-  'LightningStrikeDelta is a short-lived rendered impact rather than persistent entity state, so A3 snapshot convergence does not apply (src/domain/protocol.ts:736-742).',
+  'LightningStrikeDelta is a short-lived rendered impact rather than persistent entity state, so A3 snapshot convergence does not apply (src/domain/protocol.ts:743-749).',
 )
 const lightningHasNoReconnectReplay = excluded(
-  'LightningStrikeDelta is a short-lived rendered impact and is not state to replay in a reconnect snapshot (src/domain/protocol.ts:736-742).',
+  'LightningStrikeDelta is a short-lived rendered impact and is not state to replay in a reconnect snapshot (src/domain/protocol.ts:743-749).',
 )
 const deltaRow = (
   A1: MatrixCell,

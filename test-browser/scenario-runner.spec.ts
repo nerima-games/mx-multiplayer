@@ -8,7 +8,7 @@ import {
   type ScenarioResult,
 } from '../scenarios/types.js'
 import { SCENARIO_CATALOG } from '../scenarios/index.js'
-import { createScenarioRuntime } from '../scenarios/runtime.js'
+import { createScenarioRuntime } from '../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 
 const TEST_SEED = 17
 const ONE_FRAME = 1

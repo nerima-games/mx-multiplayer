@@ -92,7 +92,7 @@ org 共通ポリシー。§「開発」の `lint` を参照)ため、`pnpm lint`
 | Join and reconnect ([apps/debug-ui/panels/participants.ts](./apps/debug-ui/panels/participants.ts)) | クライアント状態と reconnect 認証を表示し、snapshot scenario では 1 frame 後に client C を参加させる。認証は決定的なメモリ内テスト fixture を使う。 |
 | Connection, transport, and security ([apps/debug-ui/panels/connection-security.ts](./apps/debug-ui/panels/connection-security.ts)) | 接続状態、`canSend`、reconnect・拒否の要約、設定済み rate limit、観測 traffic と frame size を表示する。rate probe は limiter を直接試し、network frame は送信しない。 |
 
-scenario runtime は seed と注入 clock を使い、revision history を記録する。fault は `none`、`delay`、`drop`、`reorder`、`disconnect`、`corrupt`、`version`、`future`、`duplicate` を扱う（[scenarios/types.ts](./scenarios/types.ts)、[scenarios/runtime.ts](./scenarios/runtime.ts)）。CLI の `pnpm preview` は別の in-memory handshake preview であり、このブラウザ UI ではない。
+scenario runtime は seed と注入 clock を使い、revision history を記録する。fault は `none`、`delay`、`drop`、`reorder`、`disconnect`、`corrupt`、`version`、`future`、`duplicate` を扱う（[scenarios/types.ts](./scenarios/types.ts)、[apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts](./apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts)）。CLI の `pnpm preview` は別の in-memory handshake preview であり、このブラウザ UI ではない。
 
 ### スナップショット補間
 

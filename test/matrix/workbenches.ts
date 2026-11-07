@@ -49,12 +49,12 @@ const notAnAuthoritativeCommand = excluded(
 )
 const authorityPathGap = gap(
   'unsupported by AuthoritativeCommand; not replicated by mx-multiplayer',
-  'src/domain/protocol.ts:1233-1270',
+  'src/domain/protocol.ts:1240-1277',
   'src/domain/protocol/anvil.ts:35-45',
   'src/domain/protocol/crafting.ts:51-60',
   'src/domain/protocol/brewing.ts:131-141',
   'src/domain/protocol/enchanting.ts:77-87',
-  'scenarios/runtime.ts:751-765',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774',
   'test/scenarios/workbenches.test.ts:24',
 )
 const noMessageState = excluded(
@@ -62,20 +62,20 @@ const noMessageState = excluded(
 )
 const noWorkbenchDeltaReceiver = gap(
   'A3/A4 are relevant to these state deltas, but the scenario runtime has no workbench delta receiver or client projection path. The current wire scenario proves decoding only; see .reinloom/reports/mx-multiplayer-g4.md.',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:752',
-  'scenarios/runtime.ts:763',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:761',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
   'test/scenarios/workbenches.test.ts:24',
 )
 const noCommandOrderingPath = gap(
   'Ordering and replay are relevant to this command, but the scenario runtime does not apply workbench commands, track their revisions, or request resync. This records an mx-multiplayer coverage gap; see .reinloom/reports/mx-multiplayer-g4.md.',
-  'scenarios/types.ts:38',
-  'scenarios/types.ts:75',
-  'scenarios/types.ts:88',
-  'scenarios/types.ts:90',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:752',
-  'scenarios/runtime.ts:763',
+  'scenarios/types.ts:39',
+  'scenarios/types.ts:76',
+  'scenarios/types.ts:89',
+  'scenarios/types.ts:91',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:761',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
   'test/scenarios/workbenches.test.ts:24',
 )
 const noResultOrderingPath = excluded(
@@ -83,11 +83,11 @@ const noResultOrderingPath = excluded(
 )
 const noWorkbenchReconnectPath = gap(
   'Reconnect convergence is relevant to this state delta, but the scenario runtime has no workbench delta receiver or reconnect snapshot path. This records an mx-multiplayer coverage gap; see .reinloom/reports/mx-multiplayer-g4.md.',
-  'scenarios/types.ts:42',
-  'scenarios/runtime.ts:332',
-  'scenarios/runtime.ts:336',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:763',
+  'scenarios/types.ts:43',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:341',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
   'test/scenarios/workbenches.test.ts:24',
 )
 const noLifecycleSemantics = excluded(
@@ -101,21 +101,21 @@ const noResultAoi = excluded(
 )
 const noWorkbenchAoiPath = gap(
   'Visibility and load are relevant to this state delta, but the scenario runtime has no workbench state broadcaster or AOI projection path. This records an mx-multiplayer coverage gap; see .reinloom/reports/mx-multiplayer-g4.md.',
-  'scenarios/types.ts:46',
+  'scenarios/types.ts:47',
   'scenarios/visibility-load.ts:185',
   'scenarios/visibility-load.ts:187',
   'scenarios/visibility-load.ts:225',
-  'scenarios/runtime.ts:763',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
   'test/scenarios/workbenches.test.ts:24',
 )
 const noUntrustedCommandPath = gap(
   'unsupported by AuthoritativeCommand; not replicated by mx-multiplayer',
-  'src/domain/protocol.ts:1233-1270',
+  'src/domain/protocol.ts:1240-1277',
   'src/domain/protocol/anvil.ts:35-45',
   'src/domain/protocol/crafting.ts:51-60',
   'src/domain/protocol/brewing.ts:131-141',
   'src/domain/protocol/enchanting.ts:77-87',
-  'scenarios/runtime.ts:751-765',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774',
   'test/scenarios/workbenches.test.ts:32',
 )
 const notAnUntrustedOperation = excluded(

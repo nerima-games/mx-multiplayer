@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs'
 import { describe, expect, it } from '@effect/vitest'
 import { SCENARIO_CATALOG, getScenarioById, type ScenarioModuleName } from '../../scenarios/index.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import {
   SCENARIO_ANGLES,
   SCENARIO_ANGLE_MEANINGS,
@@ -64,7 +64,7 @@ describe('shared scenario catalog', () => {
   // Fails if a scenario module file is not statically registered in the catalog.
   it('covers every scenario module on disk', () => {
     const scenarioModuleFiles = readdirSync(new URL('../../scenarios/', import.meta.url))
-      .filter((file) => file.endsWith('.ts') && !['index.ts', 'runtime.ts', 'types.ts'].includes(file))
+      .filter((file) => file.endsWith('.ts') && !['index.ts', 'types.ts'].includes(file))
       .map((file) => file.slice(0, -'.ts'.length))
       .sort()
     const registeredModules = [...new Set(SCENARIO_CATALOG.map(({ module }) => module))].sort()

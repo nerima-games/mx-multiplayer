@@ -1,5 +1,5 @@
 import { SCENARIO_CATALOG } from '../../../scenarios/index.js'
-import { createScenarioRuntime } from '../../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../entrypoints/scenarios/scenario-runtime.js'
 import {
   SCENARIO_RUNTIME_FAULT_KINDS,
   type ScenarioClientId,

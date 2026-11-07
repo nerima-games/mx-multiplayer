@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import { WORKBENCH_TAGS, workbenchWireScenario } from '../../scenarios/workbenches.js'
 
 const FIXED_SEED = 47

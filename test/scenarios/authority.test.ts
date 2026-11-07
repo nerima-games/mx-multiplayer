@@ -10,7 +10,7 @@ import {
   S3_UNSUPPORTED_COMMAND_TAGS,
   runAuthoritySyncProbe,
 } from '../../scenarios/authority.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 
 const FIXED_SEED = 41
 const FRAME_COUNT_TWO = 2

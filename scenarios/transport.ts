@@ -142,7 +142,7 @@ const createTokenStore = (): ReconnectAuthStore => {
   }
 }
 
-const createReconnectAuthFixture = (): ReconnectAuth => {
+const createReconnectAuthFixture = (): Effect.Effect<ReconnectAuth, unknown> => {
   let tokenIndex = ZERO
   const crypto: ReconnectAuthCrypto = {
     hashHex: tokenHash,
@@ -156,66 +156,66 @@ const createReconnectAuthFixture = (): ReconnectAuth => {
     },
     timingSafeEqualHex: (left, right) => left === right,
   }
-  return Effect.runSync(createReconnectAuth(crypto, createTokenStore()))
+  return createReconnectAuth(crypto, createTokenStore())
 }
 
-const validReconnectPasses = (auth: ReconnectAuth, aliceToken: string): boolean => {
-  const resumed = Effect.runSync(auth.resume(ReconnectTokenInput.make(aliceToken)))
-  return resumed !== undefined
-    && resumed.player === PlayerId.make('alice')
-    && resumed.token !== aliceToken
-}
+const validReconnectPasses = (auth: ReconnectAuth, aliceToken: string): Effect.Effect<boolean, unknown> =>
+  Effect.map(auth.resume(ReconnectTokenInput.make(aliceToken)), (resumed) =>
+    resumed !== undefined
+      && resumed.player === PlayerId.make('alice')
+      && resumed.token !== aliceToken)
 
-const forgedTokensRejected = (auth: ReconnectAuth, aliceToken: string): boolean => {
+const forgedTokensRejected = (auth: ReconnectAuth, aliceToken: string): Effect.Effect<boolean, unknown> => Effect.gen(function* () {
   let replacement = 'A'
   if (aliceToken.endsWith('A')) {
     replacement = 'B'
   }
   const tampered = `${aliceToken.slice(ZERO, -ONE)}${replacement}`
-  const tamperedResume = Effect.runSync(auth.resume(ReconnectTokenInput.make(tampered)))
-  const unknownResume = Effect.runSync(auth.resume(ReconnectTokenInput.make('Z'.repeat(TOKEN_LENGTH))))
+  const tamperedResume = yield* auth.resume(ReconnectTokenInput.make(tampered))
+  const unknownResume = yield* auth.resume(ReconnectTokenInput.make('Z'.repeat(TOKEN_LENGTH)))
   return tamperedResume === undefined && unknownResume === undefined
-}
+})
 
-const mismatchedIdentityRejected = (auth: ReconnectAuth, aliceToken: string): boolean => {
-  const bobToken = Effect.runSync(auth.issue('bob'))
+const mismatchedIdentityRejected = (auth: ReconnectAuth, aliceToken: string): Effect.Effect<boolean, unknown> => Effect.gen(function* () {
+  const bobToken = yield* auth.issue('bob')
   if (bobToken === undefined) {
     return false
   }
-  return Effect.runSync(auth.rotate('bob', aliceToken)) === undefined
-}
+  return (yield* auth.rotate('bob', aliceToken)) === undefined
+})
 
-const rotateToken = (auth: ReconnectAuth, token: string): string | undefined =>
-  Effect.runSync(auth.rotate('alice', token))
+const rotateToken = (auth: ReconnectAuth, token: string): Effect.Effect<string | undefined, unknown> =>
+  auth.rotate('alice', token)
 
-const rotateTwice = (auth: ReconnectAuth, token: string): string | undefined => {
-  const firstRotation = rotateToken(auth, token)
+const rotateTwice = (auth: ReconnectAuth, token: string): Effect.Effect<string | undefined, unknown> => Effect.gen(function* () {
+  const firstRotation = yield* rotateToken(auth, token)
   if (firstRotation === undefined) {
     return undefined
   }
-  return rotateToken(auth, firstRotation)
-}
+  return yield* rotateToken(auth, firstRotation)
+})
 
-const tokenRevokedAfterTwoRotations = (): boolean => {
-  const auth = createReconnectAuthFixture()
-  const originalToken = Effect.runSync(auth.issue('alice'))
+const tokenRevokedAfterTwoRotations = (): Effect.Effect<boolean, unknown> => Effect.gen(function* () {
+  const auth = yield* createReconnectAuthFixture()
+  const originalToken = yield* auth.issue('alice')
   if (originalToken === undefined) {
     return false
   }
-  return rotateTwice(auth, originalToken) !== undefined && rotateToken(auth, originalToken) === undefined
-}
+  return (yield* rotateTwice(auth, originalToken)) !== undefined
+    && (yield* rotateToken(auth, originalToken)) === undefined
+})
 
-const reconnectAuthPasses = (): boolean => {
-  const auth = createReconnectAuthFixture()
-  const aliceToken = Effect.runSync(auth.issue('alice'))
+const reconnectAuthPasses = (): Effect.Effect<boolean, unknown> => Effect.gen(function* () {
+  const auth = yield* createReconnectAuthFixture()
+  const aliceToken = yield* auth.issue('alice')
   if (aliceToken === undefined) {
     return false
   }
-  return validReconnectPasses(auth, aliceToken)
-    && forgedTokensRejected(auth, aliceToken)
-    && mismatchedIdentityRejected(auth, aliceToken)
-    && tokenRevokedAfterTwoRotations()
-}
+  return (yield* validReconnectPasses(auth, aliceToken))
+    && (yield* forgedTokensRejected(auth, aliceToken))
+    && (yield* mismatchedIdentityRejected(auth, aliceToken))
+    && (yield* tokenRevokedAfterTwoRotations())
+})
 
 const isRateLimitRejection = (
   result: Result.Result<void, ConnectionRateLimitFailure>,
@@ -414,14 +414,14 @@ export const reconnectScenario: ScenarioDefinition = {
   actions: twoClientActions,
   angle: 'A5',
   description: 'Resumes the issued token as its stored player and verifies that rotation returns a new token.',
-  evaluate: (input) => {
-    const passed = reconnectAuthPasses() && bothClientsAccepted(input)
+  evaluate: (input) => Effect.map(reconnectAuthPasses(), (authPassed) => {
+    const passed = authPassed && bothClientsAccepted(input)
     return makeVerdict(
       passed,
       'the current reconnect token resumed Alice and rotated to a new token',
       'waiting for valid reconnect authentication and both accepted client commands',
     )
-  },
+  }),
   group: 'transport',
   id: 'transport.reconnect.valid-token',
   title: 'A current token resumes its stored player',
@@ -431,14 +431,14 @@ export const authRejectionScenario: ScenarioDefinition = {
   actions: twoClientActions,
   angle: 'A7',
   description: 'Rejects tampered, unknown, stale, and mismatched-player tokens through reconnect authentication.',
-  evaluate: (input) => {
-    const passed = reconnectAuthPasses() && bothClientsAccepted(input)
+  evaluate: (input) => Effect.map(reconnectAuthPasses(), (authPassed) => {
+    const passed = authPassed && bothClientsAccepted(input)
     return makeVerdict(
       passed,
       'tampered, unknown, rotated-out, and mismatched-player tokens were rejected',
       'waiting for reconnect token rejection checks and both accepted client commands',
     )
-  },
+  }),
   group: 'transport',
   id: 'transport.auth.reject-forged-and-mismatched',
   title: 'Invalid reconnect identities are rejected',

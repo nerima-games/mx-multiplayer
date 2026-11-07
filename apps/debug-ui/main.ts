@@ -1,4 +1,5 @@
 import './styles.css'
+import { Effect } from 'effect'
 import {
   SCENARIO_FAULT_KINDS,
   SCENARIO_SPEEDS,
@@ -6,7 +7,7 @@ import {
   type ScenarioRuntime,
   type ScenarioUrlState,
 } from '../../scenarios/types.js'
-import type { DebugPanel, DebugPanelContext, DebugPanelHandle } from './panels/types.js'
+import type { DebugEffectRunner, DebugPanel, DebugPanelContext, DebugPanelHandle } from './panels/types.js'
 
 const DEFAULT_URL_STATE: ScenarioUrlState = {
   scenario: '',
@@ -18,6 +19,7 @@ const DEFAULT_URL_STATE: ScenarioUrlState = {
   frame: 0,
 }
 const CLOCK_FRAMES_PER_SECOND = 60
+const runEffect: DebugEffectRunner = (effect) => Effect.runPromise(effect)
 const app = document.querySelector<HTMLDivElement>('#app')
 
 if (app === null) {
@@ -223,6 +225,7 @@ class DebugUiHost {
       setState: (patch) => this.#updateState(patch),
       setScenario: (scenario) => this.#setScenario(scenario),
       setRuntime: (runtime) => this.#setRuntime(runtime),
+      runEffect,
     }
   }
 

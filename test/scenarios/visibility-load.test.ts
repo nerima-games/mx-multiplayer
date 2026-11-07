@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Result } from 'effect'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import {
   projectVisibilityLoadFrame,
   visibilityLoadScenario,

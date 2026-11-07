@@ -7,7 +7,7 @@ import type { RateLimitExceededReason } from '../../../src/domain/rate-limit.js'
 import type { SurvivalRejectionReason } from '../../../src/domain/survival-authority.js'
 import { AUTHORITY_ACCEPT_REPLAY_SCENARIO } from '../../../scenarios/authority.js'
 import { SCENARIO_CATALOG } from '../../../scenarios/index.js'
-import { createScenarioRuntime } from '../../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../entrypoints/scenarios/scenario-runtime.js'
 import type { ScenarioEntityRevision, ScenarioFault, ScenarioId, ScenarioResult, ScenarioRuntime, ScenarioRuntimeFault, ScenarioRuntimeOptions } from '../../../scenarios/types.js'
 import type { DebugPanel, DebugPanelContext, DebugPanelHandle } from './types.js'
 

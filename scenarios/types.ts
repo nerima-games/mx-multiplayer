@@ -1,3 +1,4 @@
+import { Effect } from 'effect'
 import type { NetworkMessage } from '../src/domain/protocol.js'
 import type { ReplicatedOwnerRegistry } from '../src/domain/codec.js'
 import type { WorldBlockRead } from '@nerima-games/mc-sim'
@@ -143,6 +144,8 @@ export type ScenarioVerdict = {
   readonly summary: string
 }
 
+export type ScenarioEvaluation = ScenarioVerdict | Effect.Effect<ScenarioVerdict, unknown>
+
 export type ScenarioClientState = {
   readonly id: ScenarioClientId
   readonly player: string
@@ -236,7 +239,7 @@ export type ScenarioDefinition = {
   readonly title: string
   readonly description: string
   readonly actions: (context: ScenarioStepContext) => ReadonlyArray<ScenarioAction>
-  readonly evaluate: (input: ScenarioEvaluationInput) => ScenarioVerdict
+  readonly evaluate: (input: ScenarioEvaluationInput) => ScenarioEvaluation
 }
 
 export type ScenarioRuntimeOptions<Kind extends ScenarioRuntimeFaultKind = ScenarioFaultKind> = {

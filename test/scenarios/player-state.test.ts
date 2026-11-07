@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import { decodeFrame, encodeFrame } from '../../src/domain/codec.js'
 import { AuthoritativeSession } from '../../src/index.js'
 import { CommandId, PlayerId, PROTOCOL_VERSION, WorldId, type NetworkMessage } from '../../src/domain/protocol.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import {
   PLAYER_STATE_AUTHORITY_SCENARIO_FRAME_COUNT,
   PLAYER_STATE_UNAUTHORIZED_SCENARIO_FRAME_COUNT,

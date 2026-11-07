@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Result } from 'effect'
 import { PlayerId } from '../../src/domain/protocol.js'
 import { SnapshotInterpolator, type PlayerTransformSnapshot } from '../../src/domain/snapshot-interpolation.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import { interpolationScenario } from '../../scenarios/interpolation.js'
 
 const PLAYER = PlayerId.make('s5-interpolation-test')

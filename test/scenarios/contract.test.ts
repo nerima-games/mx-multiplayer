@@ -11,7 +11,7 @@ import {
 import { WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { Result, Schema } from 'effect'
 import { MATRIX_ANGLES, MATRIX_ANGLE_MEANINGS } from '../matrix/index.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import { SCENARIO_ANGLE_MEANINGS, SCENARIO_ANGLES, type ScenarioDefinition } from '../../scenarios/types.js'
 
 const WORLD = WorldId.make('overworld')

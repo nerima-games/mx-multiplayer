@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 import { chunkInterestKeyForBlockChange, decodeFrame } from '../../../src/index.js'
-import { createScenarioRuntime } from '../../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../entrypoints/scenarios/scenario-runtime.js'
 import {
   SCENARIO_ANGLE_MEANINGS,
   type ScenarioClientId,

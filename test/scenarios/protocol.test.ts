@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { PROTOCOL_VERSION } from '../../src/domain/protocol.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import type { ScenarioDefinition } from '../../scenarios/types.js'
 import {
   frameSizeBoundaryScenario,

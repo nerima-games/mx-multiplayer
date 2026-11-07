@@ -54,44 +54,44 @@ const notAuthorityOperation = excluded(
 )
 const bossCommandAuthorityGap = gap(
   'unsupported by AuthoritativeCommand; not replicated by mx-multiplayer',
-  'src/domain/protocol.ts:1233-1270',
+  'src/domain/protocol.ts:1240-1277',
   'src/domain/protocol/ender-dragon.ts:51-56',
   'src/domain/protocol/wither.ts:148-176',
-  'scenarios/runtime.ts:751-765',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774',
 )
 const noStateForUnsupportedCommand = excluded(
   'The A2 scenario verifies an explicit CommandUnsupported result for this command, so it produces no post-delta state for A3 to compare (test/scenarios/dimensions-bosses.test.ts:24; src/application/server/command-application.ts:180-187).',
 )
 const noPersistentStateForEyeEvent = excluded(
-  'EyeOfEnderThrown is a short-lived rendering event, not persistent entity state or an authoritative snapshot, so A3 has no post-delta state to compare (src/domain/protocol.ts:744-758).',
+  'EyeOfEnderThrown is a short-lived rendering event, not persistent entity state or an authoritative snapshot, so A3 has no post-delta state to compare (src/domain/protocol.ts:751-765).',
 )
 const noStateInCommandResult = excluded(
   'This command result carries an outcome and revision, not an authoritative snapshot or post-delta state for A3 (src/domain/protocol/ender-dragon.ts:67-98; src/domain/protocol/wither.ts:198-230).',
 )
 const bossCommandConvergenceGap = gap(
   'A3 applies to boss commands because their state changes must converge, but this runtime has no application or boss-state projection path.',
-  'src/domain/protocol.ts:1432',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:752',
+  'src/domain/protocol.ts:1439',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:761',
 )
 const bossSnapshotConvergenceGap = gap(
   'A3 applies to authoritative boss snapshots, but this runtime only decodes non-command messages and does not apply or broadcast their state.',
   'src/domain/protocol/ender-dragon.ts:91',
   'src/domain/protocol/wither.ts:223',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:752',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:761',
 )
 const commandOrderingGap = gap(
   'A4 applies to these client commands, but G6 has no ordering/resync scenario and the fault model has no duplicate case.',
-  'scenarios/types.ts:75',
+  'scenarios/types.ts:76',
   'scenarios/dimensions-bosses.ts:110',
   'scenarios/dimensions-bosses.ts:140',
 )
 const serverMessageOrderingGap = gap(
   'A4 applies to delivery of this server event, result, or snapshot, but the scenario runtime has no server-to-client receive path and its fault model lacks duplication.',
-  'scenarios/types.ts:75',
-  'scenarios/types.ts:103',
-  'scenarios/runtime.ts:718',
+  'scenarios/types.ts:76',
+  'scenarios/types.ts:104',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:727',
 )
 const noJoinLifecycleTag = excluded(
   'This transient server event or command result carries neither reconnect credentials nor persistent state to restore, so it does not exercise A5 lifecycle behavior.',
@@ -100,20 +100,20 @@ const bossSnapshotReconnectGap = gap(
   'A5 needs the authoritative boss snapshot on join or reconnect, but this runtime has no G6 snapshot receiver or restoration path.',
   'src/domain/protocol/ender-dragon.ts:91',
   'src/domain/protocol/wither.ts:223',
-  'scenarios/runtime.ts:332',
-  'scenarios/runtime.ts:402',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:407',
 )
 const clientCommandReconnectGap = gap(
   'A5 applies to reauthenticating player-scoped commands after disconnect; G6 has no reconnect authentication or command-after-reconnect scenario, and boss commands also lack state restoration.',
-  'scenarios/types.ts:42',
-  'src/domain/protocol.ts:789',
+  'scenarios/types.ts:43',
+  'src/domain/protocol.ts:796',
   'src/domain/protocol/ender-dragon.ts:51',
   'src/domain/protocol/ender-dragon.ts:91',
   'src/domain/protocol/wither.ts:148',
   'src/domain/protocol/wither.ts:223',
-  'scenarios/runtime.ts:332',
-  'scenarios/runtime.ts:377',
-  'scenarios/runtime.ts:402',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:337',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:382',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:407',
   'scenarios/dimensions-bosses.ts:110',
   'scenarios/dimensions-bosses.ts:140',
 )
@@ -122,7 +122,7 @@ const noSpatialUpdateInCommand = excluded(
 )
 const serverUpdateVisibilityGap = gap(
   'A6 applies to this server event, command result, or boss snapshot because recipient filtering and update delivery under load matter, but G6 has no client receive, broadcaster, or AOI projection path.',
-  'src/domain/protocol.ts:744',
+  'src/domain/protocol.ts:751',
   'src/domain/protocol/ender-dragon.ts:67',
   'src/domain/protocol/ender-dragon.ts:76',
   'src/domain/protocol/ender-dragon.ts:91',
@@ -131,20 +131,20 @@ const serverUpdateVisibilityGap = gap(
   'src/domain/protocol/wither.ts:223',
   'scenarios/visibility-load.ts:83',
   'scenarios/visibility-load.ts:195',
-  'scenarios/runtime.ts:763',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const bossCommandAuthorizationGap = gap(
   'unsupported by AuthoritativeCommand; not replicated by mx-multiplayer',
-  'src/domain/protocol.ts:1233-1270',
+  'src/domain/protocol.ts:1240-1277',
   'src/domain/protocol/ender-dragon.ts:51-56',
   'src/domain/protocol/wither.ts:148-176',
-  'scenarios/runtime.ts:751-765',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774',
 )
 const serverMessageDirectionGap = gap(
   'A7 applies because an untrusted client can submit this server-originated tag, but the runtime records non-command messages as decoded instead of rejecting the wrong direction.',
-  'scenarios/types.ts:103',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:763',
+  'scenarios/types.ts:104',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const row = (
   A1: MatrixCell,

@@ -87,57 +87,57 @@ const noResultState = excluded(
 )
 const noCommandConvergencePath = gap(
   'A3 applies to player-state commands because their state changes must converge, but the authority returns C2 intents without applying game rules or projecting player-state deltas.',
-  'scenarios/types.ts:33',
+  'scenarios/types.ts:34',
   'src/application/server/command-application.ts:204',
-  'scenarios/runtime.ts:758',
-  'scenarios/runtime.ts:763',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:767',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const noPlayerStateOrderingPath = gap(
   'A4 applies to player-state ordering and resync, but no scenario path applies player-state deltas or handles AuthoritativeResyncRequest; the authority returns C2 intents without game-state writes.',
-  'scenarios/types.ts:37',
+  'scenarios/types.ts:38',
   'src/application/server/command-application.ts:204',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:763',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const playerCommandOrderingGap = gap(
   'A4 applies to player-state commands, but the scenario runtime does not commit their game state or request player-state resync after transport faults.',
-  'scenarios/types.ts:37',
-  'scenarios/types.ts:75-90',
+  'scenarios/types.ts:38',
+  'scenarios/types.ts:76-91',
   'src/application/server/command-application.ts:204',
-  'scenarios/runtime.ts:158-167',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:163-172',
   'scenarios/player-state.ts:46-89',
 )
 const noResultDeliveryPath = gap(
   'A4 applies to accepted and rejected command result delivery, but the scenario runtime has no server-to-client result receiver.',
-  'scenarios/types.ts:37',
-  'scenarios/runtime.ts:746',
-  'scenarios/runtime.ts:763',
+  'scenarios/types.ts:38',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:755',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const noDeltaConvergencePath = gap(
   'A3 applies to player-state deltas, but no client path applies PlayerInventoryDelta, PlayerVitalsDelta, or PlayerStatusEffectsDelta to comparable projections; runtime records non-command messages only.',
-  'scenarios/types.ts:33',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:763',
+  'scenarios/types.ts:34',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const noDeltaReconnectPath = gap(
   'A5 applies to player-state snapshot restoration after reconnect, but the runtime has no player-state delta receiver or reconnect snapshot-transfer path.',
-  'scenarios/types.ts:41',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:763',
+  'scenarios/types.ts:42',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const noPlayerStateVisibilityPath = gap(
   'A6 applies to player-state visibility and load, but no player-state recipient projection exists; the current projector filters ReplicatedWorldDelta block changes.',
-  'scenarios/types.ts:45',
+  'scenarios/types.ts:46',
   'scenarios/visibility-load.ts:177',
   'scenarios/visibility-load.ts:180',
 )
 const noCommandVisibilityPath = gap(
   'A6 applies to player-state commands because their resulting updates need recipient filtering and load coverage, but the current projector only filters ReplicatedWorldDelta block changes and the runtime has no player-state broadcaster.',
-  'scenarios/types.ts:45',
+  'scenarios/types.ts:46',
   'scenarios/visibility-load.ts:177',
   'scenarios/visibility-load.ts:180',
-  'scenarios/runtime.ts:758',
-  'scenarios/runtime.ts:763',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:767',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const noResultAoi = excluded(
   'This targeted command result is not an area-of-interest projection or a player-state update.',
@@ -147,33 +147,33 @@ const noReconnectCommandPath = excluded(
 )
 const serverMessageDirectionGap = gap(
   'A7 applies because an untrusted client can submit these server-originated player-state tags, but the runtime records non-command messages as decoded instead of rejecting wrong-direction input.',
-  'scenarios/types.ts:50',
-  'src/domain/protocol.ts:647-662',
-  'src/domain/protocol.ts:760-785',
-  'src/domain/protocol.ts:1413-1427',
+  'scenarios/types.ts:51',
+  'src/domain/protocol.ts:654-669',
+  'src/domain/protocol.ts:767-792',
+  'src/domain/protocol.ts:1420-1434',
   'src/domain/protocol/player-damage.ts:56-73',
   'src/domain/protocol/brewing.ts:197-206',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:763',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const playerDamageAuthorityGap = gap(
   'unsupported by AuthoritativeCommand; not replicated by mx-multiplayer',
   'src/domain/protocol/player-damage.ts:30-54',
-  'src/domain/protocol.ts:1233-1270',
-  'scenarios/runtime.ts:751-765',
+  'src/domain/protocol.ts:1240-1277',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760-774',
 )
 const playerDamageOrderingGap = gap(
   'A4 applies to PlayerDamageCommand, but it is outside the authority path and has no authority result or player-state resync path.',
-  'scenarios/types.ts:37',
-  'src/domain/protocol.ts:1102-1147',
-  'scenarios/runtime.ts:751',
-  'scenarios/runtime.ts:763',
+  'scenarios/types.ts:38',
+  'src/domain/protocol.ts:1109-1154',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760',
+  'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772',
 )
 const playerDamageReconnectGap = gap(
   'PlayerDamageCommand has no current authority/session handler, so it cannot test authenticated reconnect or snapshot gating; see the counterexample recorded for its A2/A7 cells.',
-  'scenarios/types.ts:41',
+  'scenarios/types.ts:42',
   'src/domain/protocol/player-damage.ts:2',
-  'src/domain/protocol.ts:1102-1147',
+  'src/domain/protocol.ts:1109-1154',
 )
 
 const row = (

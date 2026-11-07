@@ -4,7 +4,7 @@ import { Schema } from 'effect'
 import { PlayerId } from '../../src/domain/protocol.js'
 import { createHungerAuthority, type HungerCommand } from '../../src/domain/hunger-authority.js'
 import { SurvivalAuthority, type SurvivalCommand } from '../../src/domain/survival-authority.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import {
   SURVIVAL_SCENARIO_FRAME_COUNT,
   SURVIVAL_UNAUTHORIZED_SCENARIO_FRAME_COUNT,

@@ -8,7 +8,7 @@ import {
   createReconnectAuth,
 } from '../../../src/application/server/reconnect-auth.js'
 import { AUTHORITY_SCENARIOS } from '../../../scenarios/authority.js'
-import { createScenarioRuntime } from '../../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../entrypoints/scenarios/scenario-runtime.js'
 import { disconnectScenario } from '../../../scenarios/transport.js'
 import type { ScenarioDefinition, ScenarioFault, ScenarioRuntime, ScenarioRuntimeClientId, ScenarioRuntimeOptions, ScenarioResult } from '../../../scenarios/types.js'
 import type { DebugPanel } from './types.js'
@@ -319,8 +319,8 @@ const participantsPanel: DebugPanel = {
     addListener(disconnectButton, () => runScenario(disconnectScenario, { kind: 'disconnect', clientId: 'client-a' }))
     addListener(issueButton, () =>
       runAuth(async (currentAuth) => {
-        const issuedAlice = await Effect.runPromise(currentAuth.issue(ALICE_ID))
-        const issuedBob = await Effect.runPromise(currentAuth.issue(BOB_ID))
+        const issuedAlice = await context.runEffect(currentAuth.issue(ALICE_ID))
+        const issuedBob = await context.runEffect(currentAuth.issue(BOB_ID))
         if (issuedAlice === undefined || issuedBob === undefined) {
           setText(authAttempt, 'ReconnectAuth did not issue both player tokens.')
           return
@@ -336,7 +336,7 @@ const participantsPanel: DebugPanel = {
           setText(authAttempt, 'Rejected: Alice has no current reconnect token.')
           return
         }
-        const resumed = await Effect.runPromise(currentAuth.resume(ReconnectTokenInput.make(aliceToken)))
+        const resumed = await context.runEffect(currentAuth.resume(ReconnectTokenInput.make(aliceToken)))
         if (resumed === undefined) {
           setText(authAttempt, 'Rejected: ReconnectAuth found no matching owner for Alice’s current token.')
           return
@@ -352,7 +352,7 @@ const participantsPanel: DebugPanel = {
     )
     addListener(forgedButton, () =>
       runAuth(async (currentAuth) => {
-        const resumed = await Effect.runPromise(currentAuth.resume(ReconnectTokenInput.make(FORGED_TOKEN)))
+        const resumed = await context.runEffect(currentAuth.resume(ReconnectTokenInput.make(FORGED_TOKEN)))
         if (resumed === undefined) {
           setText(authAttempt, 'Rejected: ReconnectAuth found no matching owner for the forged token.')
         } else {
@@ -372,7 +372,7 @@ const participantsPanel: DebugPanel = {
           setText(authAttempt, 'Rejected: Alice has no current reconnect token.')
           return
         }
-        const rotated = await Effect.runPromise(currentAuth.rotate(BOB_ID, aliceToken))
+        const rotated = await context.runEffect(currentAuth.rotate(BOB_ID, aliceToken))
         if (rotated === undefined) {
           setText(authAttempt, 'Rejected: ReconnectAuth.rotate for Bob returned no token for Alice’s token.')
         } else {
@@ -385,7 +385,7 @@ const participantsPanel: DebugPanel = {
     renderScenario()
     renderAuth()
 
-    Effect.runPromise(createReconnectAuth(makeTestCrypto(), makeMemoryStore()))
+    context.runEffect(createReconnectAuth(makeTestCrypto(), makeMemoryStore()))
       .then((createdAuth) => {
         if (!disposed) {
           auth = createdAuth

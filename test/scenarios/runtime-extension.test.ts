@@ -4,7 +4,7 @@ import {
   AUTHORITY_ACCEPT_REPLAY_SCENARIO,
   AUTHORITY_SNAPSHOT_CONVERGENCE_SCENARIO,
 } from '../../scenarios/authority.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import type { ScenarioClock, ScenarioDefinition } from '../../scenarios/types.js'
 
 const SCENARIO_SEED = 83
@@ -175,7 +175,7 @@ describe('scenario runtime extensions', () => {
 
   // Fails if any runtime path reads wall-clock time instead of the injected clock.
   it('does not read Date.now or performance.now in the scenario runtime', () => {
-    const runtimeSource = readFileSync(new URL('../../scenarios/runtime.ts', import.meta.url), 'utf8')
+    const runtimeSource = readFileSync(new URL('../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts', import.meta.url), 'utf8')
 
     expect(runtimeSource).not.toMatch(/Date\.now\s*\(/)
     expect(runtimeSource).not.toMatch(/performance\.now\s*\(/)

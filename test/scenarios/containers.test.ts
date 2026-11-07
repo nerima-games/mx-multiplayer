@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import { decodeFrame } from '../../src/domain/codec.js'
 import { PROTOCOL_VERSION } from '../../src/domain/protocol.js'
 import { runAuthoritySyncProbe } from '../../scenarios/authority.js'
-import { createScenarioRuntime } from '../../scenarios/runtime.js'
+import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios/scenario-runtime.js'
 import {
   CONTAINER_AUTHORITY_SCENARIO,
   CONTAINER_REDELIVERY_SCENARIO,
