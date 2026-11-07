@@ -17,7 +17,18 @@
 export * from './application/browser-transport.js'
 export * from './application/server/command-application.js'
 export * from './application/server/frame-inspection.js'
-export * from './application/server/reconnect-auth.js'
+export {
+  RECONNECT_TOKEN_BYTES,
+  ReconnectToken,
+  ReconnectTokenInput,
+  createReconnectAuth,
+} from './application/server/reconnect-auth.js'
+export type {
+  ReconnectAuth,
+  ReconnectAuthCrypto,
+  ReconnectAuthOptions as ServerReconnectAuthOptions,
+  ReconnectAuthStore,
+} from './application/server/reconnect-auth.js'
 export * from './application/server/transport-security.js'
 export * from './domain/area-of-interest.js'
 export * from './domain/codec.js'

@@ -17,7 +17,7 @@
  * because the Ender Dragon exists in exactly one realm, unlike everything
  * else here that names one explicitly.
  */
-import { CommandId, PlayerId, Revision } from '../protocol/identifiers.js'
+import { CommandId, PlayerId, Revision, WireNumber } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
 /** Mirrors `@nerima-games/mx-gameplay`'s `ENDER_DRAGON_MAX_HEALTH`. Not imported — see the file header. */
@@ -41,9 +41,9 @@ export const EnderDragonEncounterSnapshot: Schema.Struct<{
   phaseTimerSecs: typeof Schema.Number
   rewardEmitted: typeof Schema.Boolean
 }> = Schema.Struct({
-  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(ENDER_DRAGON_MAX_HEALTH))),
+  health: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(ENDER_DRAGON_MAX_HEALTH))),
   phase: EnderDragonPhase,
-  phaseTimerSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  phaseTimerSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   rewardEmitted: Schema.Boolean,
 })
 export type EnderDragonEncounterSnapshot = typeof EnderDragonEncounterSnapshot.Type

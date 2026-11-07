@@ -23,6 +23,7 @@
  * Keeping their schemas separate makes those two events explicit.
  */
 import { AnvilCommand, AnvilCommandAccepted, AnvilCommandRejected, PlayerAnvilNamesDelta } from './protocol/anvil.js'
+import { BlockIdSchema, BlockPositionSchema, WorldIdSchema as KernelWorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import {
   BlockPos,
   CommandId,
@@ -30,7 +31,11 @@ import {
   PlayerId,
   PlayerName,
   Revision,
+  WireNumber,
+  WireNumberCheck,
   WorldId,
+  canonicalizeWireNumber,
+  isWireNegativeZero,
 } from './protocol/identifiers.js'
 import {
   BrewingCommand,
@@ -59,7 +64,6 @@ import {
   EnchantingCommandRejected,
   PlayerEnchantmentsDelta,
 } from './protocol/enchanting.js'
-import { WorldIdSchema as KernelWorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import {
   PlayerDamageCommand,
   PlayerDamageCommandAccepted,
@@ -70,7 +74,7 @@ import {
   ReplicatedOwnerChangeSchema,
   WorldBlockReadSchema,
 } from '@nerima-games/mc-sim'
-import { Schema } from 'effect'
+import { Schema, SchemaGetter } from 'effect'
 
 /**
  * The identifier, revision and position primitives, re-exported here so
@@ -97,6 +101,133 @@ const MIN_NON_EMPTY_LENGTH = 1
 const MIN_BASE64_QUARTET_LENGTH = 4
 const ZERO = 0
 
+const canonicalizeWireValue = (value: unknown): unknown => {
+  if (typeof value === 'number') {
+    return canonicalizeWireNumber(value)
+  }
+  return value
+}
+
+const normalizeArrayWireNumbers = (
+  value: ReadonlyArray<unknown>,
+  visited: WeakMap<object, unknown>,
+  normalize: (value: unknown) => unknown,
+): unknown => {
+  const normalized: Array<unknown> = []
+  visited.set(value, normalized)
+  normalized.push(...value.map(normalize))
+  if (normalized.every((entry, index) => Object.is(entry, value[index]))) {
+    visited.set(value, value)
+    return value
+  }
+  return normalized
+}
+
+const normalizeRecordWireNumbers = (
+  value: object,
+  visited: WeakMap<object, unknown>,
+  normalize: (value: unknown) => unknown,
+): unknown => {
+  const normalized: Record<string, unknown> = {}
+  visited.set(value, normalized)
+  const entries = Object.entries(value)
+  entries.forEach(([key, entry]) => {
+    normalized[key] = normalize(entry)
+  })
+  if (entries.every(([key, entry]) => Object.is(normalized[key], entry))) {
+    visited.set(value, value)
+    return value
+  }
+  return normalized
+}
+
+const normalizeUnknownWireNumbers = (rootValue: unknown): unknown => {
+  const visited = new WeakMap<object, unknown>()
+  const normalize = (value: unknown): unknown => {
+    if (typeof value !== 'object' || value === null) {
+      return canonicalizeWireValue(value)
+    }
+    if (visited.has(value)) {
+      return visited.get(value)
+    }
+    if (Array.isArray(value)) {
+      return normalizeArrayWireNumbers(value, visited, normalize)
+    }
+    return normalizeRecordWireNumbers(value, visited, normalize)
+  }
+  return normalize(rootValue)
+}
+
+const containsNoNegativeZero = (value: unknown, visited: WeakSet<object> = new WeakSet()): boolean => {
+  if (typeof value === 'number') {
+    return !isWireNegativeZero(value)
+  }
+  if (typeof value !== 'object' || value === null || visited.has(value)) {
+    return true
+  }
+  visited.add(value)
+  return Object.values(value).every((nested) => containsNoNegativeZero(nested, visited))
+}
+const NoNegativeZeroValue = Schema.makeFilter<unknown>(
+  (value) => containsNoNegativeZero(value),
+  { expected: 'a canonical JSON value' },
+)
+
+const normalizeWorldRevision = (value: Schema.Schema.Type<typeof WorldRevisionSchema>): Schema.Schema.Type<typeof WorldRevisionSchema> =>
+  Schema.decodeUnknownSync(WorldRevisionSchema)(canonicalizeWireNumber(value))
+const normalizeBlockId = (value: Schema.Schema.Type<typeof BlockIdSchema>): Schema.Schema.Type<typeof BlockIdSchema> =>
+  Schema.decodeUnknownSync(BlockIdSchema)(canonicalizeWireNumber(value))
+const normalizeBlockPosition = (value: Schema.Schema.Type<typeof BlockPositionSchema>): Schema.Schema.Type<typeof BlockPositionSchema> =>
+  Schema.decodeUnknownSync(BlockPositionSchema)({
+    x: canonicalizeWireNumber(value.x),
+    y: canonicalizeWireNumber(value.y),
+    z: canonicalizeWireNumber(value.z),
+  })
+const normalizeReplicatedOwnerChange = (
+  value: Schema.Schema.Type<typeof ReplicatedOwnerChangeSchema>,
+): Schema.Schema.Type<typeof ReplicatedOwnerChangeSchema> => ({
+  ...value,
+  state: normalizeUnknownWireNumbers(value.state),
+})
+const normalizeReplicatedBlockChange = (
+  value: Schema.Schema.Type<typeof ReplicatedBlockChangeSchema>,
+): Schema.Schema.Type<typeof ReplicatedBlockChangeSchema> => ({
+  ...value,
+  after: normalizeBlockId(value.after),
+  before: normalizeBlockId(value.before),
+  position: normalizeBlockPosition(value.position),
+})
+const normalizeWorldBlockRead = (
+  value: Schema.Schema.Type<typeof WorldBlockReadSchema>,
+): Schema.Schema.Type<typeof WorldBlockReadSchema> => {
+  const position = normalizeBlockPosition(value.position)
+  if (value.reading._tag !== 'Block') {
+    return { ...value, position, reading: value.reading }
+  }
+  return {
+    ...value,
+    position,
+    reading: { ...value.reading, block: normalizeBlockId(value.reading.block) },
+  }
+}
+
+const WireWorldRevisionSchema: typeof WorldRevisionSchema = WorldRevisionSchema.pipe(Schema.decode({
+  decode: SchemaGetter.transform(normalizeWorldRevision),
+  encode: SchemaGetter.transform(normalizeWorldRevision),
+}), Schema.check(WireNumberCheck))
+const WireReplicatedOwnerChangeSchema: typeof ReplicatedOwnerChangeSchema = ReplicatedOwnerChangeSchema.pipe(Schema.decode({
+  decode: SchemaGetter.transform(normalizeReplicatedOwnerChange),
+  encode: SchemaGetter.transform(normalizeReplicatedOwnerChange),
+}), Schema.check(NoNegativeZeroValue))
+const WireReplicatedBlockChangeSchema: typeof ReplicatedBlockChangeSchema = ReplicatedBlockChangeSchema.pipe(Schema.decode({
+  decode: SchemaGetter.transform(normalizeReplicatedBlockChange),
+  encode: SchemaGetter.transform(normalizeReplicatedBlockChange),
+}), Schema.check(NoNegativeZeroValue))
+const WireWorldBlockReadSchema: typeof WorldBlockReadSchema = WorldBlockReadSchema.pipe(Schema.decode({
+  decode: SchemaGetter.transform(normalizeWorldBlockRead),
+  encode: SchemaGetter.transform(normalizeWorldBlockRead),
+}), Schema.check(NoNegativeZeroValue))
+
 // ---------------------------------------------------------------------------
 // Payload shapes
 // ---------------------------------------------------------------------------
@@ -111,9 +242,9 @@ export const Vec3: Schema.Struct<{
   y: typeof Schema.Number
   z: typeof Schema.Number
 }> = Schema.Struct({
-  x: Schema.Number.pipe(Schema.check(Schema.isFinite())),
-  y: Schema.Number.pipe(Schema.check(Schema.isFinite())),
-  z: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+  x: WireNumber.pipe(Schema.check(Schema.isFinite())),
+  y: WireNumber.pipe(Schema.check(Schema.isFinite())),
+  z: WireNumber.pipe(Schema.check(Schema.isFinite())),
 })
 export type Vec3 = typeof Vec3.Type
 
@@ -132,8 +263,8 @@ export const Orientation: Schema.Struct<{
   pitchRadians: typeof Schema.Number
   yawRadians: typeof Schema.Number
 }> = Schema.Struct({
-  pitchRadians: Schema.Number.pipe(Schema.check(Schema.isBetween({ maximum: QUARTER_TURN_RADIANS, minimum: -QUARTER_TURN_RADIANS }))),
-  yawRadians: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+  pitchRadians: WireNumber.pipe(Schema.check(Schema.isBetween({ maximum: QUARTER_TURN_RADIANS, minimum: -QUARTER_TURN_RADIANS }))),
+  yawRadians: WireNumber.pipe(Schema.check(Schema.isFinite())),
 })
 export type Orientation = typeof Orientation.Type
 
@@ -159,13 +290,13 @@ export type PlayerLeave = typeof PlayerLeave.Type
 
 export const PlayerMove: Schema.TaggedStruct<
   'PlayerMove',
-  { at: typeof Vec3; facing: typeof Orientation; player: typeof PlayerId; world: Schema.optional<typeof WorldId> }
+  { at: typeof Vec3; facing: typeof Orientation; player: typeof PlayerId; world: Schema.optionalKey<typeof WorldId> }
 > = Schema.TaggedStruct('PlayerMove', {
   at: Vec3,
   facing: Orientation,
   player: PlayerId,
   /** Optional for protocol-v1 peers; authoritative servers should include it. */
-  world: Schema.optional(WorldId),
+  world: Schema.optionalKey(WorldId),
 })
 export type PlayerMove = typeof PlayerMove.Type
 
@@ -175,7 +306,7 @@ export const BlockPlace: Schema.TaggedStruct<
     at: typeof BlockPos
     block: typeof Schema.String
     player: typeof PlayerId
-    world: Schema.optional<typeof WorldId>
+    world: Schema.optionalKey<typeof WorldId>
   }
 > = Schema.TaggedStruct('BlockPlace', {
   at: BlockPos,
@@ -191,18 +322,18 @@ export const BlockPlace: Schema.TaggedStruct<
   block: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
   player: PlayerId,
   /** Optional for protocol-v1 peers; authoritative servers should include it. */
-  world: Schema.optional(WorldId),
+  world: Schema.optionalKey(WorldId),
 })
 export type BlockPlace = typeof BlockPlace.Type
 
 export const BlockBreak: Schema.TaggedStruct<
   'BlockBreak',
-  { at: typeof BlockPos; player: typeof PlayerId; world: Schema.optional<typeof WorldId> }
+  { at: typeof BlockPos; player: typeof PlayerId; world: Schema.optionalKey<typeof WorldId> }
 > = Schema.TaggedStruct('BlockBreak', {
   at: BlockPos,
   player: PlayerId,
   /** Optional for protocol-v1 peers; authoritative servers should include it. */
-  world: Schema.optional(WorldId),
+  world: Schema.optionalKey(WorldId),
 })
 export type BlockBreak = typeof BlockBreak.Type
 
@@ -219,7 +350,7 @@ export type Chat = typeof Chat.Type
 export const WorldInfo: Schema.TaggedStruct<'WorldInfo', { seed: typeof Schema.Number; world: typeof WorldId }> =
   Schema.TaggedStruct('WorldInfo', {
     /** Integral so that a seed survives a JSON round trip exactly. */
-    seed: Schema.Number.pipe(Schema.check(Schema.isInt())),
+    seed: WireNumber.pipe(Schema.check(Schema.isInt())),
     world: WorldId,
   })
 export type WorldInfo = typeof WorldInfo.Type
@@ -294,8 +425,8 @@ export const WorldSnapshot: Schema.TaggedStruct<
   levers: Schema.Array(LeverSnapshot),
   players: Schema.Array(PlayerSnapshot),
   poweredRails: Schema.Array(PoweredRailSnapshot),
-  revision: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  seed: Schema.Number.pipe(Schema.check(Schema.isInt())),
+  revision: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  seed: WireNumber.pipe(Schema.check(Schema.isInt())),
   world: WorldId,
 })
 export type WorldSnapshot = typeof WorldSnapshot.Type
@@ -322,7 +453,7 @@ export const BlockMutationRejected: Schema.TaggedStruct<
   operation: Schema.Literals(['place', 'break']),
   player: PlayerId,
   reason: BlockMutationRejectionReason,
-  revision: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  revision: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   world: WorldId,
 })
 export type BlockMutationRejected = typeof BlockMutationRejected.Type
@@ -335,13 +466,13 @@ const ItemDurability: Schema.Struct<{
   current: typeof Schema.Number
   max: typeof Schema.Number
 }> = Schema.Struct({
-  current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+  current: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  max: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
 })
 
 const ItemStack: Schema.Struct<{
   count: typeof Schema.Number
-  durability: Schema.optional<
+  durability: Schema.optionalKey<
     Schema.Struct<{
       current: typeof Schema.Number
       max: typeof Schema.Number
@@ -349,11 +480,11 @@ const ItemStack: Schema.Struct<{
   >
   item: typeof Schema.String
 }> = Schema.Struct({
-  count: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
-  durability: Schema.optional(
+  count: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+  durability: Schema.optionalKey(
     Schema.Struct({
-      current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-      max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+      current: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+      max: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
     }),
   ),
   item: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
@@ -383,15 +514,15 @@ const EquipmentState: Schema.Struct<{
 })
 
 const InventoryState: Schema.Struct<{
-  durability: Schema.optional<Schema.$Array<Schema.NullOr<typeof ItemDurability>>>
-  equipment: Schema.optional<typeof EquipmentState>
+  durability: Schema.optionalKey<Schema.$Array<Schema.NullOr<typeof ItemDurability>>>
+  equipment: Schema.optionalKey<typeof EquipmentState>
   selectedSlot: typeof Schema.Number
   slots: Schema.$Array<Schema.NullOr<typeof ItemStack>>
 }> = Schema.Struct({
   // Accepted for protocol-v1 peers that sent durability out-of-band.
-  durability: Schema.optional(Schema.Array(Schema.NullOr(ItemDurability))),
-  equipment: Schema.optional(EquipmentState),
-  selectedSlot: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  durability: Schema.optionalKey(Schema.Array(Schema.NullOr(ItemDurability))),
+  equipment: Schema.optionalKey(EquipmentState),
+  selectedSlot: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   slots: Schema.Array(Schema.NullOr(ItemStack)),
 })
 
@@ -400,16 +531,16 @@ const VitalsState: Schema.Struct<{
   health: typeof Schema.Number
   hunger: typeof Schema.Number
 }> = Schema.Struct({
-  experience: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  hunger: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  experience: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  health: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  hunger: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
 })
 
 const TimeWeatherState: Schema.Struct<{
   timeOfDay: typeof Schema.Number
   weather: Schema.Literals<readonly ['clear', 'rain', 'thunder']>
 }> = Schema.Struct({
-  timeOfDay: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  timeOfDay: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   weather: Schema.Literals(['clear', 'rain', 'thunder']),
 })
 
@@ -440,8 +571,8 @@ const FurnaceState: Schema.Struct<{
   input: Schema.NullOr<typeof ItemStack>
   output: Schema.NullOr<typeof ItemStack>
 }> = Schema.Struct({
-  burnTicksRemaining: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  cookTicks: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  burnTicksRemaining: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  cookTicks: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   fuel: Schema.NullOr(ItemStack),
   furnaceId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
   input: Schema.NullOr(ItemStack),
@@ -463,34 +594,34 @@ const VillagerTradeState: Schema.Struct<{
   offers: Schema.Array(
     Schema.Struct({
       input: Schema.Array(ItemStack),
-      maxUses: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+      maxUses: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
       offerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
       output: ItemStack,
-      uses: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+      uses: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
     }),
   ),
   villagerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
 })
 
 const MobState: Schema.Struct<{
-  ageTicks: Schema.optional<typeof Schema.Number>
+  ageTicks: Schema.optionalKey<typeof Schema.Number>
   attackCooldownSecs: typeof Schema.Number
-  charged: Schema.optional<typeof Schema.Boolean>
+  charged: Schema.optionalKey<typeof Schema.Boolean>
   motionPhase: typeof Schema.Number
-  named: Schema.optional<typeof Schema.Boolean>
-  persistent: Schema.optional<typeof Schema.Boolean>
+  named: Schema.optionalKey<typeof Schema.Boolean>
+  persistent: Schema.optionalKey<typeof Schema.Boolean>
   provoked: typeof Schema.Boolean
-  tamed: Schema.optional<typeof Schema.Boolean>
+  tamed: Schema.optionalKey<typeof Schema.Boolean>
 }> = Schema.Struct({
-  ageTicks: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
-  attackCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  ageTicks: Schema.optionalKey(WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
+  attackCooldownSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   /** Present only for creepers struck by server-authoritative lightning. */
-  charged: Schema.optional(Schema.Boolean),
-  motionPhase: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  named: Schema.optional(Schema.Boolean),
-  persistent: Schema.optional(Schema.Boolean),
+  charged: Schema.optionalKey(Schema.Boolean),
+  motionPhase: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  named: Schema.optionalKey(Schema.Boolean),
+  persistent: Schema.optionalKey(Schema.Boolean),
   provoked: Schema.Boolean,
-  tamed: Schema.optional(Schema.Boolean),
+  tamed: Schema.optionalKey(Schema.Boolean),
 })
 
 export const LivingEntityState: Schema.TaggedStruct<
@@ -501,26 +632,26 @@ export const LivingEntityState: Schema.TaggedStruct<
     entityType: typeof Schema.String
     health: typeof Schema.Number
     maxHealth: typeof Schema.Number
-    mobState: Schema.optional<typeof MobState>
+    mobState: Schema.optionalKey<typeof MobState>
   }
 > = Schema.TaggedStruct('living', {
   at: Vec3,
   entityId: EntityId,
   entityType: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
-  health: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
-  maxHealth: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
-  mobState: Schema.optional(MobState),
+  health: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
+  maxHealth: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
+  mobState: Schema.optionalKey(MobState),
 })
 export const ItemDropEntityState: Schema.TaggedStruct<
   'item-drop',
   {
-    ageTicks: Schema.optional<typeof Schema.Number>
+    ageTicks: Schema.optionalKey<typeof Schema.Number>
     at: typeof Vec3
     entityId: typeof EntityId
     stack: typeof ItemStack
   }
 > = Schema.TaggedStruct('item-drop', {
-  ageTicks: Schema.optional(Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
+  ageTicks: Schema.optionalKey(WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
   at: Vec3,
   entityId: EntityId,
   stack: ItemStack,
@@ -544,9 +675,9 @@ export const ArrowEntityState: Schema.TaggedStruct<
     velocity: typeof Vec3
   }
 > = Schema.TaggedStruct('arrow', {
-  ageTicks: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  ageTicks: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   at: Vec3,
-  damage: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  damage: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   entityId: EntityId,
   owner: NullablePlayerId,
   velocity: Vec3,
@@ -562,7 +693,7 @@ export const PrimedTntEntityState: Schema.TaggedStruct<
   }
 > = Schema.TaggedStruct('primed-tnt', {
   at: Vec3,
-  burnedSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  burnedSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   entityId: EntityId,
   owner: NullablePlayerId,
 })
@@ -597,7 +728,7 @@ export const AuthoritativeSnapshot: Schema.TaggedStruct<
   'AuthoritativeSnapshot',
   {
     containers: Schema.$Array<typeof ContainerState>
-    entities: Schema.optional<Schema.$Array<typeof AuthoritativeEntityState>>
+    entities: Schema.optionalKey<Schema.$Array<typeof AuthoritativeEntityState>>
     furnaces: Schema.$Array<typeof FurnaceState>
     inventories: Schema.$Array<Schema.Struct<{ player: typeof PlayerId; state: typeof InventoryState }>>
     revision: typeof Revision
@@ -608,7 +739,7 @@ export const AuthoritativeSnapshot: Schema.TaggedStruct<
   }
 > = Schema.TaggedStruct('AuthoritativeSnapshot', {
   containers: Schema.Array(ContainerState),
-  entities: Schema.optional(Schema.Array(AuthoritativeEntityState)),
+  entities: Schema.optionalKey(Schema.Array(AuthoritativeEntityState)),
   furnaces: Schema.Array(FurnaceState),
   inventories: Schema.Array(Schema.Struct({ player: PlayerId, state: InventoryState })),
   revision: Revision,
@@ -798,11 +929,11 @@ const CommandHeader: {
   world: WorldId,
 }
 
-export const CommandSlotIndex: typeof Schema.Number = Schema.Number.pipe(
+export const CommandSlotIndex: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
 )
-export const CommandItemCount: typeof Schema.Number = Schema.Number.pipe(
+export const CommandItemCount: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThan(ZERO)),
 )
@@ -815,7 +946,7 @@ export const PlayerInventoryAction: Schema.Union<
     Schema.TaggedStruct<'swap-items', { destination: typeof CommandSlotIndex; source: typeof CommandSlotIndex }>,
     Schema.TaggedStruct<'drop-item', { count: typeof CommandItemCount; destination: Schema.Literal<'world'>; source: typeof CommandSlotIndex }>,
     Schema.TaggedStruct<'equip-item', { equipmentSlot: typeof EquipmentSlot; source: typeof CommandSlotIndex }>,
-    Schema.TaggedStruct<'unequip-item', { destination: Schema.optional<typeof CommandSlotIndex>; equipmentSlot: typeof EquipmentSlot }>,
+    Schema.TaggedStruct<'unequip-item', { destination: Schema.optionalKey<typeof CommandSlotIndex>; equipmentSlot: typeof EquipmentSlot }>,
   ]
 > = Schema.Union([
   Schema.TaggedStruct('select-slot', { slot: CommandSlotIndex }),
@@ -838,7 +969,7 @@ export const PlayerInventoryAction: Schema.Union<
     source: CommandSlotIndex,
   }),
   Schema.TaggedStruct('unequip-item', {
-    destination: Schema.optional(CommandSlotIndex),
+    destination: Schema.optionalKey(CommandSlotIndex),
     equipmentSlot: EquipmentSlot,
   }),
 ])
@@ -850,7 +981,7 @@ export const WorldTimeWeatherAction: Schema.Union<
     Schema.TaggedStruct<'set-weather', { weather: Schema.Literals<readonly ['clear', 'rain', 'thunder']> }>,
   ]
 > = Schema.Union([
-  Schema.TaggedStruct('set-time', { timeOfDay: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))) }),
+  Schema.TaggedStruct('set-time', { timeOfDay: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))) }),
   Schema.TaggedStruct('set-weather', { weather: Schema.Literals(['clear', 'rain', 'thunder']) }),
 ])
 export type WorldTimeWeatherAction = typeof WorldTimeWeatherAction.Type
@@ -949,7 +1080,7 @@ export const PlayerVitalsCommand: Schema.TaggedStruct<
     Schema.Literal('respawn'),
     Schema.TaggedStruct('activity', {
       activity: Schema.Literals(['walk', 'swim', 'jump', 'attack', 'mine']),
-      amount: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(MAX_VITALS_ACTIVITY_AMOUNT))),
+      amount: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(MAX_VITALS_ACTIVITY_AMOUNT))),
     }),
     Schema.TaggedStruct('eat', { item: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))) }),
   ]),
@@ -1205,28 +1336,28 @@ export type AuthoritativeCommandResult = typeof AuthoritativeCommandResult.Type
 
 /** A C4 delta whose owner states are checked against coordinator registrations at decode time. */
 export const ReplicatedWorldDeltaMessage: Schema.TaggedStruct<'ReplicatedWorldDelta', {
-  blockChanges: Schema.$Array<typeof ReplicatedBlockChangeSchema>
-  changes: Schema.$Array<typeof ReplicatedOwnerChangeSchema>
-  revision: typeof WorldRevisionSchema
+  blockChanges: Schema.$Array<typeof WireReplicatedBlockChangeSchema>
+  changes: Schema.$Array<typeof WireReplicatedOwnerChangeSchema>
+  revision: typeof WireWorldRevisionSchema
   world: typeof KernelWorldIdSchema
 }> = Schema.TaggedStruct('ReplicatedWorldDelta', {
-  blockChanges: Schema.Array(ReplicatedBlockChangeSchema),
-  changes: Schema.Array(ReplicatedOwnerChangeSchema),
-  revision: WorldRevisionSchema,
+  blockChanges: Schema.Array(WireReplicatedBlockChangeSchema),
+  changes: Schema.Array(WireReplicatedOwnerChangeSchema),
+  revision: WireWorldRevisionSchema,
   world: KernelWorldIdSchema,
 })
 export type ReplicatedWorldDeltaMessage = typeof ReplicatedWorldDeltaMessage.Type
 
 /** One consistent C4 owner and block view used to replace client state. */
 export const ReplicatedWorldSnapshot: Schema.TaggedStruct<'ReplicatedWorldSnapshot', {
-  blocks: Schema.$Array<typeof WorldBlockReadSchema>
-  owners: Schema.$Array<typeof ReplicatedOwnerChangeSchema>
-  revision: typeof WorldRevisionSchema
+  blocks: Schema.$Array<typeof WireWorldBlockReadSchema>
+  owners: Schema.$Array<typeof WireReplicatedOwnerChangeSchema>
+  revision: typeof WireWorldRevisionSchema
   world: typeof KernelWorldIdSchema
 }> = Schema.TaggedStruct('ReplicatedWorldSnapshot', {
-  blocks: Schema.Array(WorldBlockReadSchema),
-  owners: Schema.Array(ReplicatedOwnerChangeSchema),
-  revision: WorldRevisionSchema,
+  blocks: Schema.Array(WireWorldBlockReadSchema),
+  owners: Schema.Array(WireReplicatedOwnerChangeSchema),
+  revision: WireWorldRevisionSchema,
   world: KernelWorldIdSchema,
 })
 export type ReplicatedWorldSnapshot = typeof ReplicatedWorldSnapshot.Type
@@ -1253,25 +1384,25 @@ export const LowercaseHexSha256Schema: Schema.brand<typeof Schema.String, 'Lower
 )
 export type LowercaseHexSha256 = typeof LowercaseHexSha256Schema.Type
 
-const NonNegativeSafeIntegerSchema: typeof Schema.Number = Schema.Number.pipe(
+const NonNegativeSafeIntegerSchema: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 })),
 )
-const PositiveSafeIntegerSchema: typeof Schema.Number = Schema.Number.pipe(
+const PositiveSafeIntegerSchema: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 1 })),
 )
 
 export const ReplicatedWorldSnapshotStart: Schema.TaggedStruct<'ReplicatedWorldSnapshotStart', {
   chunkCount: typeof PositiveSafeIntegerSchema
-  revision: typeof WorldRevisionSchema
+  revision: typeof WireWorldRevisionSchema
   sha256: typeof LowercaseHexSha256Schema
   totalBytes: typeof PositiveSafeIntegerSchema
   transferId: typeof TransferIdSchema
   world: typeof KernelWorldIdSchema
 }> = Schema.TaggedStruct('ReplicatedWorldSnapshotStart', {
   chunkCount: PositiveSafeIntegerSchema,
-  revision: WorldRevisionSchema,
+  revision: WireWorldRevisionSchema,
   sha256: LowercaseHexSha256Schema,
   totalBytes: PositiveSafeIntegerSchema,
   transferId: TransferIdSchema,
@@ -1299,9 +1430,9 @@ export type ReplicatedWorldSnapshotEnd = typeof ReplicatedWorldSnapshotEnd.Type
 
 export const AuthoritativeResyncRequest: Schema.TaggedStruct<
   'AuthoritativeResyncRequest',
-  { lastKnownRevision: Schema.optional<typeof Revision>; world: typeof KernelWorldIdSchema }
+  { lastKnownRevision: Schema.optionalKey<typeof Revision>; world: typeof KernelWorldIdSchema }
 > = Schema.TaggedStruct('AuthoritativeResyncRequest', {
-  lastKnownRevision: Schema.optional(Revision),
+  lastKnownRevision: Schema.optionalKey(Revision),
   world: KernelWorldIdSchema,
 })
 export type AuthoritativeResyncRequest = typeof AuthoritativeResyncRequest.Type
@@ -1317,7 +1448,7 @@ export type AuthoritativeResyncRequest = typeof AuthoritativeResyncRequest.Type
 export const Ping: Schema.TaggedStruct<'Ping', { nonce: typeof Schema.Number }> = Schema.TaggedStruct(
   'Ping',
   {
-    nonce: Schema.Number.pipe(Schema.check(Schema.isInt())),
+    nonce: WireNumber.pipe(Schema.check(Schema.isInt())),
   },
 )
 export type Ping = typeof Ping.Type
@@ -1325,7 +1456,7 @@ export type Ping = typeof Ping.Type
 export const Pong: Schema.TaggedStruct<'Pong', { nonce: typeof Schema.Number }> = Schema.TaggedStruct(
   'Pong',
   {
-    nonce: Schema.Number.pipe(Schema.check(Schema.isInt())),
+    nonce: WireNumber.pipe(Schema.check(Schema.isInt())),
   },
 )
 export type Pong = typeof Pong.Type

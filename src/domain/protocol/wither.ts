@@ -19,7 +19,7 @@
  * protocol version exists to make loud. `protocol.ts` itself makes the same
  * call for `Vec3` against `mc-kernel`, its most permissive possible source.
  */
-import { CommandId, PlayerId, Revision } from '../protocol/identifiers.js'
+import { CommandId, PlayerId, Revision, WireNumber } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
 const ZERO = 0
@@ -31,9 +31,9 @@ const WitherPosition: Schema.Struct<{
   y: typeof Schema.Number
   z: typeof Schema.Number
 }> = Schema.Struct({
-  x: Schema.Number.pipe(Schema.check(Schema.isFinite())),
-  y: Schema.Number.pipe(Schema.check(Schema.isFinite())),
-  z: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+  x: WireNumber.pipe(Schema.check(Schema.isFinite())),
+  y: WireNumber.pipe(Schema.check(Schema.isFinite())),
+  z: WireNumber.pipe(Schema.check(Schema.isFinite())),
 })
 
 /** Mirrors `@nerima-games/mc-sim`'s `WitherPhase`. Not imported — see the file header. */
@@ -70,9 +70,9 @@ const WitherState: Schema.Struct<{
   phase: typeof WitherPhase
   velocity: typeof WitherPosition
 }> = Schema.Struct({
-  chargeRemainingSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  chargeRemainingSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   feetPosition: WitherPosition,
-  healthPoints: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(WITHER_MAX_HEALTH))),
+  healthPoints: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThanOrEqualTo(WITHER_MAX_HEALTH))),
   phase: WitherPhase,
   velocity: WitherPosition,
 })
@@ -88,9 +88,9 @@ const WitherSkullDescriptor: Schema.Struct<{
 }> = Schema.Struct({
   destroysResistantBlocks: Schema.Boolean,
   direction: WitherPosition,
-  explosivePower: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
+  explosivePower: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   origin: WitherPosition,
-  speed: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
+  speed: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   variant: WitherSkullVariant,
 })
 
@@ -108,9 +108,9 @@ const RuntimeWitherEntry: Schema.Struct<{
 }> = Schema.Struct({
   dimension: WitherDimension,
   id: WitherEntryId,
-  meleeCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  rangedCooldownSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  shotsFired: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  meleeCooldownSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  rangedCooldownSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  shotsFired: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   state: WitherState,
 })
 
@@ -123,7 +123,7 @@ const RuntimeWitherSkullEntry: Schema.Struct<{
   ownerId: typeof WitherEntryId
   position: typeof WitherPosition
 }> = Schema.Struct({
-  ageSecs: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  ageSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   descriptor: WitherSkullDescriptor,
   dimension: WitherDimension,
   id: WitherEntryId,
@@ -138,8 +138,8 @@ export const WitherRuntimeSnapshot: Schema.Struct<{
   skulls: Schema.$Array<typeof RuntimeWitherSkullEntry>
   withers: Schema.$Array<typeof RuntimeWitherEntry>
 }> = Schema.Struct({
-  nextSkullId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  nextWitherId: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  nextSkullId: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  nextWitherId: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   skulls: Schema.Array(RuntimeWitherSkullEntry),
   withers: Schema.Array(RuntimeWitherEntry),
 })
@@ -174,7 +174,7 @@ export const DamageWitherCommand: Schema.TaggedStruct<
     witherId: typeof WitherEntryId
   }
 > = Schema.TaggedStruct('DamageWitherCommand', {
-  amount: Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
+  amount: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   commandId: CommandId,
   expectedRevision: Revision,
   kind: WitherDamageKind,

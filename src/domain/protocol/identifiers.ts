@@ -7,11 +7,29 @@
  * `protocol.ts` re-exports everything here, so this split changes no
  * existing import site outside this directory.
  */
-import { Schema } from 'effect'
+import { Schema, type SchemaAST, SchemaGetter } from 'effect'
 
 /** The floor every branded/free-text identifier and content string in this protocol shares: not blank. */
 const ZERO = 0
+const NEGATIVE_ZERO = -ZERO
 const MIN_NON_EMPTY_LENGTH = 1
+
+// JSON serialization writes negative zero as positive zero; normalize both directions without rejecting old frames.
+export const isWireNegativeZero = (value: number): boolean => Object.is(value, NEGATIVE_ZERO)
+export const canonicalizeWireNumber = (value: number): number => {
+  if (isWireNegativeZero(value)) {
+    return ZERO
+  }
+  return value
+}
+export const WireNumberCheck: SchemaAST.Filter<number> = Schema.makeFilter<number>(
+  (value) => !isWireNegativeZero(value),
+  { expected: 'a canonical JSON number' },
+)
+export const WireNumber: typeof Schema.Number = Schema.Number.pipe(Schema.decode({
+  decode: SchemaGetter.transform(canonicalizeWireNumber),
+  encode: SchemaGetter.transform(canonicalizeWireNumber),
+}), Schema.check(WireNumberCheck))
 
 /** A peer's stable identity for the lifetime of a session. */
 export const PlayerId: Schema.brand<typeof Schema.String, 'PlayerId'> = Schema.String.pipe(
@@ -48,7 +66,7 @@ export const EntityId: Schema.brand<typeof Schema.String, 'EntityId'> = Schema.S
 )
 export type EntityId = typeof EntityId.Type
 
-export const Revision: typeof Schema.Number = Schema.Number.pipe(
+export const Revision: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
 )
@@ -60,8 +78,8 @@ export const BlockPos: Schema.Struct<{
   y: typeof Schema.Number
   z: typeof Schema.Number
 }> = Schema.Struct({
-  x: Schema.Number.pipe(Schema.check(Schema.isInt())),
-  y: Schema.Number.pipe(Schema.check(Schema.isInt())),
-  z: Schema.Number.pipe(Schema.check(Schema.isInt())),
+  x: WireNumber.pipe(Schema.check(Schema.isInt())),
+  y: WireNumber.pipe(Schema.check(Schema.isInt())),
+  z: WireNumber.pipe(Schema.check(Schema.isInt())),
 })
 export type BlockPos = typeof BlockPos.Type

@@ -9,7 +9,7 @@
  * domain type would let an unrelated refactor of that type silently change
  * what this build can decode.
  */
-import { CommandId, PlayerId, Revision, WorldId } from '../protocol/identifiers.js'
+import { CommandId, PlayerId, Revision, WireNumber, WorldId } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
 
 const ZERO = 0
@@ -28,7 +28,7 @@ export const Enchantment: Schema.Struct<{
   level: typeof Schema.Number
 }> = Schema.Struct({
   id: EnchantmentId,
-  level: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+  level: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
 })
 export type Enchantment = typeof Enchantment.Type
 
@@ -37,8 +37,8 @@ const EnchantedItemDurability: Schema.Struct<{
   current: typeof Schema.Number
   max: typeof Schema.Number
 }> = Schema.Struct({
-  current: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  max: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
+  current: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  max: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
 })
 
 /**
@@ -59,7 +59,7 @@ export type EnchantedItem = typeof EnchantedItem.Type
 
 const ENCHANTING_SLOT_COUNT = 36
 
-export const EnchantingSlotIndex: typeof Schema.Number = Schema.Number.pipe(
+export const EnchantingSlotIndex: typeof Schema.Number = WireNumber.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
   Schema.check(Schema.isLessThan(ENCHANTING_SLOT_COUNT)),
@@ -169,7 +169,7 @@ export const PlayerEnchantmentsDelta: Schema.TaggedStruct<
   items: Schema.Array(EnchantedSlotEntry),
   player: PlayerId,
   revision: Revision,
-  seed: Schema.Number.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  seed: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   world: WorldId,
 })
 export type PlayerEnchantmentsDelta = typeof PlayerEnchantmentsDelta.Type
