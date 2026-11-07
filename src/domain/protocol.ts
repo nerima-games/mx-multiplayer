@@ -34,8 +34,6 @@ import {
   WireNumber,
   WireNumberCheck,
   WorldId,
-  canonicalizeWireNumber,
-  isWireNegativeZero,
 } from './protocol/identifiers.js'
 import {
   BrewingCommand,
@@ -100,6 +98,15 @@ export const PROTOCOL_VERSION = 10
 const MIN_NON_EMPTY_LENGTH = 1
 const MIN_BASE64_QUARTET_LENGTH = 4
 const ZERO = 0
+const NEGATIVE_ZERO = -ZERO
+
+const isWireNegativeZero = (value: number): boolean => Object.is(value, NEGATIVE_ZERO)
+const canonicalizeWireNumber = (value: number): number => {
+  if (isWireNegativeZero(value)) {
+    return ZERO
+  }
+  return value
+}
 
 const canonicalizeWireValue = (value: unknown): unknown => {
   if (typeof value === 'number') {

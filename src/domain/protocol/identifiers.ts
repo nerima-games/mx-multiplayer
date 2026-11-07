@@ -15,8 +15,8 @@ const NEGATIVE_ZERO = -ZERO
 const MIN_NON_EMPTY_LENGTH = 1
 
 // JSON serialization writes negative zero as positive zero; normalize both directions without rejecting old frames.
-export const isWireNegativeZero = (value: number): boolean => Object.is(value, NEGATIVE_ZERO)
-export const canonicalizeWireNumber = (value: number): number => {
+const isWireNegativeZero = (value: number): boolean => Object.is(value, NEGATIVE_ZERO)
+const canonicalizeWireNumber = (value: number): number => {
   if (isWireNegativeZero(value)) {
     return ZERO
   }
