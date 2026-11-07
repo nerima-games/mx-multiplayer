@@ -18,6 +18,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["apps/**/*.ts", "src/**/*.ts"],
+  "include": ["apps/preview-two-clients/**/*.ts", "src/**/*.ts"],
   "exclude": ["node_modules", "coverage", "dist"]
 }

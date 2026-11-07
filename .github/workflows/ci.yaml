@@ -53,6 +53,12 @@ jobs:
       - name: Verify
         run: nix develop --command pnpm verify
 
+      - name: Install Playwright Chromium
+        run: nix develop --command pnpm exec playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: nix develop --command pnpm test:browser
+
       - name: Changeset status
         if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release/')
         run: |
