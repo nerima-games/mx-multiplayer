@@ -61,7 +61,7 @@
     "prepublishOnly": "pnpm verify && pnpm package:verify"
   },
   "dependencies": {
-    "@nerima-games/mc-kernel": "0.14.0",
+    "@nerima-games/mc-kernel": "0.15.0",
     "@nerima-games/mc-sim": "0.9.0",
     "effect": "4.0.5"
   },
