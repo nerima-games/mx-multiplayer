@@ -319,8 +319,6 @@ const MESSAGE_KIND_POLICIES: Readonly<Record<Exclude<ConnectionMessageKind, 'cha
   }),
 })
 
-const NON_CHAT_MESSAGE_KINDS: ReadonlyArray<Exclude<ConnectionMessageKind, 'chat'>> = ['command', 'movement', 'other']
-
 export const MESSAGE_KIND_RATE_LIMITS: MessageKindRateLimits = Object.freeze({
   chat: Object.freeze({ messages: CHAT_MESSAGE_LIMIT, windowMs: CHAT_MESSAGE_WINDOW_MS }),
   ...MESSAGE_KIND_POLICIES,
@@ -356,15 +354,15 @@ type MessageKindBucket = {
 
 const makeMessageKindBucket = (
   kind: Exclude<ConnectionMessageKind, 'chat'>,
-): readonly [Exclude<ConnectionMessageKind, 'chat'>, MessageKindBucket] => {
+): MessageKindBucket => {
   const policy = MESSAGE_KIND_POLICIES[kind]
-  return [kind, {
+  return {
     burst: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(policy.burst),
     hasLastRefillAt: false,
     lastRefillAt: ZERO,
     messagesPerSecond: policy.messagesPerSecond,
     tokens: policy.burst,
-  }]
+  }
 }
 
 const isConnectionMessageKind = (value: unknown): value is ConnectionMessageKind =>
@@ -419,7 +417,7 @@ const consumeMessageKindBucket = (
 }
 
 type MessageRateLimiterState = {
-  buckets: Map<Exclude<ConnectionMessageKind, 'chat'>, MessageKindBucket>
+  buckets: Record<Exclude<ConnectionMessageKind, 'chat'>, MessageKindBucket>
   chatTimestamps: Array<number>
   hasLastObservedAt: boolean
   lastObservedAt: number
@@ -448,10 +446,7 @@ const consumeMessageKind = (
   kind: Exclude<ConnectionMessageKind, 'chat'>,
   nowMs: number,
 ): Result.Result<void, MessageKindRateLimitFailure> => {
-  const bucket = state.buckets.get(kind)
-  if (bucket === undefined) {
-    return Result.fail(new RateLimitInputError({ reason: 'invalid-message-kind' }))
-  }
+  const bucket = state.buckets[kind]
   refillMessageKindBucket(bucket, nowMs)
   return consumeMessageKindBucket(kind, bucket)
 }
@@ -485,7 +480,11 @@ const consumeMessage = (
 
 export const createConnectionMessageRateLimiter = (): ConnectionMessageRateLimiter => {
   const state: MessageRateLimiterState = {
-    buckets: new Map<Exclude<ConnectionMessageKind, 'chat'>, MessageKindBucket>(NON_CHAT_MESSAGE_KINDS.map(makeMessageKindBucket)),
+    buckets: {
+      command: makeMessageKindBucket('command'),
+      movement: makeMessageKindBucket('movement'),
+      other: makeMessageKindBucket('other'),
+    },
     chatTimestamps: [],
     hasLastObservedAt: false,
     lastObservedAt: ZERO,

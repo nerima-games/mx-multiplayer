@@ -65,6 +65,27 @@ describe('snapshot admission and history', () => {
     }),
   )
 
+  it.effect('rejects non-record positions and facings, and clears every entity history on disconnect', () =>
+    Effect.sync(() => {
+      const subject = makeSubject()
+      expect(subject.ingest(alice, { ...snapshot(1, 10, 0), at: null })).toEqual({
+        accepted: false,
+        reason: 'invalid',
+      })
+      expect(subject.ingest(alice, { ...snapshot(1, 10, 0), facing: null })).toEqual({
+        accepted: false,
+        reason: 'invalid',
+      })
+
+      subject.ingestEntity(zombie, entitySnapshot(1, 10, 0))
+      subject.ingestEntity(skeleton, entitySnapshot(1, 10, 1))
+      subject.disconnectEntity()
+
+      expect(subject.entityHistorySize(zombie)).toBe(0)
+      expect(subject.entityHistorySize(skeleton)).toBe(0)
+    }),
+  )
+
   it.effect('bounds history independently for every player', () =>
     Effect.sync(() => {
       const subject = makeSubject(2)

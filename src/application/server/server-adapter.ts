@@ -82,20 +82,7 @@ export const MAX_SERVER_CONNECTIONS: PositiveSafeInteger = Schema.decodeUnknownS
 const strictParseOptions = { onExcessProperty: 'error' as const }
 
 const ServerDimensionSchema: Schema.Literals<typeof DIMENSIONS> = Schema.Literals(DIMENSIONS)
-const ServerBlockAxisSchema: typeof Schema.Number = Schema.Number.pipe(
-  Schema.check(Schema.isInt()),
-  Schema.check(Schema.isGreaterThanOrEqualTo(-Number.MAX_SAFE_INTEGER)),
-  Schema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
-)
-const ServerBlockPositionSchema: Schema.Struct<{
-  x: typeof ServerBlockAxisSchema
-  y: typeof ServerBlockAxisSchema
-  z: typeof ServerBlockAxisSchema
-}> = Schema.Struct({
-  x: ServerBlockAxisSchema,
-  y: ServerBlockAxisSchema,
-  z: ServerBlockAxisSchema,
-})
+const ServerBlockPositionSchema: typeof BlockPositionSchema = BlockPositionSchema
 const LocatedOwnerSchema: Schema.TaggedStruct<'Located', {
   blockPosition: typeof BlockPos
   dimension: typeof ServerDimensionSchema
@@ -172,7 +159,7 @@ const ServerSnapshotSourceSchema: Schema.TaggedStruct<'ReplicatedWorldSnapshot',
 })
 
 export type ServerOwnerLocationResolution = typeof ServerOwnerLocationResolutionSchema.Type
-export type ServerOwnerLocationIndex = ReadonlyMap<ReplicatedOwnerId, ServerOwnerLocationResolution>
+export type ServerOwnerLocationIndex = ReadonlyMap<ReplicatedOwnerId, unknown>
 export type ServerBlockStateLookup = Readonly<{
   change: typeof ServerBlockChangeSourceSchema.Type
   revision: typeof WorldRevisionSchema.Type
@@ -300,11 +287,11 @@ export type ServerSnapshotProjectionInputs = Readonly<{
 
 export type ServerAdapter = Readonly<{
   connect: (player: PlayerIdValue, world: WorldIdValue) => ServerConnectOutcome
-  disconnect: (connection: ServerConnectionHandle) => boolean
-  receiveFrame: (connection: ServerConnectionHandle, untrustedFrame: unknown) => Effect.Effect<ServerInboundOutcome>
+  disconnect: (connection: unknown) => boolean
+  receiveFrame: (connection: unknown, untrustedFrame: unknown) => Effect.Effect<ServerInboundOutcome>
   resume: (untrustedToken: unknown) => Effect.Effect<ServerResumeOutcome>
   projectSnapshot: (
-    connection: ServerConnectionHandle,
+    connection: unknown,
     authoritativeInput: unknown,
     inputs: ServerSnapshotProjectionInputs,
   ) => Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure>
@@ -346,6 +333,11 @@ const rateLimitAction = (failure: MessageKindRateLimitFailure): 'drop' | 'warn' 
 const createConnectionRateLimiterForAdmission = (): Result.Result<ConnectionRateLimiter, RateLimitConfigurationError> =>
   createConnectionRateLimiter(CONNECTION_RATE_LIMITS)
 
+type ResolvedOwnerLocation = Readonly<{
+  location: ServerOwnerLocationResolution
+  ownerId: ReplicatedOwnerId
+}>
+
 const readLocationOwnerId = (ownerInput: unknown): Result.Result<ReplicatedOwnerId, ServerProjectionRefusal> => {
   const decoded = Schema.decodeUnknownResult(ReplicatedOwnerIdSchema, strictParseOptions)(ownerInput)
   if (Result.isFailure(decoded)) {
@@ -353,11 +345,6 @@ const readLocationOwnerId = (ownerInput: unknown): Result.Result<ReplicatedOwner
   }
   return Result.succeed(decoded.success)
 }
-
-type ResolvedOwnerLocation = Readonly<{
-  location: ServerOwnerLocationResolution
-  ownerId: ReplicatedOwnerId
-}>
 
 const resolveOwnerLocation = (
   ownerInput: unknown,
@@ -621,11 +608,7 @@ const enrichBlockStateChange = <Behaviour>(
   if (Result.isFailure(states) || !hasValidBlockStatePair(request.change, states.success)) {
     return Result.fail(refusal('invalid-block-state'))
   }
-  const position = Schema.decodeUnknownResult(BlockPositionSchema, strictParseOptions)(request.change.position)
-  if (Result.isFailure(position)) {
-    return Result.fail(refusal('invalid-block-location'))
-  }
-  return Result.succeed({ ...request.change, position: position.success, ...states.success })
+  return Result.succeed({ ...request.change, ...states.success })
 }
 
 const enrichBlockStates = <Behaviour>(
@@ -658,13 +641,8 @@ type LoadedBlockStateEnrichmentRequest<Behaviour> = Readonly<{
 
 const enrichUnloadedSnapshotBlock = (
   block: UnloadedWorldBlockRead,
-): Result.Result<ReplicatedWorldSnapshotValue['blocks'][number], ServerProjectionRefusal> => {
-  const position = Schema.decodeUnknownResult(BlockPositionSchema, strictParseOptions)(block.position)
-  if (Result.isFailure(position)) {
-    return Result.fail(refusal('invalid-block-location'))
-  }
-  return Result.succeed({ dimension: block.dimension, position: position.success, reading: block.reading })
-}
+): Result.Result<ReplicatedWorldSnapshotValue['blocks'][number], ServerProjectionRefusal> =>
+  Result.succeed({ dimension: block.dimension, position: block.position, reading: block.reading })
 
 const enrichLoadedSnapshotBlock = <Behaviour>(
   request: LoadedBlockStateEnrichmentRequest<Behaviour>,
@@ -677,13 +655,9 @@ const enrichLoadedSnapshotBlock = <Behaviour>(
   if (Result.isFailure(state) || Result.isFailure(decodeBlockState(request.block.reading.block, state.success))) {
     return Result.fail(refusal('invalid-block-state'))
   }
-  const position = Schema.decodeUnknownResult(BlockPositionSchema, strictParseOptions)(request.block.position)
-  if (Result.isFailure(position)) {
-    return Result.fail(refusal('invalid-block-location'))
-  }
   return Result.succeed({
     dimension: request.block.dimension,
-    position: position.success,
+    position: request.block.position,
     reading: request.block.reading,
     state: state.success,
   })
@@ -699,6 +673,7 @@ type SnapshotSourceBlockEnrichmentRequest<Behaviour> = Readonly<{
 const enrichSnapshotSourceBlock = <Behaviour>(
   request: SnapshotSourceBlockEnrichmentRequest<Behaviour>,
 ): Result.Result<ReplicatedWorldSnapshotValue['blocks'][number], ServerProjectionRefusal> => {
+  // eslint-disable-next-line default-case -- The source schema validates this closed union.
   switch (request.block.reading._tag) {
     case 'ChunkNotLoaded':
     case 'OutOfWorld': {
@@ -722,8 +697,6 @@ const enrichSnapshotSourceBlock = <Behaviour>(
         world: request.world,
       })
     }
-    default:
-      return Result.fail(refusal('invalid-replicated-snapshot'))
   }
 }
 
@@ -970,12 +943,8 @@ type RecipientDeltaProjectionRequest<Behaviour> = Readonly<{
   delta: ReplicatedWorldDeltaValue
 }>
 
-const hasDeltaChanges = (outcome: DeltaProjectionOutcome): boolean => {
-  if (outcome._tag !== 'ProjectedDelta') {
-    return true
-  }
-  return outcome.message.blockChanges.length > ZERO || outcome.message.changes.length > ZERO
-}
+const hasDeltaChanges = (outcome: Extract<DeltaProjectionOutcome, { readonly _tag: 'ProjectedDelta' }>): boolean =>
+  outcome.message.blockChanges.length > ZERO || outcome.message.changes.length > ZERO
 
 type ResolvedDeltaProjection = Readonly<{
   interest: AreaOfInterest
@@ -984,7 +953,7 @@ type ResolvedDeltaProjection = Readonly<{
 
 const resolveDeltaProjectionForConnection = <Behaviour>(
   request: RecipientDeltaProjectionRequest<Behaviour>,
-): Result.Result<ResolvedDeltaProjection | undefined, ServerProjectionRefusal> => {
+): Result.Result<ResolvedDeltaProjection, ServerProjectionRefusal> => {
   const interest = interestFor(request.config, request.connection)
   if (Result.isFailure(interest)) {
     return Result.fail(refusal('invalid-server-interest'))
@@ -995,7 +964,7 @@ const resolveDeltaProjectionForConnection = <Behaviour>(
   }
   const [outcome] = projected.success
   if (outcome === undefined) {
-    return Result.succeed(undefined)
+    return Result.fail(refusal('delta-projection-failed'))
   }
   return Result.succeed({ interest: interest.success, outcome })
 }
@@ -1018,9 +987,6 @@ const projectDeltaForConnection = <Behaviour>(
   const resolved = resolveDeltaProjectionForConnection(request)
   if (Result.isFailure(resolved)) {
     return Result.fail(resolved.failure)
-  }
-  if (resolved.success === undefined) {
-    return Result.succeed(undefined)
   }
   const { interest, outcome } = resolved.success
   if (!shouldDeliverDelta(request.connection, interest, outcome)) {
@@ -1141,7 +1107,7 @@ export const createServerAdapter = <Behaviour>(
     }
   }
 
-  const disconnect = (handle: ServerConnectionHandle): boolean => {
+  const disconnect = (handle: unknown): boolean => {
     const connection = findConnection(handle)
     if (connection === undefined) {
       return false
@@ -1172,7 +1138,7 @@ export const createServerAdapter = <Behaviour>(
   })
 
   const receiveFrame = (
-    handle: ServerConnectionHandle,
+    handle: unknown,
     untrustedFrame: unknown,
   ): Effect.Effect<ServerInboundOutcome> => Effect.gen(function* () {
     const connection = findConnection(handle)
@@ -1191,7 +1157,7 @@ export const createServerAdapter = <Behaviour>(
   })
 
   const projectSnapshot = (
-    handle: ServerConnectionHandle,
+    handle: unknown,
     authoritativeInput: unknown,
     inputs: ServerSnapshotProjectionInputs,
   ): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure> => {

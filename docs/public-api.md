@@ -366,12 +366,20 @@ type ServerAdapterConfiguration<Behaviour> = {
   session: AuthoritativeSession
 }
 
+type CommandIntentContext = {
+  identity: ServerConnectionIdentity
+  targetTick: unknown
+  expectedDimensionRevision: unknown
+}
+
+type ServerOwnerLocationIndex = ReadonlyMap<ReplicatedOwnerId, unknown>
+
 type ServerAdapter = {
   connect(player: PlayerId, world: WorldId): ServerConnectOutcome
-  disconnect(connection: ServerConnectionHandle): boolean
-  receiveFrame(connection: ServerConnectionHandle, frame: unknown): Effect.Effect<ServerInboundOutcome>
+  disconnect(connection: unknown): boolean
+  receiveFrame(connection: unknown, frame: unknown): Effect.Effect<ServerInboundOutcome>
   resume(token: unknown): Effect.Effect<ServerResumeOutcome>
-  projectSnapshot(connection: ServerConnectionHandle, authoritative: unknown, inputs: ServerSnapshotProjectionInputs): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure>
+  projectSnapshot(connection: unknown, authoritative: unknown, inputs: ServerSnapshotProjectionInputs): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure>
   projectDelta(delta: unknown): Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure>
 }
 ```
@@ -387,6 +395,8 @@ return `drop`, and global overages return `disconnect`; the transport host appli
 chunk coordinates; the adapter validates this value before using it. `commandContextFor` and `commandServices`
 connect accepted commands to host-owned gameplay rules and world writes. `blockStatesForChange` resolves the
 before/after state pair for a delta, and `blockStateForRead` supplies state for each loaded snapshot block.
+The adapter validates `targetTick` and `expectedDimensionRevision` when it builds the authoritative intent.
+Snapshot projection receives a `ServerOwnerLocationIndex`; it validates each location value before using it.
 
 `projectSnapshot` filters owner-scoped authoritative fields and C4 owners/blocks to the connection's area of
 interest. `projectDelta` returns only changed owners and blocks visible to each connection. The adapter's

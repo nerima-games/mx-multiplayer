@@ -305,6 +305,11 @@ describe('area of interest', () => {
       .toMatchObject({ reason: 'invalid-chunk' })
     expect(resultError(areaOfInterestIncludesLocation(interest, 'overworld', { x: Number.NaN, y: 64, z: 0 })))
       .toMatchObject({ reason: 'invalid-chunk' })
+    expect(resultError(areaOfInterestIncludesLocation(interest, 'overworld', {
+      x: Number.MAX_SAFE_INTEGER * 32,
+      y: 64,
+      z: 0,
+    }))).toMatchObject({ reason: 'invalid-chunk' })
   })
 
   it('property-checks location membership against an independent chunk calculation', () => {
@@ -525,6 +530,14 @@ describe('per-connection frame and byte rate limiting', () => {
     expect(Result.isSuccess(limiter.consume(1, 10))).toBe(true)
     expect(resultError(limiter.consume(1, 9))).toMatchObject({ reason: 'time-regressed' })
     expect(Result.isSuccess(limiter.consume(1, 10))).toBe(true)
+  })
+
+  it('rejects invalid message kinds and times before consuming a message token', () => {
+    const limiter = createConnectionMessageRateLimiter()
+    expect(resultError(limiter.consume('unknown', 0))).toMatchObject({ reason: 'invalid-message-kind' })
+    expect(resultError(limiter.consume('chat', Number.NaN))).toMatchObject({ reason: 'invalid-time' })
+    expect(Result.isSuccess(limiter.consume('chat', 10))).toBe(true)
+    expect(resultError(limiter.consume('chat', 9))).toMatchObject({ reason: 'time-regressed' })
   })
 
   it('checks exact and beyond-boundary frame sizes across deterministic limits', () => {

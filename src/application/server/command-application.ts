@@ -9,7 +9,6 @@ import {
   type ServerConnectionIdentity,
 } from '../../domain/authoritative-session.js'
 import { Brand, Effect, Result, Schema } from 'effect'
-import { type DimensionRevision, type SimulationTick, isItemType, itemIdOf } from '@nerima-games/mc-kernel'
 import {
   type EntityManagerApi,
   type HotbarServiceApi,
@@ -20,6 +19,7 @@ import {
   type VehicleServiceApi,
   type VitalsServiceApi,
 } from '@nerima-games/mc-sim'
+import { isItemType, itemIdOf } from '@nerima-games/mc-kernel'
 
 /** Retained for hosts that shared the earlier application signature. This path does not call these services. */
 export type WorldWriteServices<Behaviour> = {
@@ -35,8 +35,8 @@ export type WorldWriteServices<Behaviour> = {
 /** Tick and dimension revision are server state and never come from AuthoritativeCommand. */
 export type CommandIntentContext = {
   readonly identity: ServerConnectionIdentity
-  readonly targetTick: SimulationTick
-  readonly expectedDimensionRevision: DimensionRevision
+  readonly targetTick: unknown
+  readonly expectedDimensionRevision: unknown
 }
 
 export type CommandUnsupportedReason =

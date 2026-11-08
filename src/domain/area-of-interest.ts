@@ -322,15 +322,10 @@ const locationChunkKey = (
   if (Result.isFailure(position)) {
     return fail('invalid-chunk', 'location.position')
   }
-  const coordinates = decodeChunkCoordinates(
-    Math.floor(position.success.x / CHUNK_SIDE_BLOCKS),
-    Math.floor(position.success.z / CHUNK_SIDE_BLOCKS),
-    'location',
-  )
-  if (Result.isFailure(coordinates)) {
-    return Result.fail(coordinates.failure)
-  }
-  return Result.succeed(chunkKey(dimensionInput, coordinates.success.x, coordinates.success.z))
+  // BlockPos axes are safe integers, so division by the positive chunk width stays safe.
+  const x = Math.floor(position.success.x / CHUNK_SIDE_BLOCKS)
+  const z = Math.floor(position.success.z / CHUNK_SIDE_BLOCKS)
+  return Result.succeed(chunkKey(dimensionInput, x, z))
 }
 
 export const areaOfInterestIncludesLocation = (
