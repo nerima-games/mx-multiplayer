@@ -7,11 +7,14 @@
 `test/public-api.test.ts` がこの一覧をピン留めしている。
 再エクスポートを落とすと、このリポジトリの他のどのテストにも映らないまま下流が壊れるため。
 
+The source barrel is `src/index.ts`; the package root resolves to `dist/index.js` and `dist/index.d.ts`.
+Source paths in section headings are relative to the repository root; `domain/*` refers to `src/domain/*`.
+
 ## 1. プロトコル(`domain/protocol.ts`)
 
 | 名前 | 種別 | 契約 |
 | --- | --- | --- |
-| `PROTOCOL_VERSION` | `number` | `src/domain/protocol.ts` が export する wire protocol 版数。値の正本は実装と互換性テスト |
+| `PROTOCOL_VERSION` | `number` | `src/domain/protocol.ts` が export する wire protocol 版数。現在は 11。値の正本は実装と互換性テスト |
 | `PlayerId` / `PlayerName` / `WorldId` | branded Schema | 非空文字列。`.make(...)` でコンストラクト |
 | `Vec3` | Schema | `{ x, y, z }` すべて `finite()` |
 | `BlockPos` | Schema | `{ x, y, z }` すべて `int()` |
@@ -44,11 +47,13 @@
 タグの完全な列挙は `domain/protocol.ts` の `MESSAGE_TAGS` が正本であり、
 codec test が集合と union の一致を検証する。
 
-C4 deltas carry `changes` and `blockChanges` with the same `world` and `revision`. The receiver validates and
-applies them as one group; revisions with no visible changes still advance as empty groups. A C4 snapshot
-represents a consistent view of owners and blocks. Oversized snapshots use start/chunk/end frames. The
-protocol transports the WCC owner state projection and sparse block changes from `mc-sim`; `mx-multiplayer`
-does not duplicate owner state.
+C4 names the grouped owner-state and block replication stream. WCC means `WorldCommitCoordinator` from
+`mc-sim`. C4 deltas carry `changes` and `blockChanges` with the same `world` and `revision`. Each block change includes
+the before and after block IDs and encoded states; each snapshot block read includes its encoded state. The
+receiver validates and applies owner and block changes as one group; revisions with no visible changes still
+advance as empty groups. A C4 snapshot represents a consistent view of owners and blocks. Oversized snapshots
+use start/chunk/end frames. The protocol transports the WCC owner-state projection and sparse block changes
+from `mc-sim`; `mx-multiplayer` does not duplicate owner state.
 
 ## 2. コーデック(`domain/codec.ts`)
 
@@ -69,9 +74,9 @@ const ReplicatedOwnerStateBoundsSchema: Schema
 const ReplicatedOwnerRegistryLimitsSchema: Schema
 ```
 
-**Contract**: Validate runtime input at the encode boundary. For representable `m`,
-`decodeFrame(encodeFrame(m)) == m`. Invalid input returns `unencodable-message`. Effect 4's
-`Result.Result` contains either a success or a failure value, so the codec itself requires no Effect context.
+**Contract**: `encodeFrame` validates runtime input. For each message it successfully encodes,
+`decodeFrame` returns an equivalent `NetworkMessage`. Invalid input returns `unencodable-message`.
+`effect`'s `Result.Result` is a value containing either success or failure, so codec calls need no Effect context.
 
 - `encodeFrameAsVersion` はテスト用。「このビルドが話せないバージョンのフレーム」を作る唯一の手段であり、
   バージョンチェックが本当に**拒否**しているか(ベストエフォートで解釈していないか)を証明するために公開している。
@@ -80,7 +85,8 @@ const ReplicatedOwnerRegistryLimitsSchema: Schema
   Callers may pass unknown configuration to the factories; each factory decodes it before use. Neither has
   production defaults; host composition supplies values based on schema and traffic measurements.
 - Use the transfer-specific encode/decode functions when a snapshot exceeds the regular frame cap. Callers
-  also configure receiver limits; the transport layer owns per-connection rate enforcement.
+  also configure receiver limits. The server adapter enforces inbound frame, byte, delta-size, and message-kind
+  limits per connection; the WebSocket host remains responsible for applying returned disconnect actions.
 
 ## 3. 障害(`domain/errors.ts`)
 
@@ -90,7 +96,7 @@ class ProtocolError  // reason: ProtocolErrorReason
 class TransportError // reason: 'not-connected' | 'send-failed' | 'closed'
 ```
 
-**両者を統合してはならない。** 正しい対応が真逆である(DN-2):
+**両者を統合してはならない。** 正しい対応が真逆である([design-notes.md](./design-notes.md), DN-2):
 
 - `ProtocolError` → フレームまたはピアを捨てる。**再送は無意味**
 - `TransportError` → **再送・再接続が正解**。メッセージ自体は有効
@@ -112,7 +118,7 @@ const isSettled: (state) => boolean
 
 **`transition` が `undefined` を返すのは「そのイベントはここでは不正」の意味である。**
 現状態をそのまま返さないのは、「何もすることが無い」と「筋の通らない要求」を
-呼び出し側が区別できるようにするため(DN-8)。
+呼び出し側が区別できるようにするため([design-notes.md](./design-notes.md), DN-8)。
 
 **リトライ方針はここに無い。** どの状態へ行けるかだけを言う。
 待ち時間と回数は `Schedule` であり、ソケットを所有するアダプタのものである。
@@ -148,6 +154,10 @@ const disconnectedTransport: Effect.Effect<TransportService>
 `connectionGatedTransport` で合成してから `TransportPort` として提供する。`send` ごとに状態を再評価し、
 `Connected` 以外では `TransportError { reason: 'not-connected' }` を返す。raw transport はハンドシェイク用途と
 後方互換性のため残る。
+
+Here, a raw transport is a `TransportService` before the connection-state gate is applied. It remains public
+for handshake traffic and existing callers that provide `TransportService` directly. The host provides the
+decorated service as `TransportPort`; `connectionGatedTransport` checks the current state on every send.
 
 **Port が運ぶのはテキストであってメッセージ値ではない。**
 `send` が `NetworkMessage` を取ると、ループバックはオブジェクトを参照渡しするだけになり、
@@ -193,9 +203,17 @@ authoritative tick でスナップする。切断時は `disconnect(player)`、�
 ```typescript
 const snapshots = Result.getOrThrow(SnapshotInterpolator.make({ historyLimit: 32, teleportDistance: 8 }))
 
-snapshots.ingest(playerId, authoritativeSnapshot)
-const pose = snapshots.sample(playerId, serverTick - 2)
-snapshots.disconnect(playerId)
+const renderPlayer = (
+  playerId: PlayerId,
+  authoritativeSnapshot: PlayerTransformSnapshot,
+  serverTick: number,
+): PlayerTransformSnapshot | undefined => {
+  const accepted = snapshots.ingest(playerId, authoritativeSnapshot)
+  if (!accepted.accepted) return undefined
+  return snapshots.sample(playerId, serverTick - 2)
+}
+
+snapshots.disconnect()
 ```
 
 sequence/tick は `src/domain/protocol.ts` の `PROTOCOL_VERSION` が定義する wire protocol のフィールドではない。既存プロトコルとの互換性を保つため、
@@ -254,6 +272,15 @@ const decodeUtf8Frame: (bytes: Uint8Array) => WireText | undefined
 const sha256Hex: (bytes: Uint8Array) => Result.Result<LowercaseHexSha256, Schema.SchemaError>
 const applyReplicatedWorldSnapshot: (state: AuthoritativeClientSnapshot, snapshot: ReplicatedWorldSnapshot) => ClientSyncTransition
 const applyReplicatedWorldDelta: (state: AuthoritativeClientSnapshot, delta: ReplicatedWorldDeltaMessage) => ClientSyncTransition
+
+class AuthoritativeClientState {
+  get snapshot(): AuthoritativeClientSnapshot
+  world(world: WorldId): AuthoritativeWorldState | undefined
+  applySnapshot(snapshot: ReplicatedWorldSnapshot): ClientSyncTransition
+  applyDelta(delta: ReplicatedWorldDeltaMessage): ClientSyncTransition
+  applyTransfer(completion: CompletedSnapshotTransfer, owners: ReplicatedOwnerRegistry): ClientSyncTransition
+  disconnect(world?: WorldId): void
+}
 ```
 
 `AuthoritativeClientState` holds the client projection. It validates owner changes and block changes in a delta
@@ -266,8 +293,8 @@ publishes a candidate state. On failure, it keeps the previous projection and re
 | 境界 | 所有者 |
 | --- | --- |
 | `GameModule` / `StageRegistration` | mx-multiplayer の `src/stages/`。実装済み |
-| decoded message を authoritative state に反映する処理 | host/server。mc-compose の multiplayer server は `mc-sim` とゲーム規則を使って所有する |
-| 実 WebSocket server と認証・origin policy | platform host。mc-compose の multiplayer server が所有する |
+| Inbound frame validation, per-connection limits, supported command application, and recipient-specific snapshot/delta projection | mx-multiplayer's `createServerAdapter`; the host supplies gameplay rules and authoritative world services |
+| 実 WebSocket server、origin policy、暗号・永続化 port の実装 | platform host。mc-compose の multiplayer server が所有する |
 | network phase の全体配置 | mc-compose の stage skeleton。実装済み |
 
 ### 8.1 stage 登録
@@ -291,11 +318,8 @@ const NO_NETWORK_FRAMES
 stage 実装の詳細と追加の host adapter は `src/stages/registration.ts` を正本とし、
 全公開値を列挙する一覧ではない。
 
-`RRegister` が `TransportPort` で `ROut` が `never` である点が、ロスターの中でこのリポジトリだけの
-形である。mc-render は自分が**提供する** `InputService` を acquire するが、ここで acquire する
-`TransportPort` は自分が**定義するだけ**で提供しないもの（実アダプタはプラットフォーム層）。
-つまり `RRegister` は外から満たされねばならない本物の要求であり、
-`RRegister` を `RIn` に畳めない理由の最も分かりやすい実例になっている。
+The host supplies the `TransportPort` required by `multiplayerModule`. This package declares the port and stage
+registration but does not provide a concrete WebSocket implementation.
 
 全体の stage 順序は [responsibility.md](./responsibility.md) §2.1 を参照。これは
 mx-multiplayer の公開 API ではなく、mc-compose が所有するフレーム契約である。
@@ -317,6 +341,58 @@ Each reconnect token expires 24 hours after issuance by default. This gives a pl
 `has(player)` reports whether an auth record exists; `resume` and `rotate` check whether a matching token is still valid. The current and previous token hashes keep separate issuance times, so rotating a token starts a new lifetime for the new token while preserving the previous token's original expiry.
 
 Persisted formats 1 and 2 are earlier reconnect-auth file layouts. When the implementation loads either format, it treats each existing hash as issued at load time. This preserves those tokens during migration and starts their configured TTL when the file is read.
+
+### 8.3 Server integration adapter
+
+`createServerAdapter` is exported from the package root. It composes frame inspection, reconnect-token resume,
+connection and message-kind limits, supported command application, and recipient-specific world projection.
+The host supplies command services, owner locations, chunk interest, block-state lookups, a reconnect-auth
+resume operation, and an `AuthoritativeSession`:
+
+```ts
+const MAX_SERVER_CONNECTIONS: number // 20 concurrent connections per adapter
+const createServerAdapter: <Behaviour>(config: ServerAdapterConfiguration<Behaviour>) => ServerAdapter
+
+import { EncodedBlockStateSchema } from '@nerima-games/mc-kernel'
+
+type ServerAdapterConfiguration<Behaviour> = {
+  commandContextFor: (identity: ServerConnectionIdentity, player: PlayerId, world: WorldId) => CommandIntentContext
+  commandServices: WorldWriteServices<Behaviour>
+  blockStatesForChange: (lookup: ServerBlockStateLookup) => Result.Result<ServerBlockStatePair, unknown>
+  blockStateForRead: (lookup: ServerBlockReadStateLookup) => Result.Result<typeof EncodedBlockStateSchema.Type, unknown>
+  interestInputFor: (identity: ServerConnectionIdentity, player: PlayerId, world: WorldId) => unknown
+  ownerRegistry: ReplicatedOwnerRegistry
+  reconnectAuth: Pick<ReconnectAuth, 'resume'>
+  session: AuthoritativeSession
+}
+
+type ServerAdapter = {
+  connect(player: PlayerId, world: WorldId): ServerConnectOutcome
+  disconnect(connection: ServerConnectionHandle): boolean
+  receiveFrame(connection: ServerConnectionHandle, frame: unknown): Effect.Effect<ServerInboundOutcome>
+  resume(token: unknown): Effect.Effect<ServerResumeOutcome>
+  projectSnapshot(connection: ServerConnectionHandle, authoritative: unknown, inputs: ServerSnapshotProjectionInputs): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure>
+  projectDelta(delta: unknown): Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure>
+}
+```
+
+`receiveFrame` checks the protocol version and frame bounds before decoding JSON, then returns typed rejection,
+rate-limit, chat, movement, resync, or command outcomes. Global limits use 25 frames/second, 1,089,775 bytes/second,
+an 80-frame burst, and a 54,489-byte maximum delta. Message-kind limits allow 3 chat messages per 10 seconds;
+commands use a burst of 20 and refill at 10/second, movement a burst of 40 and refill at 20/second, and other
+messages a burst of 80 and refill at 25/second. Chat overages return `warn`, command/movement/other overages
+return `drop`, and global overages return `disconnect`; the transport host applies the requested action.
+
+`interestInputFor` returns `{ chunks, ownerIds }`. Each chunk has `{ dimension, x, z }` fields, with integer
+chunk coordinates; the adapter validates this value before using it. `commandContextFor` and `commandServices`
+connect accepted commands to host-owned gameplay rules and world writes. `blockStatesForChange` resolves the
+before/after state pair for a delta, and `blockStateForRead` supplies state for each loaded snapshot block.
+
+`projectSnapshot` filters owner-scoped authoritative fields and C4 owners/blocks to the connection's area of
+interest. `projectDelta` returns only changed owners and blocks visible to each connection. The adapter's
+snapshot input is `AuthoritativeSnapshot` plus a C4 replicated-world snapshot; it does not filter legacy
+`RealmTransferSnapshot.worldSnapshot.players` values built outside this API. `resume` validates and rotates a
+token, returning the resumed player and replacement token; the host still creates the new connection.
 
 ## 9. 公開パッケージの境界
 

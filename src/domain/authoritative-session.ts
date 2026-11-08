@@ -247,6 +247,10 @@ export class AuthoritativeSession {
     return this.#readRevision(world)
   }
 
+  disconnectConnection(identity: ServerConnectionIdentity): boolean {
+    return this.#connections.delete(identity)
+  }
+
   disconnect(world?: WorldId): void {
     if (world === undefined) {
       this.#connections.clear()

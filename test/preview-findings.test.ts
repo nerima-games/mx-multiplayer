@@ -28,7 +28,8 @@
  * each other and injecting faults.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Result, Queue } from 'effect'
+import { EncodedBlockStateSchema } from '@nerima-games/mc-kernel'
+import { Effect, Result, Queue, Schema } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../src/domain/codec'
 import {
   type ConnectionEvent,
@@ -293,7 +294,7 @@ describe('checks the preview kept after they passed', () => {
         { _tag: 'PlayerLeave', player: alice },
         { _tag: 'WorldInfo', seed: 1, world: overworld },
         { _tag: 'BlockBreak', at: { x: 0, y: 0, z: 0 }, player: alice },
-        { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'stone', player: alice },
+        { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'stone', player: alice, state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0) },
       ]
 
       const offenders: Array<string> = []

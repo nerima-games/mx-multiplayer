@@ -5,7 +5,7 @@ const reference = (file: `test/${string}`, line: number, testName: string): Test
 
 const codecRoundTrip = reference(
   'test/codec.test.ts',
-  1233,
+  1241,
   'every message decodes back to a value strictly equal to the one encoded',
 )
 const entitiesWireShape = reference(
@@ -26,7 +26,7 @@ const entitiesUnauthorized = reference(
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'pins current golden bytes and version rejection for every representative family',
+  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
 )
 
 const covered = (...tests: [TestReference, ...TestReference[]]): MatrixCell => ({ status: 'covered', tests })

@@ -61,7 +61,7 @@ const commandHeader = (commandId: string, player: typeof PLAYER_A | typeof PLAYE
 
 const commands = (prefix: string, player = PLAYER_A): ReadonlyArray<EntityCommand> => [
   { ...commandHeader(`${prefix}-weather`, player), _tag: 'WorldTimeWeatherCommand', action: { _tag: 'set-weather', weather: 'rain' } },
-  { ...commandHeader(`${prefix}-attack`, player), _tag: 'EntityAttackCommand', entityId: ENTITY },
+  { ...commandHeader(`${prefix}-attack`, player), _tag: 'EntityAttackCommand', entityId: ENTITY, heldSlot: ZERO },
   { ...commandHeader(`${prefix}-pickup`, player), _tag: 'EntityPickupCommand', entityId: ENTITY },
   { ...commandHeader(`${prefix}-bow`, player), _tag: 'BowUseCommand', action: 'start' },
   { ...commandHeader(`${prefix}-tnt`, player), _tag: 'IgniteTntCommand', at: { x: ONE, y: 64, z: TWO } },

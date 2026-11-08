@@ -17,6 +17,7 @@
 export * from './application/browser-transport.js'
 export * from './application/server/command-application.js'
 export * from './application/server/frame-inspection.js'
+export * from './application/server/server-adapter.js'
 export {
   RECONNECT_TOKEN_BYTES,
   ReconnectToken,

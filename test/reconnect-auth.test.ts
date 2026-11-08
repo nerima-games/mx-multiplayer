@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Duration, Effect } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import * as fc from 'fast-check'
 import { PlayerId } from '../src/domain/protocol/identifiers'
 import {
   RECONNECT_TOKEN_BYTES,
@@ -33,7 +34,7 @@ const nodeCrypto: ReconnectAuthCrypto = {
 type ReconnectAuthClient = {
   readonly has: ReconnectAuth['has']
   readonly issue: (player: string) => Promise<string | undefined>
-  readonly reissue: (player: string) => Promise<string | undefined>
+  readonly revoke: (player: PlayerId) => Promise<boolean>
   readonly rotate: (player: string, token: string) => Promise<string | undefined>
   readonly resume: (token: string) => Promise<{ readonly player: PlayerId; readonly token: string } | undefined>
 }
@@ -46,7 +47,7 @@ const createReconnectAuth = async (
   return {
     has: auth.has,
     issue: (player) => Effect.runPromise(auth.issue(player)),
-    reissue: (player) => Effect.runPromise(auth.reissue(player)),
+    revoke: (player) => Effect.runPromise(auth.revoke(player)),
     rotate: (player, token) => Effect.runPromise(auth.rotate(player, token)),
     resume: (token) => Effect.runPromise(auth.resume(ReconnectTokenInput.make(token))),
   }
@@ -98,6 +99,51 @@ describe('createReconnectAuth', () => {
     expect(store.writes.length).toBe(1)
   })
 
+  it('revokes both the current and previous token generations', async () => {
+    const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
+    const previous = definedOrThrow(await auth.issue('alice'))
+    const current = definedOrThrow(await auth.rotate('alice', previous))
+
+    expect(await auth.revoke(PlayerId.make('alice'))).toBe(true)
+    expect(auth.has('alice')).toBe(false)
+    expect(await auth.resume(previous)).toBeUndefined()
+    expect(await auth.resume(current)).toBeUndefined()
+  })
+
+  it('property-checks revocation of absent players as a no-op', async () => {
+    const store = inMemoryStore()
+    const auth = await createReconnectAuth(nodeCrypto, store)
+
+    await fc.assert(fc.asyncProperty(fc.string({ minLength: 1, maxLength: 24 }), async (player) => {
+      expect(await auth.revoke(PlayerId.make(player))).toBe(false)
+      expect(auth.has(player)).toBe(false)
+    }))
+    expect(store.writes).toHaveLength(0)
+  })
+
+  it('restores a revoked token record when persistence fails', async () => {
+    let saved: string | undefined = undefined
+    let failSave = false
+    const store: ReconnectAuthStore = {
+      load: () => Effect.succeed(saved),
+      save: (contents) => {
+        if (failSave) {
+          return Effect.fail(new Error('save failed'))
+        }
+        saved = contents
+        return Effect.void
+      },
+    }
+    const auth = await createReconnectAuth(nodeCrypto, store)
+    const token = definedOrThrow(await auth.issue('alice'))
+    failSave = true
+
+    await expect(auth.revoke(PlayerId.make('alice'))).rejects.toThrow('save failed')
+    expect(auth.has('alice')).toBe(true)
+    failSave = false
+    expect(await auth.resume(token)).toBeDefined()
+  })
+
   it('propagates a synchronous token-generation failure without changing state', async () => {
     const store = inMemoryStore()
     const crypto: ReconnectAuthCrypto = {
@@ -113,7 +159,7 @@ describe('createReconnectAuth', () => {
     expect(store.writes).toHaveLength(0)
   })
 
-  it('does not reissue a token for a player who already has one via issue()', async () => {
+  it('does not issue a second token for a player who already has one', async () => {
     const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
     const first = await auth.issue('alice')
     const second = await auth.issue('alice')
@@ -126,20 +172,9 @@ describe('createReconnectAuth', () => {
     expect(await auth.issue('')).toBeUndefined()
   })
 
-  it('reissue replaces a player with no prior token with nothing', async () => {
+  it('does not expose a player-only token reissue operation', async () => {
     const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
-    expect(await auth.reissue('alice')).toBeUndefined()
-  })
-
-  it('reissue mints a new token for a player who already has one', async () => {
-    const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
-    const first = await auth.issue('alice')
-    const second = await auth.reissue('alice')
-    expect(second).toBeDefined()
-    expect(second).not.toBe(first)
-    // A reissue does not keep the replaced token as "previous": only rotate() does.
-    expect(await auth.rotate('alice', definedOrThrow(first))).toBeUndefined()
-    expect(await auth.rotate('alice', definedOrThrow(second))).toBeDefined()
+    expect('reissue' in auth).toBe(false)
   })
 
   it('rotate accepts the current token and rejects the token it replaced', async () => {

@@ -12,7 +12,7 @@ import {
   createReplicatedOwnerRegistry,
   projectReplicatedWorldDelta,
 } from '../src/index.js'
-import { BlockIdSchema, BlockPositionSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { BlockIdSchema, BlockPositionSchema, EncodedBlockStateSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { Result, Schema } from 'effect'
 import type {
   ScenarioClientId,
@@ -20,7 +20,6 @@ import type {
   ScenarioEvaluationInput,
   ScenarioStepContext,
 } from './types.js'
-import type { ReplicatedBlockChange } from '@nerima-games/mc-sim'
 
 const ZERO = 0
 const ONE = 1
@@ -44,9 +43,10 @@ const BYTE_RATE_BURST_FRAMES = 2
 const OWNER_REGISTRY_MAX_DELTA_BLOCK_CHANGES = 2
 const OWNER_REGISTRY_MAX_SNAPSHOT_BLOCK_READS = 1
 const OWNER_REGISTRY_MAX_DEPTH = 13
-const OWNER_REGISTRY_MAX_COLLECTION_ITEMS = 5
+const OWNER_REGISTRY_MAX_COLLECTION_ITEMS = 6
 const OWNER_REGISTRY_MAX_FRAME_BYTES = 100_000
 const WORLD = WorldId.make('overworld')
+const ZERO_BLOCK_STATE = Schema.decodeUnknownSync(EncodedBlockStateSchema)(ZERO)
 
 export const VISIBILITY_LOAD_OWNER_REGISTRY: ReplicatedOwnerRegistry = Result.getOrThrow(createReplicatedOwnerRegistry([], {
   maxCollectionItems: OWNER_REGISTRY_MAX_COLLECTION_ITEMS,
@@ -73,9 +73,11 @@ const SCENARIO_CLIENTS: ScenarioStepContext['clients'] = [
   { id: 'client-b', player: 'scenario-player-b' },
 ]
 
-const blockChange = (x: number, after: number): ReplicatedBlockChange => ({
+const blockChange = (x: number, after: number): ReplicatedWorldDeltaMessage['blockChanges'][number] => ({
   after: Schema.decodeUnknownSync(BlockIdSchema)(after),
+  afterState: ZERO_BLOCK_STATE,
   before: Schema.decodeUnknownSync(BlockIdSchema)(BEFORE_BLOCK_ID),
+  beforeState: ZERO_BLOCK_STATE,
   dimension: 'overworld',
   position: Schema.decodeUnknownSync(BlockPositionSchema)({ x, y: BLOCK_Y, z: BOUNDARY_Z }),
 })

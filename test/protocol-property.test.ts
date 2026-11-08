@@ -1,5 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
+import {
+  BlockIdSchema,
+  BlockStateValuesSchema,
+  decodeBlockState,
+  defaultBlockState,
+  EncodedBlockStateSchema,
+  encodeBlockState,
+} from '@nerima-games/mc-kernel'
 import { Arbitrary, Effect, Result, Schema, SchemaAST } from 'effect'
 import {
   createReplicatedOwnerRegistry,
@@ -29,6 +37,41 @@ const EMPTY_OWNER_REGISTRY_LIMITS = Schema.decodeUnknownSync(ReplicatedOwnerRegi
 const EMPTY_OWNER_REGISTRY = Result.getOrThrow(
   createReplicatedOwnerRegistry([], EMPTY_OWNER_REGISTRY_LIMITS),
 )
+const DOOR_BLOCK_ID = Schema.decodeUnknownSync(BlockIdSchema)(106)
+const AIR_BLOCK_ID = Schema.decodeUnknownSync(BlockIdSchema)(0)
+const doorStateArbitrary = fc.record({
+  facing: fc.constantFrom('north', 'south', 'west', 'east'),
+  half: fc.constantFrom('lower', 'upper'),
+  hinge: fc.constantFrom('left', 'right'),
+  open: fc.boolean(),
+  powered: fc.boolean(),
+})
+
+const doorFacingIndex = (facing: 'north' | 'south' | 'west' | 'east'): number => {
+  switch (facing) {
+    case 'north':
+      return 0
+    case 'south':
+      return 1
+    case 'west':
+      return 2
+    case 'east':
+      return 3
+  }
+}
+
+const expectedDoorStateCode = (state: {
+  readonly facing: 'north' | 'south' | 'west' | 'east'
+  readonly half: 'lower' | 'upper'
+  readonly hinge: 'left' | 'right'
+  readonly open: boolean
+  readonly powered: boolean
+}): number =>
+  doorFacingIndex(state.facing) +
+  (state.half === 'upper' ? 4 : 0) +
+  (state.hinge === 'right' ? 8 : 0) +
+  (state.open ? 16 : 0) +
+  (state.powered ? 32 : 0)
 
 const flattenMessageSchemas = (schema: Schema.Constraint): ReadonlyArray<Schema.Constraint> => {
   if (!SchemaAST.isUnion(schema.ast)) {
@@ -131,6 +174,71 @@ const assertRoundTrip = (message: unknown, encode: (message: unknown) => string)
 const tagsToGenerate = NETWORK_MESSAGE_SCHEMA_TAGS.filter(
   (tag) => !Object.hasOwn(MESSAGE_PROPERTY_EXCLUSIONS, tag),
 )
+
+describe('mc-kernel block-state codec public API', () => {
+  it('encodes and decodes generated door states against an independent bit-layout expectation', () => {
+    expect(Result.getOrThrow(defaultBlockState(DOOR_BLOCK_ID))).toStrictEqual({
+      facing: 'north',
+      half: 'lower',
+      hinge: 'left',
+      open: false,
+      powered: false,
+    })
+
+    fc.assert(
+      fc.property(doorStateArbitrary, (state) => {
+        const values = Schema.decodeUnknownResult(BlockStateValuesSchema)(state)
+        expect(Result.isSuccess(values)).toBe(true)
+        if (Result.isFailure(values)) {
+          return false
+        }
+
+        const expected = expectedDoorStateCode(state)
+        const expectedEncodedState = Schema.decodeUnknownResult(EncodedBlockStateSchema)(expected)
+        expect(Result.isSuccess(expectedEncodedState)).toBe(true)
+        if (Result.isFailure(expectedEncodedState)) {
+          return false
+        }
+
+        const encoded = encodeBlockState(DOOR_BLOCK_ID, state)
+        expect(Result.isSuccess(encoded)).toBe(true)
+        if (Result.isFailure(encoded)) {
+          return false
+        }
+        expect(encoded.success).toBe(expectedEncodedState.success)
+
+        const decoded = decodeBlockState(DOOR_BLOCK_ID, expected)
+        expect(Result.isSuccess(decoded)).toBe(true)
+        if (Result.isFailure(decoded)) {
+          return false
+        }
+        expect(decoded.success).toStrictEqual(values.success)
+        return true
+      }),
+      { seed: PROPERTY_SEED, numRuns: NUM_RUNS },
+    )
+  })
+
+  it('returns typed failures for invalid state shapes, unsupported properties, and reserved codes', () => {
+    for (const invalid of [
+      { facing: 'north-east' },
+      { powered: 1 },
+      { unexpected: true },
+    ]) {
+      expect(Result.isFailure(Schema.decodeUnknownResult(BlockStateValuesSchema)(invalid))).toBe(true)
+      expect(Result.isFailure(encodeBlockState(DOOR_BLOCK_ID, invalid))).toBe(true)
+    }
+
+    const unsupported = { waterlogged: true }
+    expect(Result.isSuccess(Schema.decodeUnknownResult(BlockStateValuesSchema)(unsupported))).toBe(true)
+    expect(Result.isFailure(encodeBlockState(DOOR_BLOCK_ID, unsupported))).toBe(true)
+    expect(Result.isFailure(decodeBlockState(AIR_BLOCK_ID, 1))).toBe(true)
+
+    for (const invalid of [-1, 1.5, 0x1_0000_0000, Number.NaN]) {
+      expect(Result.isFailure(Schema.decodeUnknownResult(EncodedBlockStateSchema)(invalid))).toBe(true)
+    }
+  })
+})
 
 describe('NetworkMessage schema-derived round trips', () => {
   // BUG: a message union tag can drift out of the generated property suite without an explicit exclusion.

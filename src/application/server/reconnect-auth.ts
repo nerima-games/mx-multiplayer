@@ -24,13 +24,15 @@
  * for `WebSocket`. The original file's actual cryptographic and persistence
  * decisions — which hash, how tokens are generated, how the token file is
  * written atomically — are exactly the platform judgment a Port implementation
- * makes, not the pure logic this file owns: who gets issued a token, when a
- * reissue is legal, which of the current/previous hash a rotation may match.
+ * makes, not the pure logic this file owns: who gets issued a token and which
+ * of the current/previous hash a rotation may match.
  * `ReconnectAuthCrypto` and `ReconnectAuthStore` are that Port pair; the
  * composing app binds them to `node:crypto` and `node:fs/promises` (including
  * the write-to-temp-file-then-rename durability the original file already
  * had — that contract is documented on `ReconnectAuthStore.save` below, not
  * re-implemented here).
+ * Production composition must provide cryptographically random 32-byte tokens
+ * and a constant-time digest comparison; this module has no insecure fallback.
  */
 import { Clock, Duration, Effect, Exit, Result, Schema, Semaphore } from 'effect'
 import { PlayerId } from '../../domain/protocol/identifiers.js'
@@ -92,7 +94,7 @@ export type ReconnectAuthStore = {
 export type ReconnectAuth = {
   readonly has: (player: string) => boolean
   readonly issue: (player: string) => Effect.Effect<string | undefined, unknown>
-  readonly reissue: (player: string) => Effect.Effect<string | undefined, unknown>
+  readonly revoke: (player: PlayerId) => Effect.Effect<boolean, unknown>
   readonly rotate: (player: string, token: string) => Effect.Effect<string | undefined, unknown>
   readonly resume: (token: ReconnectTokenInput) => Effect.Effect<{ readonly player: PlayerId; readonly token: ReconnectToken } | undefined, unknown>
 }
@@ -500,14 +502,16 @@ const makeReconnectAuthOperations = (ctx: ReconnectAuthContext): Effect.Effect<R
         return yield* applyIssue({ ctx, now, player, previousEntry: undefined })
       }))
 
-    const reissue = (player: string): Effect.Effect<string | undefined, unknown> =>
+    const revoke = (player: PlayerId): Effect.Effect<boolean, unknown> =>
       queue.withPermit(Effect.gen(function* () {
         const previousEntry = ctx.hashes.get(player)
         if (player === '' || previousEntry === undefined) {
-          return undefined
+          return false
         }
         const now = yield* Clock.currentTimeMillis
-        return yield* applyIssue({ ctx, now, player, previousEntry })
+        yield* Effect.sync(() => ctx.hashes.delete(player))
+        yield* persistOrRevert({ ctx, now, player, previousEntry })
+        return true
       }))
 
     const rotate = (player: string, token: string): Effect.Effect<string | undefined, unknown> =>
@@ -536,12 +540,12 @@ const makeReconnectAuthOperations = (ctx: ReconnectAuthContext): Effect.Effect<R
         return { player: PlayerId.make(target.player), token: rotated }
       }))
 
-    return { has, issue, reissue, resume, rotate }
+    return { has, issue, resume, revoke, rotate }
   })
 
 /**
  * Loads (or starts) the persisted reconnect-token table and returns the
- * issue/reissue/rotate/resume/has interface the transport layer authenticates
+ * issue/revoke/rotate/resume/has interface the transport layer authenticates
  * `PlayerResume` requests against. Mutating operations serialize through one
  * queue per instance, so concurrent requests cannot interleave their
  * read-modify-write of the hash table.

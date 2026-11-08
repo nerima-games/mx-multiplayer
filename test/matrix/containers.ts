@@ -2,13 +2,13 @@ import type { MatrixCell, MatrixRow, TestReference } from './index.js'
 
 const roundTrip: TestReference = {
   file: 'test/codec.test.ts',
-  line: 1233,
+  line: 1241,
   testName: 'every message decodes back to a value strictly equal to the one encoded',
 }
 const legacyWireFixture: TestReference = {
   file: 'test/wire-fixtures.test.ts',
   line: 124,
-  testName: 'pins current golden bytes and version rejection for every representative family',
+  testName: 'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
 }
 const containerShapes: TestReference = {
   file: 'test/scenarios/containers.test.ts',

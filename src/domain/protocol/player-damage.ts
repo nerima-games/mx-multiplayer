@@ -1,48 +1,23 @@
 /**
- * A client-observed damage event, submitted for authoritative confirmation.
+ * A client request for server-side damage resolution. Damage magnitudes and
+ * survival floors are not part of the wire command.
  *
  * Lowered from the composing app's `multiplayer-shared/player-damage-network.ts`.
  */
-import { CommandId, PlayerId, Revision, WireNumber, WorldId } from '../protocol/identifiers.js'
+import { CommandId, PlayerId, Revision, WorldId } from '../protocol/identifiers.js'
 import { Schema } from 'effect'
-
-const ZERO = 0
-
-/** No vanilla damage source deals more than a full 10 hearts in one hit. */
-const PLAYER_DAMAGE_MAX_AMOUNT = 20
-/** `minimumHealthPoints` caps at one heart: a damage source that cannot kill still leaves the player alive. */
-const PLAYER_DAMAGE_MAX_MINIMUM_HEALTH_POINTS = 1
-
-export const PlayerDamageAmount: typeof Schema.Number = WireNumber.pipe(
-  Schema.check(Schema.isFinite()),
-  Schema.check(Schema.isGreaterThan(ZERO)),
-  Schema.check(Schema.isLessThanOrEqualTo(PLAYER_DAMAGE_MAX_AMOUNT)),
-)
-export type PlayerDamageAmount = typeof PlayerDamageAmount.Type
-
-export const PlayerDamageMinimumHealth: typeof Schema.Number = WireNumber.pipe(
-  Schema.check(Schema.isFinite()),
-  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
-  Schema.check(Schema.isLessThanOrEqualTo(PLAYER_DAMAGE_MAX_MINIMUM_HEALTH_POINTS)),
-)
-export type PlayerDamageMinimumHealth = typeof PlayerDamageMinimumHealth.Type
 
 export const PlayerDamageCommand: Schema.TaggedStruct<
   'PlayerDamageCommand',
   {
-    amount: typeof PlayerDamageAmount
     commandId: typeof CommandId
     expectedRevision: typeof Revision
-    minimumHealthPoints: Schema.optionalKey<typeof PlayerDamageMinimumHealth>
     player: typeof PlayerId
     world: typeof WorldId
   }
 > = Schema.TaggedStruct('PlayerDamageCommand', {
-  amount: PlayerDamageAmount,
   commandId: CommandId,
   expectedRevision: Revision,
-  /** Fall damage and similar sources that cannot reduce health below one point. Absent for lethal-capable sources. */
-  minimumHealthPoints: Schema.optionalKey(PlayerDamageMinimumHealth),
   player: PlayerId,
   world: WorldId,
 })

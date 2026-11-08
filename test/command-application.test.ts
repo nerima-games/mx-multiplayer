@@ -222,7 +222,12 @@ describe('applyAuthoritativeCommand', () => {
         reason: 'no-matching-c2-intent-payload',
       },
       {
-        command: { ...command('EntityPickupCommand', 'attack'), _tag: 'EntityAttackCommand' },
+        command: {
+          ...commandHeader('attack'),
+          _tag: 'EntityAttackCommand',
+          entityId: EntityId.make('entity-1'),
+          heldSlot: 0,
+        },
         reason: 'intent-payload-does-not-preserve-command',
       },
       {
@@ -375,6 +380,41 @@ describe('applyAuthoritativeCommand', () => {
     if (Exit.isFailure(result)) {
       expect(Schema.isSchemaError(Cause.squash(result.cause))).toBe(true)
     }
+    expect(harness.lookups).toBe(0)
+    expect(harness.mutations).toBe(0)
+  })
+
+  it('keeps entity attacks unsupported and rejects client-selected damage fields', async () => {
+    const harness = makeHarness()
+    const attack: AuthoritativeCommand = {
+      ...commandHeader('attack-intent'),
+      _tag: 'EntityAttackCommand',
+      entityId: EntityId.make('entity-1'),
+      heldSlot: 4,
+    }
+    const apply = applyAuthoritativeCommand(harness.session, harness.services, intentContext(harness.identity))
+    const unsupported = await Effect.runPromise(apply(attack))
+    expect(unsupported).toMatchObject({
+      _tag: 'CommandUnsupported',
+      commandTag: 'EntityAttackCommand',
+      reason: 'intent-payload-does-not-preserve-command',
+    })
+
+    const clientSelectedEffects: ReadonlyArray<unknown> = [
+      { ...attack, damage: 12 },
+      { ...attack, critical: true },
+      { ...attack, rollSeed: 42 },
+    ]
+    const invalidCommandResults = await Promise.all(
+      clientSelectedEffects.map((candidate) => Effect.runPromiseExit(apply(candidate))),
+    )
+    for (const result of invalidCommandResults) {
+      expect(Exit.isFailure(result)).toBe(true)
+      if (Exit.isFailure(result)) {
+        expect(Schema.isSchemaError(Cause.squash(result.cause))).toBe(true)
+      }
+    }
+
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })

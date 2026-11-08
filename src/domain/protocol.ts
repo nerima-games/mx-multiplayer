@@ -23,7 +23,16 @@
  * Keeping their schemas separate makes those two events explicit.
  */
 import { AnvilCommand, AnvilCommandAccepted, AnvilCommandRejected, PlayerAnvilNamesDelta } from './protocol/anvil.js'
-import { BlockIdSchema, BlockPositionSchema, WorldIdSchema as KernelWorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import {
+  BlockIdSchema,
+  BlockPositionSchema,
+  EncodedBlockStateSchema,
+  WorldIdSchema as KernelWorldIdSchema,
+  WorldRevisionSchema,
+  blockIdOf,
+  decodeBlockState,
+  isBlockType,
+} from '@nerima-games/mc-kernel'
 import {
   BlockPos,
   CommandId,
@@ -62,17 +71,13 @@ import {
   EnchantingCommandRejected,
   PlayerEnchantmentsDelta,
 } from './protocol/enchanting.js'
+import { Option, Result, Schema, SchemaGetter } from 'effect'
 import {
   PlayerDamageCommand,
   PlayerDamageCommandAccepted,
   PlayerDamageCommandRejected,
 } from './protocol/player-damage.js'
-import {
-  ReplicatedBlockChangeSchema,
-  ReplicatedOwnerChangeSchema,
-  WorldBlockReadSchema,
-} from '@nerima-games/mc-sim'
-import { Schema, SchemaGetter } from 'effect'
+import { ReplicatedOwnerChangeSchema } from '@nerima-games/mc-sim'
 
 /**
  * The identifier, revision and position primitives, re-exported here so
@@ -92,7 +97,7 @@ export { BlockPos, CommandId, EntityId, PlayerId, PlayerName, Revision, WorldId 
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 10
+export const PROTOCOL_VERSION = 11
 
 /** The floor every free-text identifier and content string in this protocol shares: not blank. */
 const MIN_NON_EMPTY_LENGTH = 1
@@ -184,6 +189,10 @@ const normalizeWorldRevision = (value: Schema.Schema.Type<typeof WorldRevisionSc
   Schema.decodeUnknownSync(WorldRevisionSchema)(canonicalizeWireNumber(value))
 const normalizeBlockId = (value: Schema.Schema.Type<typeof BlockIdSchema>): Schema.Schema.Type<typeof BlockIdSchema> =>
   Schema.decodeUnknownSync(BlockIdSchema)(canonicalizeWireNumber(value))
+const normalizeEncodedBlockState = (
+  value: Schema.Schema.Type<typeof EncodedBlockStateSchema>,
+): Schema.Schema.Type<typeof EncodedBlockStateSchema> =>
+  Schema.decodeUnknownSync(EncodedBlockStateSchema)(canonicalizeWireNumber(value))
 const normalizeBlockPosition = (value: Schema.Schema.Type<typeof BlockPositionSchema>): Schema.Schema.Type<typeof BlockPositionSchema> =>
   Schema.decodeUnknownSync(BlockPositionSchema)({
     x: canonicalizeWireNumber(value.x),
@@ -196,44 +205,98 @@ const normalizeReplicatedOwnerChange = (
   ...value,
   state: normalizeUnknownWireNumbers(value.state),
 })
-const normalizeReplicatedBlockChange = (
-  value: Schema.Schema.Type<typeof ReplicatedBlockChangeSchema>,
-): Schema.Schema.Type<typeof ReplicatedBlockChangeSchema> => ({
-  ...value,
-  after: normalizeBlockId(value.after),
-  before: normalizeBlockId(value.before),
-  position: normalizeBlockPosition(value.position),
-})
-const normalizeWorldBlockRead = (
-  value: Schema.Schema.Type<typeof WorldBlockReadSchema>,
-): Schema.Schema.Type<typeof WorldBlockReadSchema> => {
-  const position = normalizeBlockPosition(value.position)
-  if (value.reading._tag !== 'Block') {
-    return { ...value, position, reading: value.reading }
-  }
-  return {
-    ...value,
-    position,
-    reading: { ...value.reading, block: normalizeBlockId(value.reading.block) },
-  }
-}
-
 const WireWorldRevisionSchema: typeof WorldRevisionSchema = WorldRevisionSchema.pipe(Schema.decode({
   decode: SchemaGetter.transform(normalizeWorldRevision),
   encode: SchemaGetter.transform(normalizeWorldRevision),
 }), Schema.check(WireNumberCheck))
+const WireBlockIdSchema: typeof BlockIdSchema = BlockIdSchema.pipe(Schema.decode({
+  decode: SchemaGetter.transform(normalizeBlockId),
+  encode: SchemaGetter.transform(normalizeBlockId),
+}))
+const WireEncodedBlockStateSchema: typeof EncodedBlockStateSchema = EncodedBlockStateSchema.pipe(Schema.decode({
+  decode: SchemaGetter.transform(normalizeEncodedBlockState),
+  encode: SchemaGetter.transform(normalizeEncodedBlockState),
+}))
+const WireBlockPositionSchema: typeof BlockPositionSchema = BlockPositionSchema.pipe(Schema.decode({
+  decode: SchemaGetter.transform(normalizeBlockPosition),
+  encode: SchemaGetter.transform(normalizeBlockPosition),
+}), Schema.check(NoNegativeZeroValue))
 const WireReplicatedOwnerChangeSchema: typeof ReplicatedOwnerChangeSchema = ReplicatedOwnerChangeSchema.pipe(Schema.decode({
   decode: SchemaGetter.transform(normalizeReplicatedOwnerChange),
   encode: SchemaGetter.transform(normalizeReplicatedOwnerChange),
 }), Schema.check(NoNegativeZeroValue))
-const WireReplicatedBlockChangeSchema: typeof ReplicatedBlockChangeSchema = ReplicatedBlockChangeSchema.pipe(Schema.decode({
-  decode: SchemaGetter.transform(normalizeReplicatedBlockChange),
-  encode: SchemaGetter.transform(normalizeReplicatedBlockChange),
-}), Schema.check(NoNegativeZeroValue))
-const WireWorldBlockReadSchema: typeof WorldBlockReadSchema = WorldBlockReadSchema.pipe(Schema.decode({
-  decode: SchemaGetter.transform(normalizeWorldBlockRead),
-  encode: SchemaGetter.transform(normalizeWorldBlockRead),
-}), Schema.check(NoNegativeZeroValue))
+const DimensionSchema: Schema.Literals<readonly ['overworld', 'nether', 'end']> = Schema.Literals(['overworld', 'nether', 'end'])
+const ReplicatedBlockChangeFieldsSchema: Schema.Struct<{
+  after: typeof WireBlockIdSchema
+  afterState: typeof WireEncodedBlockStateSchema
+  before: typeof WireBlockIdSchema
+  beforeState: typeof WireEncodedBlockStateSchema
+  dimension: typeof DimensionSchema
+  position: typeof WireBlockPositionSchema
+}> = Schema.Struct({
+  after: WireBlockIdSchema,
+  afterState: WireEncodedBlockStateSchema,
+  before: WireBlockIdSchema,
+  beforeState: WireEncodedBlockStateSchema,
+  dimension: DimensionSchema,
+  position: WireBlockPositionSchema,
+})
+const ReplicatedBlockChangeStateSchema = Schema.makeFilter<Schema.Schema.Type<typeof ReplicatedBlockChangeFieldsSchema>>(
+  (change) =>
+    Result.isSuccess(decodeBlockState(change.before, change.beforeState)) &&
+    Result.isSuccess(decodeBlockState(change.after, change.afterState)),
+  { expected: 'encoded states valid for both block IDs' },
+)
+const WireReplicatedBlockChangeSchema: Schema.Codec<
+  Schema.Schema.Type<typeof ReplicatedBlockChangeFieldsSchema>,
+  Schema.Codec.Encoded<typeof ReplicatedBlockChangeFieldsSchema>
+> = ReplicatedBlockChangeFieldsSchema.pipe(
+  Schema.check(ReplicatedBlockChangeStateSchema),
+  Schema.check(NoNegativeZeroValue),
+)
+const BlockReadingSchema: Schema.TaggedStruct<'Block', { block: typeof WireBlockIdSchema }> = Schema.TaggedStruct('Block', {
+  block: WireBlockIdSchema,
+})
+const ChunkNotLoadedReadingSchema: Schema.TaggedStruct<'ChunkNotLoaded', {}> = Schema.TaggedStruct('ChunkNotLoaded', {})
+const OutOfWorldReadingSchema: Schema.TaggedStruct<'OutOfWorld', {}> = Schema.TaggedStruct('OutOfWorld', {})
+const NonBlockReadingSchema: Schema.Union<readonly [typeof ChunkNotLoadedReadingSchema, typeof OutOfWorldReadingSchema]> = Schema.Union([
+  ChunkNotLoadedReadingSchema,
+  OutOfWorldReadingSchema,
+])
+const BlockSnapshotReadFieldsSchema: Schema.Struct<{
+  dimension: typeof DimensionSchema
+  position: typeof WireBlockPositionSchema
+  reading: typeof BlockReadingSchema
+  state: typeof WireEncodedBlockStateSchema
+}> = Schema.Struct({
+  dimension: DimensionSchema,
+  position: WireBlockPositionSchema,
+  reading: BlockReadingSchema,
+  state: WireEncodedBlockStateSchema,
+})
+const BlockSnapshotReadStateSchema = Schema.makeFilter<Schema.Schema.Type<typeof BlockSnapshotReadFieldsSchema>>(
+  (block) => Result.isSuccess(decodeBlockState(block.reading.block, block.state)),
+  { expected: 'encoded state valid for the snapshot block ID' },
+)
+const BlockSnapshotReadSchema: Schema.Codec<
+  Schema.Schema.Type<typeof BlockSnapshotReadFieldsSchema>,
+  Schema.Codec.Encoded<typeof BlockSnapshotReadFieldsSchema>
+> = BlockSnapshotReadFieldsSchema.pipe(Schema.check(BlockSnapshotReadStateSchema))
+const NonBlockSnapshotReadSchema: Schema.Struct<{
+  dimension: typeof DimensionSchema
+  position: typeof WireBlockPositionSchema
+  reading: typeof NonBlockReadingSchema
+}> = Schema.Struct({
+  dimension: DimensionSchema,
+  position: WireBlockPositionSchema,
+  reading: NonBlockReadingSchema,
+})
+const WireWorldBlockReadSchema: Schema.Codec<
+  Schema.Schema.Type<typeof BlockSnapshotReadSchema> | Schema.Schema.Type<typeof NonBlockSnapshotReadSchema>,
+  Schema.Codec.Encoded<typeof BlockSnapshotReadSchema> | Schema.Codec.Encoded<typeof NonBlockSnapshotReadSchema>
+> = Schema.Union([BlockSnapshotReadSchema, NonBlockSnapshotReadSchema]).pipe(
+  Schema.check(NoNegativeZeroValue),
+)
 
 // ---------------------------------------------------------------------------
 // Payload shapes
@@ -307,12 +370,14 @@ export const PlayerMove: Schema.TaggedStruct<
 })
 export type PlayerMove = typeof PlayerMove.Type
 
-export const BlockPlace: Schema.TaggedStruct<
+const BlockTypeNameSchema: typeof Schema.String = Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH)))
+const BlockPlaceFieldsSchema: Schema.TaggedStruct<
   'BlockPlace',
   {
     at: typeof BlockPos
-    block: typeof Schema.String
+    block: typeof BlockTypeNameSchema
     player: typeof PlayerId
+    state: typeof WireEncodedBlockStateSchema
     world: Schema.optionalKey<typeof WorldId>
   }
 > = Schema.TaggedStruct('BlockPlace', {
@@ -326,11 +391,28 @@ export const BlockPlace: Schema.TaggedStruct<
    * a malformed *frame*. Making the wire type the literal union would turn
    * "your client is older than mine" into a parse error.
    */
-  block: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
+  block: BlockTypeNameSchema,
   player: PlayerId,
+  state: WireEncodedBlockStateSchema,
   /** Optional for protocol-v1 peers; authoritative servers should include it. */
   world: Schema.optionalKey(WorldId),
 })
+const BlockPlaceStateSchema = Schema.makeFilter<Schema.Schema.Type<typeof BlockPlaceFieldsSchema>>(
+  (command) => {
+    if (!isBlockType(command.block)) {
+      return true
+    }
+    return Option.match(blockIdOf(command.block), {
+      onNone: () => true,
+      onSome: (blockId) => Result.isSuccess(decodeBlockState(blockId, command.state)),
+    })
+  },
+  { expected: 'encoded state valid for a known block type' },
+)
+export const BlockPlace: Schema.Codec<
+  Schema.Schema.Type<typeof BlockPlaceFieldsSchema>,
+  Schema.Codec.Encoded<typeof BlockPlaceFieldsSchema>
+> = BlockPlaceFieldsSchema.pipe(Schema.check(BlockPlaceStateSchema))
 export type BlockPlace = typeof BlockPlace.Type
 
 export const BlockBreak: Schema.TaggedStruct<
@@ -1128,12 +1210,15 @@ export const VillagerTradeCommand: Schema.TaggedStruct<
   offerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
   villagerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
 })
+const MAX_HOTBAR_SLOT_INDEX = 8
+const EntityHeldSlotIndex: typeof Schema.Number = CommandSlotIndex.pipe(Schema.check(Schema.isLessThanOrEqualTo(MAX_HOTBAR_SLOT_INDEX)))
 export const EntityAttackCommand: Schema.TaggedStruct<
   'EntityAttackCommand',
-  typeof CommandHeader & { entityId: typeof EntityId }
+  typeof CommandHeader & { entityId: typeof EntityId; heldSlot: typeof EntityHeldSlotIndex }
 > = Schema.TaggedStruct('EntityAttackCommand', {
   ...CommandHeader,
   entityId: EntityId,
+  heldSlot: EntityHeldSlotIndex,
 })
 export const EntityPickupCommand: Schema.TaggedStruct<
   'EntityPickupCommand',

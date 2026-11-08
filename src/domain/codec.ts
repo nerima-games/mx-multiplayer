@@ -153,12 +153,16 @@ const WireFrame = Schema.fromJsonString(
   }),
 )
 const strictRootMessageTags = new Set([
+  'BlockPlace',
+  'DamageWitherCommand',
+  'EntityAttackCommand',
   'EndPortalUseCommand',
   'InsertEyeIntoEndPortalFrameCommand',
   'NetherPortalUseCommand',
   'RealmTransferSnapshot',
   'ThrowEyeOfEnderCommand',
   'ToggleLeverCommand',
+  'PlayerDamageCommand',
   'ReplicatedWorldDelta',
   'ReplicatedWorldSnapshot',
   'ReplicatedWorldSnapshotStart',
@@ -1262,7 +1266,7 @@ const unsupportedProtocolVersion = (protocolVersion: number): ProtocolError =>
     reason: 'unsupported-protocol-version',
   })
 
-/** Identify a v10 C4 tag before its body is decoded, for resync classification. */
+/** Identify a current-version C4 tag before its body is decoded, for resync classification. */
 const inspectEnvelopeTag = (
   text: WireText,
   shape: JsonFrameShape,

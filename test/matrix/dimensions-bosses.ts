@@ -5,16 +5,16 @@ const reference = (file: `test/${string}`, line: number, testName: string): Test
 
 const roundTrip = reference(
   'test/codec.test.ts',
-  1233,
+  1241,
   'every message decodes back to a value strictly equal to the one encoded',
 )
 const malformedPortal = reference(
   'test/codec.test.ts',
-  2945,
+  3028,
   'rejects client-selected portal transfer state with strict parse options',
 )
-const malformedDragon = reference('test/codec.test.ts', 2870, 'rejects malformed ender-dragon payloads')
-const malformedWither = reference('test/codec.test.ts', 2893, 'rejects malformed wither payloads')
+const malformedDragon = reference('test/codec.test.ts', 2953, 'rejects malformed ender-dragon payloads')
+const malformedWither = reference('test/codec.test.ts', 2976, 'rejects malformed wither payloads')
 const typedUnsupportedCommand = reference(
   'test/command-application.test.ts',
   192,
@@ -33,7 +33,7 @@ const unauthorizedScenario = reference(
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'pins current golden bytes and version rejection for every representative family',
+  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
 )
 
 const covered = (...tests: [TestReference, ...TestReference[]]): MatrixCell => ({ status: 'covered', tests })

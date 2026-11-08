@@ -44,7 +44,8 @@
  * `Date.now()` to make a prettier number would reintroduce the exact field
  * DN-3 removed from the protocol.
  */
-import { Effect, Result, Queue } from 'effect'
+import { EncodedBlockStateSchema } from '@nerima-games/mc-kernel'
+import { Effect, Result, Queue, Schema } from 'effect'
 import { type WireText, decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
   type ConnectionEvent,
@@ -608,7 +609,7 @@ export const SCRIPT: ReadonlyArray<ScriptStep> = [
   {
     label: 'client -> server: BlockPlace(unobtainium)',
     run: (session) =>
-      send(session, 'client', { _tag: 'BlockPlace', player: ALICE, at: { x: 1, y: 64, z: 2 }, block: 'unobtainium' }),
+      send(session, 'client', { _tag: 'BlockPlace', player: ALICE, at: { x: 1, y: 64, z: 2 }, block: 'unobtainium', state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0) }),
     watch: 'a block name this build does not know DECODES (DN-6) — content skew is not corruption',
   },
   {

@@ -38,9 +38,17 @@ import type {
   RateLimitConfigurationErrorReason,
   RateLimitExceededReason,
   RateLimitInputErrorReason,
+  ServerAdapter,
+  ServerAdapterConfiguration,
+  ServerConnectOutcome,
+  ServerInboundOutcome,
+  ServerProjectionFailure,
+  ServerResumeOutcome,
   ServerConnectionIdentity,
   SurvivalAuthorityResult,
   SurvivalCommandResult,
+  TargetedDeltaDelivery,
+  TargetedSnapshotDelivery,
   TransportService,
   WireText,
 } from '../src/index'
@@ -80,9 +88,17 @@ type NewPublicTypes = {
   rateConfigurationErrorReason: RateLimitConfigurationErrorReason
   rateExceededReason: RateLimitExceededReason
   rateInputErrorReason: RateLimitInputErrorReason
+  serverAdapter: ServerAdapter
+  serverAdapterConfiguration: ServerAdapterConfiguration<never>
+  serverConnectOutcome: ServerConnectOutcome
+  serverInboundOutcome: ServerInboundOutcome
+  serverProjectionFailure: ServerProjectionFailure
+  serverResumeOutcome: ServerResumeOutcome
   survivalAuthorityResult: SurvivalAuthorityResult
   survivalCommandResult: SurvivalCommandResult
   survivalIntent: Intent
+  targetedDeltaDelivery: TargetedDeltaDelivery
+  targetedSnapshotDelivery: TargetedSnapshotDelivery
   transportService: TransportService
   wireText: WireText
 }
@@ -111,6 +127,8 @@ describe('public API surface', () => {
         'RateLimitInputError',
         'RateLimitExceeded',
         'createConnectionRateLimiter',
+        'MAX_SERVER_CONNECTIONS',
+        'createServerAdapter',
         // Transport safety and liveness
         'makeBrowserWebSocketTransport',
         'validateMultiplayerUrl',
@@ -249,7 +267,7 @@ describe('public API surface', () => {
   // Docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(10)
+      expect(PROTOCOL_VERSION).toBe(11)
     }),
   )
 

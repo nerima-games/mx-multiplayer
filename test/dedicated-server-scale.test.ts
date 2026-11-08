@@ -2,13 +2,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
 import { performance } from 'node:perf_hooks'
-import { BlockIdSchema, BlockPositionSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { BlockIdSchema, BlockPositionSchema, EncodedBlockStateSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import {
   makeReplicatedOwnerId,
   ReplicatedOwnerIdSchema,
 } from '@nerima-games/mc-sim'
 import type {
-  ReplicatedBlockChange,
   ReplicatedOwnerChange,
   ReplicatedOwnerId,
 } from '@nerima-games/mc-sim'
@@ -17,6 +16,7 @@ import {
   areaOfInterestExpanded,
   areaOfInterestIncludesBlockChange,
   areaOfInterestIncludesChunkKey,
+  areaOfInterestIncludesLocation,
   areaOfInterestIncludesOwner,
   chunkInterestKeyForBlockChange,
   createAreaOfInterest,
@@ -44,10 +44,15 @@ import {
 } from '../src/domain/protocol.js'
 import {
   CONNECTION_RATE_LIMITS,
+  CHAT_MESSAGE_LIMIT,
+  CHAT_MESSAGE_WINDOW_MS,
+  MESSAGE_KIND_RATE_LIMITS,
   createConnectionRateLimiter,
+  createConnectionMessageRateLimiter,
   RateLimitConfigurationError,
   RateLimitExceeded,
   RateLimitInputError,
+  MessageKindRateLimitExceeded,
 } from '../src/domain/rate-limit.js'
 
 const strictParseOptions = { onExcessProperty: 'error' as const }
@@ -60,6 +65,7 @@ const PROPERTY_RUNS = 96
 const CHUNK_SIDE_BLOCKS = 16
 const WORLD = WorldId.make('scale-world')
 const OTHER_WORLD = WorldId.make('other-world')
+const ZERO_BLOCK_STATE = Schema.decodeUnknownSync(EncodedBlockStateSchema)(0)
 const OWNER_A = makeReplicatedOwnerId('owner:a')
 const OWNER_B = makeReplicatedOwnerId('owner:b')
 const OWNER_C = makeReplicatedOwnerId('owner:c')
@@ -74,6 +80,7 @@ const CHUNK_EDGE_CASES = [
   { offsetX: 8, offsetZ: 16, visible: false },
 ] as const
 const OWNER_STATE_SCHEMA = Schema.Struct({ value: Schema.Number })
+type ReplicatedBlockChange = ReplicatedWorldDeltaMessage['blockChanges'][number]
 const OWNER_REGISTRATIONS = OWNER_IDS.map((ownerId) => ({
   ownerId,
   schema: OWNER_STATE_SCHEMA,
@@ -143,10 +150,12 @@ const blockChange = (
   dimension: ReplicatedBlockChange['dimension'] = 'overworld',
   after = 1,
 ): ReplicatedBlockChange => ({
+  after: Schema.decodeUnknownSync(BlockIdSchema)(after),
+  afterState: ZERO_BLOCK_STATE,
   before: Schema.decodeUnknownSync(BlockIdSchema)(0),
+  beforeState: ZERO_BLOCK_STATE,
   dimension,
   position: Schema.decodeUnknownSync(BlockPositionSchema)({ x, y: 64, z }),
-  after: Schema.decodeUnknownSync(BlockIdSchema)(after),
 })
 
 const makeDelta = (
@@ -271,6 +280,49 @@ describe('area of interest', () => {
         },
       ),
       { seed: AOI_PROPERTY_SEED, numRuns: PROPERTY_RUNS },
+    )
+  })
+
+  it('matches a validated location to its dimension-qualified chunk at coordinate boundaries', () => {
+    const interest = makeInterest([{ dimension: 'overworld', x: 0, z: 0 }])
+    const cases = [
+      { dimension: 'overworld', x: 0, z: 0, visible: true },
+      { dimension: 'overworld', x: 15, z: 15, visible: true },
+      { dimension: 'overworld', x: 16, z: 0, visible: false },
+      { dimension: 'overworld', x: -1, z: 0, visible: false },
+      { dimension: 'overworld', x: 0, z: -1, visible: false },
+      { dimension: 'nether', x: 0, z: 0, visible: false },
+    ] as const
+
+    for (const sample of cases) {
+      const position = Schema.decodeUnknownSync(BlockPositionSchema)({ x: sample.x, y: 64, z: sample.z })
+      expect(Result.getOrThrow(areaOfInterestIncludesLocation(interest, sample.dimension, position))).toBe(sample.visible)
+    }
+
+    expect(resultError(areaOfInterestIncludesLocation(undefined, 'overworld', { x: 0, y: 64, z: 0 })))
+      .toMatchObject({ reason: 'invalid-interest' })
+    expect(resultError(areaOfInterestIncludesLocation(interest, 'unknown', { x: 0, y: 64, z: 0 })))
+      .toMatchObject({ reason: 'invalid-chunk' })
+    expect(resultError(areaOfInterestIncludesLocation(interest, 'overworld', { x: Number.NaN, y: 64, z: 0 })))
+      .toMatchObject({ reason: 'invalid-chunk' })
+  })
+
+  it('property-checks location membership against an independent chunk calculation', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom('overworld', 'nether', 'end'),
+        fc.integer({ min: -512, max: 512 }),
+        fc.integer({ min: -512, max: 512 }),
+        (dimension, x, z) => {
+          const interest = makeInterest([{ dimension: 'overworld', x: 0, z: 0 }])
+          const position = Schema.decodeUnknownSync(BlockPositionSchema)({ x, y: 64, z })
+          const expected = dimension === 'overworld' && Math.floor(x / CHUNK_SIDE_BLOCKS) === 0
+            && Math.floor(z / CHUNK_SIDE_BLOCKS) === 0
+
+          expect(Result.getOrThrow(areaOfInterestIncludesLocation(interest, dimension, position))).toBe(expected)
+        },
+      ),
+      { seed: AOI_PROPERTY_SEED + 3, numRuns: PROPERTY_RUNS },
     )
   })
 
@@ -551,6 +603,65 @@ describe('per-connection frame and byte rate limiting', () => {
       ),
       { seed: RATE_PROPERTY_SEED, numRuns: PROPERTY_RUNS },
     )
+  })
+
+  it('enforces exact chat and per-kind burst/refill boundaries', () => {
+    const chat = createConnectionMessageRateLimiter()
+    for (let message = 0; message < CHAT_MESSAGE_LIMIT; message += 1) {
+      expect(Result.isSuccess(chat.consume('chat', 0))).toBe(true)
+    }
+    expect(resultError(chat.consume('chat', 0))).toBeInstanceOf(MessageKindRateLimitExceeded)
+    expect(resultError(chat.consume('chat', CHAT_MESSAGE_WINDOW_MS - 1))).toMatchObject({
+      kind: 'chat',
+      reason: 'chat-window',
+    })
+    expect(Result.isSuccess(chat.consume('chat', CHAT_MESSAGE_WINDOW_MS))).toBe(true)
+
+    const policies = [
+      { kind: 'command', burst: MESSAGE_KIND_RATE_LIMITS.command.burst, refillAtMs: 100 },
+      { kind: 'movement', burst: MESSAGE_KIND_RATE_LIMITS.movement.burst, refillAtMs: 50 },
+      { kind: 'other', burst: MESSAGE_KIND_RATE_LIMITS.other.burst, refillAtMs: 40 },
+    ] as const
+    for (const policy of policies) {
+      const limiter = createConnectionMessageRateLimiter()
+      for (let message = 0; message < policy.burst; message += 1) {
+        expect(Result.isSuccess(limiter.consume(policy.kind, 0))).toBe(true)
+      }
+      expect(resultError(limiter.consume(policy.kind, 0))).toMatchObject({
+        kind: policy.kind,
+        reason: 'kind-rate',
+      })
+      expect(Result.isSuccess(limiter.consume(policy.kind, policy.refillAtMs))).toBe(true)
+      expect(resultError(limiter.consume(policy.kind, policy.refillAtMs))).toMatchObject({
+        kind: policy.kind,
+        reason: 'kind-rate',
+      })
+    }
+  })
+
+  it('property-checks the command, movement, and other message-kind burst thresholds', () => {
+    const policies = [
+      { kind: 'command', burst: MESSAGE_KIND_RATE_LIMITS.command.burst },
+      { kind: 'movement', burst: MESSAGE_KIND_RATE_LIMITS.movement.burst },
+      { kind: 'other', burst: MESSAGE_KIND_RATE_LIMITS.other.burst },
+    ] as const
+    for (const policy of policies) {
+      fc.assert(
+        fc.property(fc.integer({ min: 1, max: policy.burst }), (admitted) => {
+          const limiter = createConnectionMessageRateLimiter()
+          for (let message = 0; message < admitted; message += 1) {
+            expect(Result.isSuccess(limiter.consume(policy.kind, 0))).toBe(true)
+          }
+          const next = limiter.consume(policy.kind, 0)
+          if (admitted === policy.burst) {
+            expect(resultError(next)).toMatchObject({ kind: policy.kind, reason: 'kind-rate' })
+          } else {
+            expect(Result.isSuccess(next)).toBe(true)
+          }
+        }),
+        { seed: RATE_PROPERTY_SEED, numRuns: PROPERTY_RUNS },
+      )
+    }
   })
 })
 
@@ -851,7 +962,7 @@ describe('C4 per-recipient chunk projection', () => {
     expect(deltaChunks).toHaveLength(deltaChunkCount)
     const blockChanges = Array.from({ length: deltaChunkCount * changesPerChunk }, (_, index) => {
       const chunk = arrayValueAt(deltaChunks, Math.floor(index / changesPerChunk))
-      return blockChange(chunk.x * 16 + (index % changesPerChunk), chunk.z * 16, chunk.dimension, index + 1)
+      return blockChange(chunk.x * 16 + (index % changesPerChunk), chunk.z * 16, chunk.dimension, (index % 124) + 1)
     })
     const delta = makeDelta(blockChanges, OWNER_IDS.map((owner, index) => ownerChange(owner, index + 1)))
     const recipients = Array.from({ length: playerCount }, (_playerSlot, playerIndex) => {
