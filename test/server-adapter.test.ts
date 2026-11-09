@@ -902,6 +902,7 @@ describe('createServerAdapter', () => {
     })
 
     const validPlayer = playerSnapshot(PLAYER_A, 1, 'Alice')
+    const unsafePositionPlayer = playerSnapshot(PLAYER_A, Number.MAX_VALUE, 'Alice')
     const invalidDimensions: ServerSnapshotProjectionInputs['playerDimensions'] = new Map([[PLAYER_A, 'overworld']])
     Reflect.apply(Map.prototype.set, invalidDimensions, [PLAYER_A, 'moon'])
     const cases = [
@@ -914,6 +915,11 @@ describe('createServerAdapter', () => {
         id: 'invalid dimension',
         player: validPlayer,
         playerDimensions: invalidDimensions,
+      },
+      {
+        id: 'position outside the safe integer range',
+        player: unsafePositionPlayer,
+        playerDimensions: new Map([[PLAYER_A, 'overworld' as const]]),
       },
     ] as const
 
