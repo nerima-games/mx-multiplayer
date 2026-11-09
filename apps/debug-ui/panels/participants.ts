@@ -3,10 +3,13 @@ import {
   type ReconnectAuth,
   type ReconnectAuthCrypto,
   type ReconnectAuthStore,
+  ReconnectAuthStoreContents,
+  ReconnectTokenDigest,
   ReconnectToken,
   ReconnectTokenInput,
   createReconnectAuth,
 } from '../../../src/application/server/reconnect-auth.js'
+import { PlayerId } from '../../../src/domain/protocol/identifiers.js'
 import { AUTHORITY_SCENARIOS } from '../../../scenarios/authority.js'
 import { createScenarioRuntime } from '../entrypoints/scenarios/scenario-runtime.js'
 import { disconnectScenario } from '../../../scenarios/transport.js'
@@ -48,7 +51,7 @@ const deterministicHash = (token: string): string => {
 const makeTestCrypto = (): ReconnectAuthCrypto => {
   let tokenIndex = 0
   return {
-    hashHex: deterministicHash,
+    hashHex: (token) => ReconnectTokenDigest.make(deterministicHash(token)),
     randomToken: () => {
       const value = TOKEN_VALUES[tokenIndex]
       if (value === undefined) {
@@ -62,7 +65,7 @@ const makeTestCrypto = (): ReconnectAuthCrypto => {
 }
 
 const makeMemoryStore = (): ReconnectAuthStore => {
-  let contents: string | undefined = undefined
+  let contents: ReconnectAuthStoreContents | undefined = undefined
   return {
     load: () => Effect.sync(() => contents),
     save: (next) => Effect.sync(() => { contents = next }),
@@ -208,8 +211,8 @@ const participantsPanel: DebugPanel = {
       } else if (auth === undefined) {
         setText(authState, 'ReconnectAuth is initializing.')
       } else {
-        const alice = auth.has(ALICE_ID) ? 'stored entry present' : 'no stored entry'
-        const bob = auth.has(BOB_ID) ? 'stored entry present' : 'no stored entry'
+        const alice = auth.has(PlayerId.make(ALICE_ID)) ? 'stored entry present' : 'no stored entry'
+        const bob = auth.has(PlayerId.make(BOB_ID)) ? 'stored entry present' : 'no stored entry'
         setText(authState, `Alice: ${alice}; Bob: ${bob}. Token values are hidden.`)
       }
       issueButton.disabled = auth === undefined || authBusy || aliceToken !== undefined || bobToken !== undefined
@@ -319,8 +322,8 @@ const participantsPanel: DebugPanel = {
     addListener(disconnectButton, () => runScenario(disconnectScenario, { kind: 'disconnect', clientId: 'client-a' }))
     addListener(issueButton, () =>
       runAuth(async (currentAuth) => {
-        const issuedAlice = await context.runEffect(currentAuth.issue(ALICE_ID))
-        const issuedBob = await context.runEffect(currentAuth.issue(BOB_ID))
+        const issuedAlice = await context.runEffect(currentAuth.issue(PlayerId.make(ALICE_ID)))
+        const issuedBob = await context.runEffect(currentAuth.issue(PlayerId.make(BOB_ID)))
         if (issuedAlice === undefined || issuedBob === undefined) {
           setText(authAttempt, 'ReconnectAuth did not issue both player tokens.')
           return
@@ -372,7 +375,7 @@ const participantsPanel: DebugPanel = {
           setText(authAttempt, 'Rejected: Alice has no current reconnect token.')
           return
         }
-        const rotated = await context.runEffect(currentAuth.rotate(BOB_ID, aliceToken))
+        const rotated = await context.runEffect(currentAuth.rotate(PlayerId.make(BOB_ID), ReconnectTokenInput.make(aliceToken)))
         if (rotated === undefined) {
           setText(authAttempt, 'Rejected: ReconnectAuth.rotate for Bob returned no token for Alice’s token.')
         } else {

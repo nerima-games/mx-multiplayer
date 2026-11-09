@@ -38,8 +38,18 @@ import type {
   RateLimitConfigurationErrorReason,
   RateLimitExceededReason,
   RateLimitInputErrorReason,
+  ReconnectAuth,
+  ReconnectAuthCrypto,
+  ReconnectAuthStore,
+  ReconnectAuthStoreContents,
+  ReconnectTokenDigest,
   ServerAdapter,
   ServerAdapterConfiguration,
+  ServerAcceptedInboundOutcome,
+  ServerAdapterRequest,
+  ServerAdapterOutcome,
+  ServerFrameDeliveryInput,
+  ServerLoadedInterestInput,
   ServerConnectOutcome,
   ServerInboundOutcome,
   ServerProjectionFailure,
@@ -88,8 +98,18 @@ type NewPublicTypes = {
   rateConfigurationErrorReason: RateLimitConfigurationErrorReason
   rateExceededReason: RateLimitExceededReason
   rateInputErrorReason: RateLimitInputErrorReason
+  reconnectAuth: ReconnectAuth
+  reconnectAuthCrypto: ReconnectAuthCrypto
+  reconnectAuthStore: ReconnectAuthStore
+  reconnectAuthStoreContents: ReconnectAuthStoreContents
+  reconnectTokenDigest: ReconnectTokenDigest
   serverAdapter: ServerAdapter
+  serverAdapterRequest: ServerAdapterRequest
+  serverAdapterOutcome: ServerAdapterOutcome
   serverAdapterConfiguration: ServerAdapterConfiguration<never>
+  serverAcceptedInboundOutcome: ServerAcceptedInboundOutcome
+  serverFrameDeliveryInput: ServerFrameDeliveryInput
+  serverLoadedInterestInput: ServerLoadedInterestInput
   serverConnectOutcome: ServerConnectOutcome
   serverInboundOutcome: ServerInboundOutcome
   serverProjectionFailure: ServerProjectionFailure
@@ -129,6 +149,8 @@ describe('public API surface', () => {
         'createConnectionRateLimiter',
         'MAX_SERVER_CONNECTIONS',
         'createServerAdapter',
+        'ReconnectAuthStoreContents',
+        'ReconnectTokenDigest',
         // Transport safety and liveness
         'makeBrowserWebSocketTransport',
         'validateMultiplayerUrl',
@@ -274,6 +296,7 @@ describe('public API surface', () => {
   it.effect('keeps the public type surface concrete', () =>
     Effect.sync(() => {
       expectTypeOf<NewPublicTypes>().toBeObject()
+      expectTypeOf<keyof ServerAdapter>().toEqualTypeOf<'handle'>()
       expectTypeOf<Extract<HungerResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
       expectTypeOf<Extract<SurvivalCommandResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
     }),

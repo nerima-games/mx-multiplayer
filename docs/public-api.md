@@ -340,14 +340,18 @@ Each reconnect token expires 24 hours after issuance by default. This gives a pl
 
 `has(player)` reports whether an auth record exists; `resume` and `rotate` check whether a matching token is still valid. The current and previous token hashes keep separate issuance times, so rotating a token starts a new lifetime for the new token while preserving the previous token's original expiry.
 
+The public auth boundary uses branded values: `PlayerId` for player arguments, `ReconnectTokenInput` and `ReconnectToken` for token input and output, `ReconnectTokenDigest` for injected hash functions, and `ReconnectAuthStoreContents` for persisted JSON. The root barrel exports the digest and store-content schemas so host adapters can brand values at their boundary; the digest schema also checks lowercase SHA-256 hex.
+
 Persisted formats 1 and 2 are earlier reconnect-auth file layouts. When the implementation loads either format, it treats each existing hash as issued at load time. This preserves those tokens during migration and starts their configured TTL when the file is read.
 
 ### 8.3 Server integration adapter
 
-`createServerAdapter` is exported from the package root. It composes frame inspection, reconnect-token resume,
-connection and message-kind limits, supported command application, and recipient-specific world projection.
-The host supplies command services, owner locations, chunk interest, block-state lookups, a reconnect-auth
-resume operation, and an `AuthoritativeSession`:
+`createServerAdapter` is exported from the package root. The adapter exposes one `handle` entry for connection
+admission, disconnect, resume, inbound frames, and world-state publication. An inbound frame is inspected,
+rate-limited, and applied to the authoritative session before the configured host callback runs. That callback
+can apply accepted gameplay intents and return snapshots or deltas; the same entry projects them per recipient.
+The host supplies command services, owner locations, loaded chunk interest, block-state lookups, a reconnect-auth
+resume operation, an accepted-input handler, and an `AuthoritativeSession`:
 
 ```ts
 const MAX_SERVER_CONNECTIONS: number // 20 concurrent connections per adapter
@@ -360,7 +364,8 @@ type ServerAdapterConfiguration<Behaviour> = {
   commandServices: WorldWriteServices<Behaviour>
   blockStatesForChange: (lookup: ServerBlockStateLookup) => Result.Result<ServerBlockStatePair, unknown>
   blockStateForRead: (lookup: ServerBlockReadStateLookup) => Result.Result<typeof EncodedBlockStateSchema.Type, unknown>
-  interestInputFor: (identity: ServerConnectionIdentity, player: PlayerId, world: WorldId) => unknown
+  interestInputFor: (identity: ServerConnectionIdentity, player: PlayerId, world: WorldId) => ServerLoadedInterestInput
+  applyAcceptedInbound: (connection: ServerConnectionHandle, inbound: ServerAcceptedInboundOutcome) => Effect.Effect<ServerFrameDeliveryInput | undefined, unknown>
   ownerRegistry: ReplicatedOwnerRegistry
   reconnectAuth: Pick<ReconnectAuth, 'resume'>
   session: AuthoritativeSession
@@ -374,35 +379,66 @@ type CommandIntentContext = {
 
 type ServerOwnerLocationIndex = ReadonlyMap<ReplicatedOwnerId, unknown>
 
+type ServerLoadedInterestInput = {
+  chunks: ReadonlyArray<{ dimension: 'overworld' | 'nether' | 'end'; x: number; z: number }>
+  ownerIds: ReadonlyArray<ReplicatedOwnerId>
+}
+
+type ServerSnapshotProjectionInputs = {
+  locations: ServerOwnerLocationIndex
+  playerDimensions: ReadonlyMap<PlayerId, 'overworld' | 'nether' | 'end'>
+  replicatedWorld: unknown
+  worldSnapshot: unknown
+}
+
+type ServerAdapterRequest =
+  | { _tag: 'Connect'; player: PlayerId; world: WorldId }
+  | { _tag: 'Disconnect'; connection: unknown }
+  | { _tag: 'Resume'; token: unknown }
+  | { _tag: 'ReceiveFrame'; connection: unknown; frame: unknown }
+  | { _tag: 'PublishWorldState'; delivery: ServerFrameDeliveryInput }
+
+type ServerFrameDeliveryInput = {
+  snapshots?: ReadonlyArray<{ world: WorldId; authoritative: unknown; inputs: ServerSnapshotProjectionInputs }>
+  delta?: unknown
+}
+
 type ServerAdapter = {
-  connect(player: PlayerId, world: WorldId): ServerConnectOutcome
-  disconnect(connection: unknown): boolean
-  receiveFrame(connection: unknown, frame: unknown): Effect.Effect<ServerInboundOutcome>
-  resume(token: unknown): Effect.Effect<ServerResumeOutcome>
-  projectSnapshot(connection: unknown, authoritative: unknown, inputs: ServerSnapshotProjectionInputs): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure>
-  projectDelta(delta: unknown): Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure>
+  handle(request: ServerAdapterRequest): Effect.Effect<ServerAdapterOutcome>
 }
 ```
 
-`receiveFrame` checks the protocol version and frame bounds before decoding JSON, then returns typed rejection,
+`handle({ _tag: 'ReceiveFrame', ... })` checks the protocol version and frame bounds before decoding JSON, then returns typed rejection,
 rate-limit, chat, movement, resync, or command outcomes. Global limits use 25 frames/second, 1,089,775 bytes/second,
 an 80-frame burst, and a 54,489-byte maximum delta. Message-kind limits allow 3 chat messages per 10 seconds;
 commands use a burst of 20 and refill at 10/second, movement a burst of 40 and refill at 20/second, and other
 messages a burst of 80 and refill at 25/second. Chat overages return `warn`, command/movement/other overages
 return `drop`, and global overages return `disconnect`; the transport host applies the requested action.
 
-`interestInputFor` returns `{ chunks, ownerIds }`. Each chunk has `{ dimension, x, z }` fields, with integer
-chunk coordinates; the adapter validates this value before using it. `commandContextFor` and `commandServices`
-connect accepted commands to host-owned gameplay rules and world writes. `blockStatesForChange` resolves the
-before/after state pair for a delta, and `blockStateForRead` supplies state for each loaded snapshot block.
-The adapter validates `targetTick` and `expectedDimensionRevision` when it builds the authoritative intent.
-Snapshot projection receives a `ServerOwnerLocationIndex`; it validates each location value before using it.
+`interestInputFor` returns `{ chunks, ownerIds }`. Its chunks must already be loaded and visible to that player;
+the adapter validates their dimensions and integer coordinates before using them. Delta projection keeps changes
+only in those chunks. `commandContextFor` and `commandServices` connect accepted commands to host-owned gameplay
+rules and world writes. `blockStatesForChange` resolves the before/after state pair for a delta, and
+`blockStateForRead` supplies state for each loaded snapshot block. The adapter validates `targetTick` and
+`expectedDimensionRevision` when it builds the authoritative intent. Snapshot projection receives a
+`ServerOwnerLocationIndex` and per-player dimensions, validates each location, and filters players by recipient AOI.
 
-`projectSnapshot` filters owner-scoped authoritative fields and C4 owners/blocks to the connection's area of
-interest. `projectDelta` returns only changed owners and blocks visible to each connection. The adapter's
-snapshot input is `AuthoritativeSnapshot` plus a C4 replicated-world snapshot; it does not filter legacy
-`RealmTransferSnapshot.worldSnapshot.players` values built outside this API. `resume` validates and rotates a
-token, returning the resumed player and replacement token; the host still creates the new connection.
+The `ReceiveFrame` path invokes `applyAcceptedInbound` only after protocol validation, both rate limiters, and
+authoritative command application. Its returned state is projected into targeted deliveries before `handle`
+returns. `PublishWorldState` uses that same projection path for periodic state updates. Private inventories and
+vitals are filtered to their owner; `WorldSnapshot.players` are filtered using their positions, dimensions, and
+the recipient's loaded chunks. Every delivery carries its recipient connection handle.
+
+`EntityAttackCommand` becomes an ID-only `MeleeAttack` intent. `applyAcceptedInbound` receives both that intent
+and the validated original command, including the requested entity and held slot. A host can call
+mx-gameplay GP5 `prepareMeleeAttack` with authoritative pose, equipment, tick, and entity state, verify the
+prepared target against the request, then apply its returned damage event through WCC before returning the
+resulting delta or snapshot. mx-multiplayer does not depend on mx-gameplay or calculate damage itself.
+
+`ReconnectAuthCrypto` has no package default. The platform host supplies cryptographically random tokens,
+hashing, and a constant-time digest comparison; the platform-free package does not provide a fallback.
+`ResumeUnavailable` contains only the `authentication-service-failed` reason, never the injected error or its
+message. A successful resume returns the player and replacement token; the host still creates the new connection.
 
 ## 9. 公開パッケージの境界
 

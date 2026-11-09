@@ -15,7 +15,7 @@ import { createScenarioRuntime } from '../../apps/debug-ui/entrypoints/scenarios
 const FIXED_SEED = 41
 const FRAME_COUNT_TWO = 2
 const FRAME_COUNT_ONE = 1
-const EXPECTED_UNIQUE_UNSUPPORTED_TAG_COUNT = 16
+const EXPECTED_UNIQUE_UNSUPPORTED_TAG_COUNT = 15
 const EXPECTED_SINGLE_REJECTION_COUNT = 1
 const EXPECTED_BASELINE_REVISION = 4
 const EXPECTED_CONVERGED_REVISION = 5
@@ -65,7 +65,7 @@ describe('authority and world sync scenarios', () => {
   })
 
   // Fails if any I1-unsupported tag becomes accepted or its observed rejection reason drifts.
-  it('keeps the 16 I1-unsupported tags rejected with their current reasons', async () => {
+  it('keeps 16 I1-unsupported command variants across 15 tags rejected with their current reasons', async () => {
     const runtime = await createScenarioRuntime(AUTHORITY_UNSUPPORTED_REASON_SCENARIO, { seed: FIXED_SEED })
     const result = await runtime.run(FRAME_COUNT_ONE)
     const entries = result.wireLog.map((entry) => ({
@@ -83,7 +83,7 @@ describe('authority and world sync scenarios', () => {
     expect(result.verdict.status).toBe('pass')
     expect(entries).toStrictEqual(expected)
     expect(new Set(entries.map((entry) => entry.tag)).size).toBe(EXPECTED_UNIQUE_UNSUPPORTED_TAG_COUNT)
-    expect(S3_UNSUPPORTED_COMMAND_TAGS).toHaveLength(15)
+    expect(S3_UNSUPPORTED_COMMAND_TAGS).toHaveLength(14)
     expect(result.authority.rejectedCommands).toBe(expected.length)
   })
 

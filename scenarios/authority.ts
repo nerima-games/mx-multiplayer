@@ -83,7 +83,6 @@ const UNSUPPORTED_COMMAND_TAGS = [
   'ContainerCommand',
   'EndPortalUseCommand',
   'EnderPearlCommand',
-  'EntityAttackCommand',
   'EntityPickupCommand',
   'FurnaceCommand',
   'IgniteTntCommand',
@@ -106,7 +105,6 @@ export const S3_EXPECTED_UNSUPPORTED_COMMAND_REASONS: Readonly<Record<Unsupporte
   ContainerCommand: NO_MATCHING_INTENT,
   EndPortalUseCommand: NO_MATCHING_INTENT,
   EnderPearlCommand: DOES_NOT_PRESERVE_COMMAND,
-  EntityAttackCommand: DOES_NOT_PRESERVE_COMMAND,
   EntityPickupCommand: NO_MATCHING_INTENT,
   FurnaceCommand: NO_MATCHING_INTENT,
   IgniteTntCommand: NO_MATCHING_INTENT,
@@ -153,8 +151,6 @@ const makeUnsupportedCommand = (tag: UnsupportedCommandTag, commandId: string): 
       return { ...header, _tag: tag, portal: position() }
     case 'EnderPearlCommand':
       return { ...header, _tag: tag }
-    case 'EntityAttackCommand':
-      return { ...header, _tag: tag, entityId: EntityId.make('s3-entity'), heldSlot: ZERO }
     case 'EntityPickupCommand':
       return { ...header, _tag: tag, entityId: EntityId.make('s3-entity') }
     case 'FurnaceCommand':

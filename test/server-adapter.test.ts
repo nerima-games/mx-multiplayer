@@ -19,17 +19,26 @@ import {
   CommandId,
   EntityId,
   PlayerId,
+  PlayerName,
   createReplicatedOwnerRegistry,
   ReplicatedOwnerRegistryLimitsSchema,
   WorldId,
   createServerAdapter,
   encodeFrame,
+  type ServerAcceptedInboundOutcome,
+  type ServerInboundOutcome,
+  type ServerProjectionFailure,
+  type ServerLoadedInterestInput,
+  type TargetedDeltaDelivery,
+  type TargetedSnapshotDelivery,
   type AuthoritativeSnapshot,
   type ReplicatedOwnerRegistryLimits,
   type ServerAdapterConfiguration,
   type ServerOwnerLocationIndex,
   type ServerOwnerLocationResolution,
   type ReplicatedWorldSnapshot,
+  type ServerSnapshotProjectionInputs,
+  type WorldSnapshot,
 } from '../src/index.js'
 import type { WorldWriteServices } from '../src/application/server/command-application.js'
 import { ReconnectToken } from '../src/application/server/reconnect-auth.js'
@@ -107,10 +116,36 @@ const replicatedSnapshot = (
   world: KERNEL_WORLD,
 })
 
+const worldSnapshot = (
+  players: WorldSnapshot['players'] = [],
+): WorldSnapshot => ({
+  _tag: 'WorldSnapshot',
+  blocks: [],
+  levers: [],
+  players,
+  poweredRails: [],
+  revision: 4,
+  seed: 42,
+  world: WORLD,
+})
+
+const playerSnapshot = (player: typeof PLAYER_A, x: number, name: string): WorldSnapshot['players'][number] => ({
+  at: { x, y: 64, z: 0 },
+  facing: { pitchRadians: 0, yawRadians: x },
+  name: PlayerName.make(name),
+  player,
+  world: WORLD,
+})
+
 const snapshotInputs = (
   replicatedWorld: unknown = replicatedSnapshot(),
   locations: ServerOwnerLocationIndex = emptyLocations,
-) => ({ locations, replicatedWorld })
+  worldSnapshotInput: unknown = worldSnapshot(),
+  playerDimensions: ReadonlyMap<typeof PLAYER_A, 'overworld' | 'nether'> = new Map([
+    [PLAYER_A, 'overworld'],
+    [PLAYER_B, 'overworld'],
+  ]),
+): ServerSnapshotProjectionInputs => ({ locations, playerDimensions, replicatedWorld, worldSnapshot: worldSnapshotInput })
 
 const makeAdapter = (
   interestInputFor: ServerAdapterConfiguration<never>['interestInputFor'] = (_identity, player) => ({
@@ -129,6 +164,7 @@ const makeAdapter = (
     identity,
     targetTick: Schema.decodeUnknownSync(SimulationTickSchema)(12),
   }),
+  applyAcceptedInbound: ServerAdapterConfiguration<never>['applyAcceptedInbound'] = () => Effect.succeed(undefined),
 ) => {
   const session = new AuthoritativeSession((world) => world === WORLD ? 4 : undefined)
   session.restore(authoritativeSnapshot())
@@ -138,11 +174,77 @@ const makeAdapter = (
     blockStatesForChange,
     blockStateForRead,
     interestInputFor,
+    applyAcceptedInbound,
     ownerRegistry,
     reconnectAuth,
     session,
   }
-  return createServerAdapter(config)
+  const serverAdapter = createServerAdapter(config)
+  return {
+    ...serverAdapter,
+    connect: (player: typeof PLAYER_A, world: typeof WORLD) => {
+      const outcome = Effect.runSync(serverAdapter.handle({ _tag: 'Connect', player, world }))
+      if (outcome._tag !== 'Connected' && outcome._tag !== 'ConnectionRejected') {
+        throw new Error('unexpected connection outcome')
+      }
+      return outcome
+    },
+    disconnect: (connection: unknown) => {
+      const outcome = Effect.runSync(serverAdapter.handle({ _tag: 'Disconnect', connection }))
+      if (outcome._tag !== 'Disconnected') {
+        throw new Error('unexpected disconnect outcome')
+      }
+      return outcome.disconnected
+    },
+    receiveFrame: (connection: unknown, frame: unknown) => Effect.map(
+      serverAdapter.handle({ _tag: 'ReceiveFrame', connection, frame }),
+      (outcome): ServerInboundOutcome => {
+        if (outcome._tag === 'FrameHandled') {
+          return outcome.inbound
+        }
+        if (outcome._tag === 'FrameDeliveryRefused' && outcome.inbound !== undefined) {
+          return outcome.inbound
+        }
+        throw new Error('unexpected inbound outcome')
+      },
+    ),
+    resume: (token: unknown) => Effect.map(serverAdapter.handle({ _tag: 'Resume', token }), (outcome) => {
+      if (outcome._tag !== 'ResumeAccepted' && outcome._tag !== 'ResumeRejected' && outcome._tag !== 'ResumeUnavailable') {
+        throw new Error('unexpected resume outcome')
+      }
+      return outcome
+    }),
+    projectSnapshot: (
+      connection: unknown,
+      authoritative: unknown,
+      inputs: ServerSnapshotProjectionInputs,
+    ): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure> => {
+      const outcome = Effect.runSync(serverAdapter.handle({
+        _tag: 'PublishWorldState',
+        delivery: { snapshots: [{ world: WORLD, authoritative, inputs }] },
+      }))
+      if (outcome._tag === 'WorldStateRefused') {
+        return Result.fail(outcome.failure)
+      }
+      if (outcome._tag !== 'WorldStatePublished') {
+        throw new Error('unexpected snapshot projection outcome')
+      }
+      const targeted = outcome.deliveries.snapshots.find((delivery) => delivery.connection === connection)
+      return targeted === undefined
+        ? Result.fail({ _tag: 'ServerProjectionRefused', reason: 'unknown-connection' })
+        : Result.succeed(targeted)
+    },
+    projectDelta: (delta: unknown): Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure> => {
+      const outcome = Effect.runSync(serverAdapter.handle({ _tag: 'PublishWorldState', delivery: { delta } }))
+      if (outcome._tag === 'WorldStateRefused') {
+        return Result.fail(outcome.failure)
+      }
+      if (outcome._tag !== 'WorldStatePublished') {
+        throw new Error('unexpected delta projection outcome')
+      }
+      return Result.succeed(outcome.deliveries.deltas)
+    },
+  }
 }
 
 const connected = (adapter: ReturnType<typeof makeAdapter>, player: typeof PLAYER_A) => {
@@ -461,6 +563,18 @@ describe('createServerAdapter', () => {
       _tag: 'ResumeRejected',
       reason: 'invalid-token',
     })
+
+    const secretFailure = new Error('resume token secret: do-not-log')
+    const failingAuthAdapter = makeAdapter(undefined, undefined, undefined, {
+      resume: () => Effect.fail(secretFailure),
+    })
+    const unavailable = await Effect.runPromise(failingAuthAdapter.handle({ _tag: 'Resume', token: ReconnectToken.make('A'.repeat(43)) }))
+    expect(unavailable).toEqual({ _tag: 'ResumeUnavailable', reason: 'authentication-service-failed' })
+    expect(JSON.stringify(unavailable)).not.toContain(secretFailure.message)
+    const throwingResume: ServerAdapterConfiguration<never>['reconnectAuth']['resume'] = () => { throw secretFailure }
+    const throwingAuthAdapter = makeAdapter(undefined, undefined, undefined, { resume: throwingResume })
+    expect(await Effect.runPromise(throwingAuthAdapter.handle({ _tag: 'Resume', token: ReconnectToken.make('B'.repeat(43)) })))
+      .toEqual({ _tag: 'ResumeUnavailable', reason: 'authentication-service-failed' })
   })
 
   it('accepts a rotated resume token and reports unavailable authentication failures', async () => {
@@ -487,7 +601,7 @@ describe('createServerAdapter', () => {
     })
     expect(await Effect.runPromise(unavailableAdapter.resume(tokenText))).toEqual({
       _tag: 'ResumeUnavailable',
-      failure,
+      reason: 'authentication-service-failed',
     })
   })
 
@@ -678,14 +792,135 @@ describe('createServerAdapter', () => {
     })
   })
 
+  it('projects WorldSnapshot player position and facing to each recipient AOI', () => {
+    const adapter = makeAdapter((_identity, player) => ({
+      chunks: [{ dimension: 'overworld', x: player === PLAYER_A ? 0 : 1, z: 0 }],
+      ownerIds: [],
+    }))
+    const connectionA = connected(adapter, PLAYER_A)
+    const connectionB = connected(adapter, PLAYER_B)
+    const inputs = snapshotInputs(
+      replicatedSnapshot(),
+      emptyLocations,
+      worldSnapshot([playerSnapshot(PLAYER_A, 1, 'Alice'), playerSnapshot(PLAYER_B, 17, 'Bob')]),
+      new Map([[PLAYER_A, 'overworld'], [PLAYER_B, 'overworld']]),
+    )
+
+    const result = Effect.runSync(adapter.handle({
+      _tag: 'PublishWorldState',
+      delivery: { snapshots: [{ world: WORLD, authoritative: authoritativeSnapshot(), inputs }] },
+    }))
+    expect(result._tag).toBe('WorldStatePublished')
+    if (result._tag !== 'WorldStatePublished') {
+      throw new Error('expected world state publication')
+    }
+    const snapshotA = result.deliveries.snapshots.find((delivery) => delivery.connection === connectionA)
+    const snapshotB = result.deliveries.snapshots.find((delivery) => delivery.connection === connectionB)
+    expect(snapshotA?.snapshot.worldSnapshot.players).toEqual([playerSnapshot(PLAYER_A, 1, 'Alice')])
+    expect(snapshotB?.snapshot.worldSnapshot.players).toEqual([playerSnapshot(PLAYER_B, 17, 'Bob')])
+  })
+
+  it('handles a command through recipient delivery while enforcing privacy, AOI, capacity, and resume tokens', async () => {
+    const attackState = {
+      snapshots: [{
+        world: WORLD,
+        authoritative: authoritativeSnapshot(),
+        inputs: snapshotInputs(
+          replicatedSnapshot(),
+          emptyLocations,
+          worldSnapshot([playerSnapshot(PLAYER_A, 1, 'Alice'), playerSnapshot(PLAYER_B, 17, 'Bob')]),
+          new Map([[PLAYER_A, 'overworld'], [PLAYER_B, 'overworld']]),
+        ),
+      }],
+      delta: {
+        _tag: 'ReplicatedWorldDelta',
+        blockChanges: [{
+          after: BLOCK_ID,
+          before: BLOCK_ID,
+          dimension: 'overworld',
+          position: Schema.decodeUnknownSync(BlockPositionSchema)({ x: 1, y: 64, z: 0 }),
+        }],
+        changes: [],
+        revision: Schema.decodeUnknownSync(WorldRevisionSchema)(5),
+        world: KERNEL_WORLD,
+      },
+    }
+    const applied: Array<ServerAcceptedInboundOutcome> = []
+    const adapter = makeAdapter(
+      (_identity, player) => ({
+        chunks: [{ dimension: 'overworld', x: player === PLAYER_A ? 0 : 1, z: 0 }],
+        ownerIds: [],
+      }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (_connection, inbound) => {
+        applied.push(inbound)
+        return Effect.succeed(attackState)
+      },
+    )
+    const connectionA = connected(adapter, PLAYER_A)
+    const connectionB = connected(adapter, PLAYER_B)
+    const frame = makeFrame({
+      _tag: 'EntityAttackCommand',
+      commandId: CommandId.make('melee-through-u6b'),
+      entityId: EntityId.make('entity:target'),
+      expectedRevision: 4,
+      heldSlot: 2,
+      player: PLAYER_A,
+      world: WORLD,
+    })
+
+    const result = await Effect.runPromise(adapter.handle({ _tag: 'ReceiveFrame', connection: connectionA, frame }))
+    expect(result._tag).toBe('FrameHandled')
+    if (result._tag !== 'FrameHandled') {
+      throw new Error('expected frame handling and recipient delivery')
+    }
+    expect(result.inbound).toMatchObject({
+      _tag: 'CommandApplied',
+      command: { _tag: 'EntityAttackCommand', entityId: 'entity:target', heldSlot: 2 },
+      outcome: { _tag: 'AuthoritativeCommandIntentAccepted', intent: { payload: { _tag: 'MeleeAttack', actor: PLAYER_A } } },
+    })
+    expect(applied).toHaveLength(1)
+    expect(applied[0]).toMatchObject({ _tag: 'CommandApplied', command: { heldSlot: 2, entityId: 'entity:target' } })
+    expect(result.deliveries.snapshots).toHaveLength(2)
+    const snapshotA = result.deliveries.snapshots.find((delivery) => delivery.connection === connectionA)
+    const snapshotB = result.deliveries.snapshots.find((delivery) => delivery.connection === connectionB)
+    expect(snapshotA?.snapshot.authoritative.inventories.map((entry) => entry.player)).toEqual([PLAYER_A])
+    expect(snapshotA?.snapshot.authoritative.vitals.map((entry) => entry.player)).toEqual([PLAYER_A])
+    expect(snapshotB?.snapshot.authoritative.inventories.map((entry) => entry.player)).toEqual([PLAYER_B])
+    expect(snapshotB?.snapshot.authoritative.vitals.map((entry) => entry.player)).toEqual([PLAYER_B])
+    expect(result.deliveries.deltas.map((delivery) => delivery.connection)).toEqual([connectionA])
+
+    const capacityAdapter = makeAdapter()
+    const admissions = await Promise.all(Array.from({ length: 20 }, (_, index) => Effect.runPromise(capacityAdapter.handle({
+        _tag: 'Connect',
+        player: PlayerId.make(`capacity-${index}`),
+        world: WORLD,
+      }))))
+    for (const admission of admissions) {
+      expect(admission._tag).toBe('Connected')
+    }
+    expect(await Effect.runPromise(capacityAdapter.handle({ _tag: 'Connect', player: PLAYER_A, world: WORLD }))).toMatchObject({
+      _tag: 'ConnectionRejected',
+      reason: 'connection-limit',
+      limit: 20,
+    })
+    expect(await Effect.runPromise(capacityAdapter.handle({ _tag: 'Resume', token: undefined }))).toEqual({
+      _tag: 'ResumeRejected',
+      reason: 'missing-token',
+    })
+  })
+
   it('accepts ID-only deltas, enriches state-only changes, and targets the recipient AOI', () => {
     const adapter = makeAdapter()
     const connectionA = connected(adapter, PLAYER_A)
     const connectionB = connected(adapter, PLAYER_B)
     const snapshot = authoritativeSnapshot()
-    const worldSnapshot = replicatedSnapshot()
-    expect(Result.isSuccess(adapter.projectSnapshot(connectionA, snapshot, snapshotInputs(worldSnapshot)))).toBe(true)
-    expect(Result.isSuccess(adapter.projectSnapshot(connectionB, snapshot, snapshotInputs(worldSnapshot)))).toBe(true)
+    const c4WorldSnapshot = replicatedSnapshot()
+    expect(Result.isSuccess(adapter.projectSnapshot(connectionA, snapshot, snapshotInputs(c4WorldSnapshot)))).toBe(true)
+    expect(Result.isSuccess(adapter.projectSnapshot(connectionB, snapshot, snapshotInputs(c4WorldSnapshot)))).toBe(true)
 
     const stateOnlyDelta = {
       _tag: 'ReplicatedWorldDelta',
@@ -717,6 +952,49 @@ describe('createServerAdapter', () => {
       })
     }
     expect(deliveries.some((delivery) => delivery.connection === connectionA)).toBe(false)
+  })
+
+  it('delivers only changed blocks from chunks declared loaded in the recipient interest', () => {
+    const adapter = makeAdapter(() => ({
+      chunks: [{ dimension: 'overworld', x: 0, z: 0 }],
+      ownerIds: [],
+    }))
+    const connection = connected(adapter, PLAYER_B)
+    const snapshot = Effect.runSync(adapter.handle({
+      _tag: 'PublishWorldState',
+      delivery: {
+        snapshots: [{ world: WORLD, authoritative: authoritativeSnapshot(), inputs: snapshotInputs() }],
+      },
+    }))
+    expect(snapshot._tag).toBe('WorldStatePublished')
+
+    const delta = Effect.runSync(adapter.handle({
+      _tag: 'PublishWorldState',
+      delivery: {
+        delta: {
+          _tag: 'ReplicatedWorldDelta',
+          blockChanges: [15, 16].map((x) => ({
+            after: BLOCK_ID,
+            before: BLOCK_ID,
+            dimension: 'overworld',
+            position: Schema.decodeUnknownSync(BlockPositionSchema)({ x, y: 64, z: 0 }),
+          })),
+          changes: [],
+          revision: Schema.decodeUnknownSync(WorldRevisionSchema)(5),
+          world: KERNEL_WORLD,
+        },
+      },
+    }))
+    expect(delta._tag).toBe('WorldStatePublished')
+    if (delta._tag !== 'WorldStatePublished') {
+      throw new Error('expected delta publication')
+    }
+    expect(delta.deliveries.deltas).toHaveLength(1)
+    expect(delta.deliveries.deltas[0]?.connection).toBe(connection)
+    expect(delta.deliveries.deltas[0]?.outcome).toMatchObject({
+      _tag: 'ProjectedDelta',
+      message: { blockChanges: [{ position: { x: 15 } }] },
+    })
   })
 
   it('tracks a successful AOI shrink and requests resync after a later expansion', () => {
@@ -811,7 +1089,9 @@ describe('createServerAdapter', () => {
   })
 
   it('rejects invalid server interest and owner changes outside the registry', () => {
-    const invalidInterestAdapter = makeAdapter(() => ({ chunks: 'bad', ownerIds: [] }))
+    const invalidInterest: ServerLoadedInterestInput = { chunks: [], ownerIds: [] }
+    Object.defineProperty(invalidInterest, 'chunks', { value: 'bad' })
+    const invalidInterestAdapter = makeAdapter(() => invalidInterest)
     const connectionB = connected(invalidInterestAdapter, PLAYER_B)
     const emptyDelta = {
       _tag: 'ReplicatedWorldDelta',

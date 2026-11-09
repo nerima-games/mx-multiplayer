@@ -47,7 +47,7 @@ const a4StageResync = reference(
 )
 const a4ChunkOrder = reference(
   'test/authoritative-sync.test.ts',
-  978,
+  1016,
   'rejects chunks that arrive out of order',
 )
 const a4TransferOrder = reference(

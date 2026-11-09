@@ -60,6 +60,7 @@ type IntentPayloadResolution =
 
 type MappedCommandTag =
   | 'BowUseCommand'
+  | 'EntityAttackCommand'
   | 'FishingCommand'
   | 'PlayerVitalsCommand'
   | 'VehicleCommand'
@@ -72,7 +73,6 @@ const UNSUPPORTED_COMMAND_REASONS: Record<UnsupportedCommandTag, CommandUnsuppor
   ContainerCommand: 'no-matching-c2-intent-payload',
   EndPortalUseCommand: 'no-matching-c2-intent-payload',
   EnderPearlCommand: 'intent-payload-does-not-preserve-command',
-  EntityAttackCommand: 'intent-payload-does-not-preserve-command',
   EntityPickupCommand: 'no-matching-c2-intent-payload',
   FurnaceCommand: 'no-matching-c2-intent-payload',
   IgniteTntCommand: 'no-matching-c2-intent-payload',
@@ -118,6 +118,10 @@ const resolveBowIntent = (
   return mappedPayload({ _tag: 'BowAction', action, actor: command.player })
 }
 
+const resolveEntityAttackIntent = (
+  command: Extract<AuthoritativeCommand, { readonly _tag: 'EntityAttackCommand' }>,
+): IntentPayloadResolution => mappedPayload({ _tag: 'MeleeAttack', actor: command.player })
+
 const resolveVehicleIntent = (
   command: Extract<AuthoritativeCommand, { readonly _tag: 'VehicleCommand' }>,
 ): IntentPayloadResolution => {
@@ -147,6 +151,8 @@ const resolveIntentPayload = (command: AuthoritativeCommand): IntentPayloadResol
   switch (command._tag) {
     case 'BowUseCommand':
       return resolveBowIntent(command)
+    case 'EntityAttackCommand':
+      return resolveEntityAttackIntent(command)
     case 'FishingCommand':
       return mappedPayload({ _tag: 'FishingAction', action: command.action, actor: command.player })
     case 'PlayerVitalsCommand':

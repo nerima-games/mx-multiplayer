@@ -17,9 +17,13 @@ import {
   type ReplicatedWorldDeltaMessage as ReplicatedWorldDeltaValue,
   ReplicatedWorldSnapshot,
   type ReplicatedWorldSnapshot as ReplicatedWorldSnapshotValue,
+  WorldId,
   type WorldId as WorldIdValue,
+  WorldSnapshot,
+  type WorldSnapshot as WorldSnapshotValue,
 } from '../../domain/protocol.js'
 import {
+  type AuthoritativeCommandIntentAccepted,
   AuthoritativeSession,
   type ServerConnectionIdentity,
 } from '../../domain/authoritative-session.js'
@@ -202,11 +206,17 @@ export type ServerAdapterConfiguration<Behaviour> = Readonly<{
   readonly blockStatesForChange: (lookup: ServerBlockStateLookup) => Result.Result<ServerBlockStatePair, unknown>
   /** Reads the authoritative state for a loaded block in a snapshot; no state is synthesized. */
   readonly blockStateForRead: (lookup: ServerBlockReadStateLookup) => Result.Result<typeof EncodedBlockStateSchema.Type, unknown>
+  /** Only loaded and visible chunks belong here; omit unloaded chunks. */
   readonly interestInputFor: (
     identity: ServerConnectionIdentity,
     player: PlayerIdValue,
     world: WorldIdValue,
-  ) => unknown
+  ) => ServerLoadedInterestInput
+  /** Applies accepted protocol intents through host-owned gameplay rules and returns the resulting state to publish. */
+  readonly applyAcceptedInbound: (
+    connection: ServerConnectionHandle,
+    inbound: ServerAcceptedInboundOutcome,
+  ) => Effect.Effect<ServerFrameDeliveryInput | undefined, unknown>
   readonly ownerRegistry: ReplicatedOwnerRegistry
   readonly reconnectAuth: Pick<ReconnectAuth, 'resume'>
   readonly session: AuthoritativeSession
@@ -225,7 +235,7 @@ export type ServerConnectOutcome =
 export type ServerResumeOutcome =
   | Readonly<{ _tag: 'ResumeAccepted'; player: PlayerIdValue; token: ReconnectToken }>
   | Readonly<{ _tag: 'ResumeRejected'; reason: 'missing-token' | 'invalid-token' }>
-  | Readonly<{ _tag: 'ResumeUnavailable'; failure: unknown }>
+  | Readonly<{ _tag: 'ResumeUnavailable'; reason: 'authentication-service-failed' }>
 
 export type ServerInboundOutcome =
   | Readonly<{ _tag: 'FrameRejected'; inspection: Extract<InboundFrameInspection, { readonly _tag: 'Rejected' }> }>
@@ -239,7 +249,7 @@ export type ServerInboundOutcome =
   | Readonly<{ _tag: 'ChatReceived'; message: Extract<NetworkMessageValue, { readonly _tag: 'Chat' }> }>
   | Readonly<{ _tag: 'MovementReceived'; message: PlayerMoveValue }>
   | Readonly<{ _tag: 'ResyncRequested'; request: typeof AuthoritativeResyncRequest.Type }>
-  | Readonly<{ _tag: 'CommandApplied'; outcome: CommandApplicationOutcome }>
+  | Readonly<{ _tag: 'CommandApplied'; command: typeof AuthoritativeCommand.Type; outcome: CommandApplicationOutcome }>
   | Readonly<{ _tag: 'CommandApplicationRefused'; failure: CommandApplicationFailure }>
 
 type InboundNetworkMessage = NetworkMessageValue
@@ -257,6 +267,8 @@ export type ServerProjectionRefusal = Readonly<{
     | 'invalid-block-location'
     | 'invalid-block-state'
     | 'invalid-server-interest'
+    | 'invalid-world-snapshot'
+    | 'invalid-player-location'
     | 'invalid-replicated-delta'
     | 'delta-projection-failed'
 }>
@@ -266,6 +278,7 @@ export type ServerProjectionFailure = ServerProjectionRefusal
 export type ProjectedRecipientSnapshot = Readonly<{
   authoritative: AuthoritativeSnapshotValue
   replicatedWorld: ReplicatedWorldSnapshotValue
+  worldSnapshot: WorldSnapshotValue
 }>
 
 export type TargetedSnapshotDelivery = Readonly<{
@@ -282,20 +295,61 @@ export type TargetedDeltaDelivery = Readonly<{
 
 export type ServerSnapshotProjectionInputs = Readonly<{
   locations: ServerOwnerLocationIndex
+  playerDimensions: ServerPlayerDimensionIndex
   replicatedWorld: unknown
+  worldSnapshot: unknown
 }>
 
+export type ServerLoadedInterestInput = Readonly<{
+  chunks: ReadonlyArray<Readonly<{ dimension: typeof ServerDimensionSchema.Type; x: number; z: number }>>
+  ownerIds: ReadonlyArray<ReplicatedOwnerId>
+}>
+
+export type ServerPlayerDimensionIndex = ReadonlyMap<PlayerIdValue, typeof ServerDimensionSchema.Type>
+
+export type ServerAcceptedInboundOutcome =
+  | Extract<ServerInboundOutcome, { readonly _tag: 'ChatReceived' | 'MovementReceived' | 'ResyncRequested' }>
+  | Readonly<{
+      _tag: 'CommandApplied'
+      command: typeof AuthoritativeCommand.Type
+      outcome: AuthoritativeCommandIntentAccepted
+    }>
+
+export type ServerSnapshotDeliveryInput = Readonly<{
+  world: WorldIdValue
+  authoritative: unknown
+  inputs: ServerSnapshotProjectionInputs
+}>
+
+export type ServerFrameDeliveryInput = Readonly<{
+  snapshots?: ReadonlyArray<ServerSnapshotDeliveryInput>
+  delta?: unknown
+}>
+
+export type ServerAdapterRequest =
+  | Readonly<{ _tag: 'Connect'; player: PlayerIdValue; world: WorldIdValue }>
+  | Readonly<{ _tag: 'Disconnect'; connection: unknown }>
+  | Readonly<{ _tag: 'Resume'; token: unknown }>
+  | Readonly<{ _tag: 'ReceiveFrame'; connection: unknown; frame: unknown }>
+  | Readonly<{ _tag: 'PublishWorldState'; delivery: ServerFrameDeliveryInput }>
+
+export type ServerFrameDeliveries = Readonly<{
+  snapshots: ReadonlyArray<TargetedSnapshotDelivery>
+  deltas: ReadonlyArray<TargetedDeltaDelivery>
+}>
+
+export type ServerAdapterOutcome =
+  | ServerConnectOutcome
+  | ServerResumeOutcome
+  | Readonly<{ _tag: 'Disconnected'; disconnected: boolean }>
+  | Readonly<{ _tag: 'FrameHandled'; inbound: ServerInboundOutcome; deliveries: ServerFrameDeliveries }>
+  | Readonly<{ _tag: 'FrameApplicationFailed'; inbound: ServerAcceptedInboundOutcome; reason: 'host-application-failed' }>
+  | Readonly<{ _tag: 'FrameDeliveryRefused'; inbound?: ServerInboundOutcome; failure: ServerProjectionFailure }>
+  | Readonly<{ _tag: 'WorldStatePublished'; deliveries: ServerFrameDeliveries }>
+  | Readonly<{ _tag: 'WorldStateRefused'; failure: ServerProjectionFailure }>
+
 export type ServerAdapter = Readonly<{
-  connect: (player: PlayerIdValue, world: WorldIdValue) => ServerConnectOutcome
-  disconnect: (connection: unknown) => boolean
-  receiveFrame: (connection: unknown, untrustedFrame: unknown) => Effect.Effect<ServerInboundOutcome>
-  resume: (untrustedToken: unknown) => Effect.Effect<ServerResumeOutcome>
-  projectSnapshot: (
-    connection: unknown,
-    authoritativeInput: unknown,
-    inputs: ServerSnapshotProjectionInputs,
-  ) => Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure>
-  projectDelta: (deltaInput: unknown) => Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure>
+  handle: (request: ServerAdapterRequest) => Effect.Effect<ServerAdapterOutcome>
 }>
 
 const refusal = (reason: ServerProjectionRefusal['reason']): ServerProjectionRefusal => ({
@@ -553,10 +607,82 @@ const projectedAuthoritativeSnapshot = (
 type SnapshotLocationProjectionRequest = Readonly<{
   interest: AreaOfInterest
   locations: ServerOwnerLocationIndex
+  playerDimensions: ServerPlayerDimensionIndex
   recipient: PlayerIdValue
   replicatedWorld: ReplicatedWorldSnapshotValue
   snapshot: AuthoritativeSnapshotValue
+  worldSnapshot: WorldSnapshotValue
 }>
+
+const decodePlayerDimension = (
+  dimensions: ServerPlayerDimensionIndex,
+  player: WorldSnapshotValue['players'][number],
+): Result.Result<typeof ServerDimensionSchema.Type, ServerProjectionRefusal> => {
+  const dimensionInput = dimensions.get(player.player)
+  if (dimensionInput === undefined) {
+    return Result.fail(refusal('invalid-player-location'))
+  }
+  const dimension = Schema.decodeUnknownResult(ServerDimensionSchema, strictParseOptions)(dimensionInput)
+  if (Result.isFailure(dimension)) {
+    return Result.fail(refusal('invalid-player-location'))
+  }
+  return Result.succeed(dimension.success)
+}
+
+const playerLocationIsVisible = (
+  interest: AreaOfInterest,
+  dimension: typeof ServerDimensionSchema.Type,
+  player: WorldSnapshotValue['players'][number],
+): Result.Result<boolean, ServerProjectionRefusal> => {
+  const visible = areaOfInterestIncludesLocation(interest, dimension, {
+    x: Math.floor(player.at.x),
+    y: Math.floor(player.at.y),
+    z: Math.floor(player.at.z),
+  })
+  if (Result.isFailure(visible)) {
+    return Result.fail(refusal('invalid-player-location'))
+  }
+  return Result.succeed(visible.success)
+}
+
+const worldSnapshotPlayerIsVisible = (
+  request: Readonly<{
+    dimensions: ServerPlayerDimensionIndex
+    interest: AreaOfInterest
+    player: WorldSnapshotValue['players'][number]
+    snapshot: WorldSnapshotValue
+  }>,
+): Result.Result<boolean, ServerProjectionRefusal> => {
+  if (request.player.world !== request.snapshot.world) {
+    return Result.succeed(false)
+  }
+  const dimension = decodePlayerDimension(request.dimensions, request.player)
+  if (Result.isFailure(dimension)) {
+    return Result.fail(dimension.failure)
+  }
+  return playerLocationIsVisible(request.interest, dimension.success, request.player)
+}
+
+const projectWorldSnapshotPlayers = (
+  request: Pick<SnapshotLocationProjectionRequest, 'interest' | 'playerDimensions' | 'worldSnapshot'>,
+): Result.Result<WorldSnapshotValue, ServerProjectionRefusal> => {
+  const players: Array<WorldSnapshotValue['players'][number]> = []
+  for (const player of request.worldSnapshot.players) {
+    const visible = worldSnapshotPlayerIsVisible({
+      dimensions: request.playerDimensions,
+      interest: request.interest,
+      player,
+      snapshot: request.worldSnapshot,
+    })
+    if (Result.isFailure(visible)) {
+      return Result.fail(visible.failure)
+    }
+    if (visible.success) {
+      players.push(player)
+    }
+  }
+  return Result.succeed({ ...request.worldSnapshot, players: Object.freeze(players) })
+}
 
 const filterSnapshotLocations = (
   request: SnapshotLocationProjectionRequest,
@@ -565,14 +691,16 @@ const filterSnapshotLocations = (
     projectSnapshotCollections(request),
     projectReplicatedSnapshotOwners(request),
     projectReplicatedSnapshotBlocks(request),
+    projectWorldSnapshotPlayers(request),
   ] as const)
-  return Result.map(projected, ([collections, owners, blocks]) => ({
+  return Result.map(projected, ([collections, owners, blocks, worldSnapshot]) => ({
     authoritative: projectedAuthoritativeSnapshot(request.snapshot, request.recipient, collections),
     replicatedWorld: {
       ...request.replicatedWorld,
       blocks,
       owners,
     },
+    worldSnapshot,
   }))
 }
 
@@ -744,6 +872,7 @@ const decodeReplicatedSnapshot = <Behaviour>(
 type SnapshotInputsPreparationRequest<Behaviour> = Readonly<{
   authoritativeInput: unknown
   replicatedWorldInput: unknown
+  worldSnapshotInput: unknown
   resolver: ServerAdapterConfiguration<Behaviour>['blockStateForRead']
   world: WorldIdValue
 }>
@@ -751,23 +880,49 @@ type SnapshotInputsPreparationRequest<Behaviour> = Readonly<{
 type PreparedSnapshotInputs = Readonly<{
   authoritative: AuthoritativeSnapshotValue
   replicatedWorld: ReplicatedWorldSnapshotValue
+  worldSnapshot: WorldSnapshotValue
 }>
+
+const decodeAuthoritativeSnapshot = (input: unknown): Result.Result<AuthoritativeSnapshotValue, ServerProjectionRefusal> => {
+  const decoded = Schema.decodeUnknownResult(AuthoritativeSnapshot, strictParseOptions)(input)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(refusal('invalid-authoritative-snapshot'))
+  }
+  return Result.succeed(decoded.success)
+}
+
+const decodeWorldSnapshot = (input: unknown): Result.Result<WorldSnapshotValue, ServerProjectionRefusal> => {
+  const decoded = Schema.decodeUnknownResult(WorldSnapshot, strictParseOptions)(input)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(refusal('invalid-world-snapshot'))
+  }
+  return Result.succeed(decoded.success)
+}
 
 const decodeSnapshotInputs = <Behaviour>(
   request: SnapshotInputsPreparationRequest<Behaviour>,
 ): Result.Result<PreparedSnapshotInputs, ServerProjectionRefusal> => {
-  const authoritative = Schema.decodeUnknownResult(AuthoritativeSnapshot, strictParseOptions)(request.authoritativeInput)
-  if (Result.isFailure(authoritative)) {
-    return Result.fail(refusal('invalid-authoritative-snapshot'))
+  const decoded = Result.all([
+    decodeAuthoritativeSnapshot(request.authoritativeInput),
+    decodeReplicatedSnapshot({ input: request.replicatedWorldInput, resolver: request.resolver }),
+    decodeWorldSnapshot(request.worldSnapshotInput),
+  ] as const)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(decoded.failure)
   }
-  const replicatedWorld = decodeReplicatedSnapshot({ input: request.replicatedWorldInput, resolver: request.resolver })
-  if (Result.isFailure(replicatedWorld)) {
-    return Result.fail(replicatedWorld.failure)
-  }
-  if (authoritative.success.world !== request.world || replicatedWorld.success.world !== request.world) {
+  const [authoritative, replicatedWorld, worldSnapshot] = decoded.success
+  if (
+    authoritative.world !== request.world ||
+    replicatedWorld.world !== request.world ||
+    worldSnapshot.world !== request.world
+  ) {
     return Result.fail(refusal('cross-world-snapshot'))
   }
-  return Result.succeed({ authoritative: authoritative.success, replicatedWorld: replicatedWorld.success })
+  return Result.succeed({
+    authoritative,
+    replicatedWorld,
+    worldSnapshot,
+  })
 }
 
 type DeltaStatePreparationRequest<Behaviour> = Readonly<{
@@ -876,7 +1031,7 @@ const dispatchInboundMessage = <Behaviour>(
       applyAuthoritativeCommand(config.session, config.commandServices, context)(message),
       {
         onFailure: (failure): ServerInboundOutcome => ({ _tag: 'CommandApplicationRefused', failure }),
-        onSuccess: (outcome): ServerInboundOutcome => ({ _tag: 'CommandApplied', outcome }),
+        onSuccess: (outcome): ServerInboundOutcome => ({ _tag: 'CommandApplied', command: message, outcome }),
       },
     )
   }
@@ -896,6 +1051,7 @@ type RecipientSnapshotProjectionRequest = Readonly<{
   connection: ConnectionRecord
   interest: AreaOfInterest
   locations: ServerOwnerLocationIndex
+  playerDimensions: ServerPlayerDimensionIndex
   snapshot: PreparedSnapshotInputs
 }>
 
@@ -914,9 +1070,11 @@ const projectSnapshotForConnection = (
   const projected = filterSnapshotLocations({
     interest: request.interest,
     locations: request.locations,
+    playerDimensions: request.playerDimensions,
     recipient: request.connection.player,
     replicatedWorld: request.snapshot.replicatedWorld,
     snapshot: request.snapshot.authoritative,
+    worldSnapshot: request.snapshot.worldSnapshot,
   })
   if (Result.isFailure(projected)) {
     return Result.fail(normalizeSnapshotProjectionFailure(projected.failure))
@@ -926,6 +1084,34 @@ const projectSnapshotForConnection = (
     _tag: 'TargetedSnapshot',
     connection: request.connection.handle,
     snapshot: projected.success,
+  })
+}
+
+const projectSnapshotInputForConnection = <Behaviour>(
+  config: ServerAdapterConfiguration<Behaviour>,
+  connection: ConnectionRecord,
+  input: ServerSnapshotDeliveryInput,
+): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure> => {
+  const snapshot = decodeSnapshotInputs({
+    authoritativeInput: input.authoritative,
+    replicatedWorldInput: input.inputs.replicatedWorld,
+    resolver: config.blockStateForRead,
+    world: connection.world,
+    worldSnapshotInput: input.inputs.worldSnapshot,
+  })
+  if (Result.isFailure(snapshot)) {
+    return Result.fail(snapshot.failure)
+  }
+  const interest = interestFor(config, connection)
+  if (Result.isFailure(interest)) {
+    return Result.fail(refusal('invalid-server-interest'))
+  }
+  return projectSnapshotForConnection({
+    connection,
+    interest: interest.success,
+    locations: input.inputs.locations,
+    playerDimensions: input.inputs.playerDimensions,
+    snapshot: snapshot.success,
   })
 }
 
@@ -1037,6 +1223,82 @@ const projectDeltaForConnections = <Behaviour>(
   return Result.succeed(Object.freeze(deliveries))
 }
 
+const appendSnapshotDeliveriesForInput = <Behaviour>(
+  request: Readonly<{
+    config: ServerAdapterConfiguration<Behaviour>
+    connections: ReadonlyMap<ServerConnectionIdentity, ConnectionRecord>
+    input: ServerSnapshotDeliveryInput
+    snapshots: Array<TargetedSnapshotDelivery>
+  }>,
+): Result.Result<void, ServerProjectionFailure> => {
+  const world = Schema.decodeUnknownResult(WorldId, strictParseOptions)(request.input.world)
+  if (Result.isFailure(world)) {
+    return Result.fail(refusal('invalid-authoritative-snapshot'))
+  }
+  for (const connection of request.connections.values()) {
+    if (connection.world === world.success) {
+      const projected = projectSnapshotInputForConnection(request.config, connection, request.input)
+      if (Result.isFailure(projected)) {
+        return Result.fail(projected.failure)
+      }
+      request.snapshots.push(projected.success)
+    }
+  }
+  return Result.succeed(undefined)
+}
+
+const projectWorldSnapshotDeliveries = <Behaviour>(
+  config: ServerAdapterConfiguration<Behaviour>,
+  connections: ReadonlyMap<ServerConnectionIdentity, ConnectionRecord>,
+  input: ServerFrameDeliveryInput,
+): Result.Result<ReadonlyArray<TargetedSnapshotDelivery>, ServerProjectionFailure> => {
+  const snapshots: Array<TargetedSnapshotDelivery> = []
+  const snapshotInputs = input.snapshots ?? []
+  if (!Array.isArray(snapshotInputs)) {
+    return Result.fail(refusal('invalid-authoritative-snapshot'))
+  }
+  for (const snapshot of snapshotInputs) {
+    const appended = appendSnapshotDeliveriesForInput({ config, connections, input: snapshot, snapshots })
+    if (Result.isFailure(appended)) {
+      return Result.fail(appended.failure)
+    }
+  }
+  return Result.succeed(Object.freeze(snapshots))
+}
+
+const projectWorldDeltaDeliveries = <Behaviour>(
+  config: ServerAdapterConfiguration<Behaviour>,
+  connections: ReadonlyMap<ServerConnectionIdentity, ConnectionRecord>,
+  input: ServerFrameDeliveryInput,
+): Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure> => {
+  if (input.delta === undefined) {
+    return Result.succeed([])
+  }
+  const decoded = decodeReplicatedDelta({ input: input.delta, resolver: config.blockStatesForChange })
+  if (Result.isFailure(decoded)) {
+    return Result.fail(decoded.failure)
+  }
+  return projectDeltaForConnections(config, decoded.success, connections)
+}
+
+const projectServerFrameDelivery = <Behaviour>(
+  config: ServerAdapterConfiguration<Behaviour>,
+  connections: ReadonlyMap<ServerConnectionIdentity, ConnectionRecord>,
+  delivery: ServerFrameDeliveryInput,
+): Result.Result<ServerFrameDeliveries, ServerProjectionFailure> => {
+  const snapshots = projectWorldSnapshotDeliveries(config, connections, delivery)
+  if (Result.isFailure(snapshots)) {
+    return Result.fail(snapshots.failure)
+  }
+  const deltas = projectWorldDeltaDeliveries(config, connections, delivery)
+  if (Result.isFailure(deltas)) {
+    return Result.fail(deltas.failure)
+  }
+  return Result.succeed({ deltas: deltas.success, snapshots: snapshots.success })
+}
+
+const emptyServerFrameDeliveries = (): ServerFrameDeliveries => ({ deltas: [], snapshots: [] })
+
 type ServerConnectionRegistry = Readonly<{
   connections: Map<ServerConnectionIdentity, ConnectionRecord>
   findConnection: (handle: unknown) => ConnectionRecord | undefined
@@ -1053,6 +1315,13 @@ const createConnectionRegistry = (): ServerConnectionRegistry => {
     return handles.get(handle)
   }
   return { connections, findConnection, handles }
+}
+
+const isAcceptedInboundOutcome = (outcome: ServerInboundOutcome): outcome is ServerAcceptedInboundOutcome => {
+  if (outcome._tag === 'CommandApplied') {
+    return outcome.outcome._tag === 'AuthoritativeCommandIntentAccepted'
+  }
+  return outcome._tag === 'ChatReceived' || outcome._tag === 'MovementReceived' || outcome._tag === 'ResyncRequested'
 }
 
 export const createServerAdapter = <Behaviour>(
@@ -1126,8 +1395,15 @@ export const createServerAdapter = <Behaviour>(
     if (Result.isFailure(token)) {
       return { _tag: 'ResumeRejected', reason: 'invalid-token' }
     }
-    return yield* Effect.match(config.reconnectAuth.resume(token.success), {
-      onFailure: (failure): ServerResumeOutcome => ({ _tag: 'ResumeUnavailable', failure }),
+    const authentication = Effect.flatMap(
+      Effect.try({
+        catch: () => 'authentication-service-failed',
+        try: () => config.reconnectAuth.resume(token.success),
+      }),
+      (effect) => effect,
+    )
+    return yield* Effect.match(authentication, {
+      onFailure: (): ServerResumeOutcome => ({ _tag: 'ResumeUnavailable', reason: 'authentication-service-failed' }),
       onSuccess: (resumed): ServerResumeOutcome => {
         if (resumed === undefined) {
           return { _tag: 'ResumeRejected', reason: 'invalid-token' }
@@ -1156,45 +1432,59 @@ export const createServerAdapter = <Behaviour>(
     return yield* dispatchInboundMessage(config, connection, limited.message)
   })
 
-  const projectSnapshot = (
-    handle: unknown,
-    authoritativeInput: unknown,
-    inputs: ServerSnapshotProjectionInputs,
-  ): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure> => {
-    const connection = findConnection(handle)
-    if (connection === undefined) {
-      return Result.fail(refusal('unknown-connection'))
+  const handle = (request: ServerAdapterRequest): Effect.Effect<ServerAdapterOutcome> => {
+    // eslint-disable-next-line default-case -- ServerAdapterRequest is a closed union.
+    switch (request._tag) {
+      case 'Connect':
+        return Effect.succeed(connect(request.player, request.world))
+      case 'Disconnect':
+        return Effect.succeed({ _tag: 'Disconnected', disconnected: disconnect(request.connection) })
+      case 'Resume':
+        return resume(request.token)
+      case 'PublishWorldState': {
+        const projected = projectServerFrameDelivery(config, connections, request.delivery)
+        if (Result.isFailure(projected)) {
+          return Effect.succeed({ _tag: 'WorldStateRefused', failure: projected.failure })
+        }
+        return Effect.succeed({ _tag: 'WorldStatePublished', deliveries: projected.success })
+      }
+      case 'ReceiveFrame':
+        return Effect.gen(function* () {
+          const inbound = yield* receiveFrame(request.connection, request.frame)
+          if (!isAcceptedInboundOutcome(inbound)) {
+            return { _tag: 'FrameHandled', deliveries: emptyServerFrameDeliveries(), inbound }
+          }
+          const connection = findConnection(request.connection)
+          if (connection === undefined) {
+            return { _tag: 'FrameHandled', deliveries: emptyServerFrameDeliveries(), inbound }
+          }
+          const application = Effect.flatMap(
+            Effect.try({
+              catch: () => 'host-application-failed',
+              try: () => config.applyAcceptedInbound(connection.handle, inbound),
+            }),
+            (effect) => effect,
+          )
+          return yield* Effect.match(application, {
+            onFailure: (): ServerAdapterOutcome => ({
+              _tag: 'FrameApplicationFailed',
+              inbound,
+              reason: 'host-application-failed',
+            }),
+            onSuccess: (delivery): ServerAdapterOutcome => {
+              if (delivery === undefined) {
+                return { _tag: 'FrameHandled', deliveries: emptyServerFrameDeliveries(), inbound }
+              }
+              const projected = projectServerFrameDelivery(config, connections, delivery)
+              if (Result.isFailure(projected)) {
+                return { _tag: 'FrameDeliveryRefused', failure: projected.failure, inbound }
+              }
+              return { _tag: 'FrameHandled', deliveries: projected.success, inbound }
+            },
+          })
+        })
     }
-    const snapshot = decodeSnapshotInputs({
-      authoritativeInput,
-      replicatedWorldInput: inputs.replicatedWorld,
-      resolver: config.blockStateForRead,
-      world: connection.world,
-    })
-    if (Result.isFailure(snapshot)) {
-      return Result.fail(snapshot.failure)
-    }
-    const interest = interestFor(config, connection)
-    if (Result.isFailure(interest)) {
-      return Result.fail(refusal('invalid-server-interest'))
-    }
-    return projectSnapshotForConnection({
-      connection,
-      interest: interest.success,
-      locations: inputs.locations,
-      snapshot: snapshot.success,
-    })
   }
 
-  const projectDelta = (
-    deltaInput: unknown,
-  ): Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure> => {
-    const delta = decodeReplicatedDelta({ input: deltaInput, resolver: config.blockStatesForChange })
-    if (Result.isFailure(delta)) {
-      return Result.fail(delta.failure)
-    }
-    return projectDeltaForConnections(config, delta.success, connections)
-  }
-
-  return Object.freeze({ connect, disconnect, projectDelta, projectSnapshot, receiveFrame, resume })
+  return Object.freeze({ handle })
 }

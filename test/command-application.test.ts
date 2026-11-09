@@ -222,15 +222,6 @@ describe('applyAuthoritativeCommand', () => {
         reason: 'no-matching-c2-intent-payload',
       },
       {
-        command: {
-          ...commandHeader('attack'),
-          _tag: 'EntityAttackCommand',
-          entityId: EntityId.make('entity-1'),
-          heldSlot: 0,
-        },
-        reason: 'intent-payload-does-not-preserve-command',
-      },
-      {
         command: { ...commandHeader('ignite-tnt'), _tag: 'IgniteTntCommand', at: { x: 0, y: 64, z: 0 } },
         reason: 'no-matching-c2-intent-payload',
       },
@@ -384,7 +375,7 @@ describe('applyAuthoritativeCommand', () => {
     expect(harness.mutations).toBe(0)
   })
 
-  it('keeps entity attacks unsupported and rejects client-selected damage fields', async () => {
+  it('maps entity attacks to server-owned melee intents and rejects client-selected damage fields', async () => {
     const harness = makeHarness()
     const attack: AuthoritativeCommand = {
       ...commandHeader('attack-intent'),
@@ -393,11 +384,10 @@ describe('applyAuthoritativeCommand', () => {
       heldSlot: 4,
     }
     const apply = applyAuthoritativeCommand(harness.session, harness.services, intentContext(harness.identity))
-    const unsupported = await Effect.runPromise(apply(attack))
-    expect(unsupported).toMatchObject({
-      _tag: 'CommandUnsupported',
-      commandTag: 'EntityAttackCommand',
-      reason: 'intent-payload-does-not-preserve-command',
+    const applied = await Effect.runPromise(apply(attack))
+    expect(applied).toMatchObject({
+      _tag: 'AuthoritativeCommandIntentAccepted',
+      intent: { payload: { _tag: 'MeleeAttack', actor: alice } },
     })
 
     const clientSelectedEffects: ReadonlyArray<unknown> = [

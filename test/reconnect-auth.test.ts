@@ -6,9 +6,11 @@ import * as fc from 'fast-check'
 import { PlayerId } from '../src/domain/protocol/identifiers'
 import {
   RECONNECT_TOKEN_BYTES,
+  ReconnectAuthStoreContents,
   ReconnectToken,
+  ReconnectTokenDigest,
   ReconnectTokenInput,
-  createReconnectAuth as createReconnectAuthEffect,
+  createReconnectAuth as createReconnectAuthProduction,
   type ReconnectAuth,
   type ReconnectAuthCrypto,
   type ReconnectAuthStore,
@@ -21,7 +23,7 @@ import {
  * tests below meaningful.
  */
 const nodeCrypto: ReconnectAuthCrypto = {
-  hashHex: (token) => createHash('sha256').update(token).digest('hex'),
+  hashHex: (token) => ReconnectTokenDigest.make(createHash('sha256').update(token).digest('hex')),
   randomToken: () => ReconnectToken.make(randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url')),
   timingSafeEqualHex: (left, right) => {
     if (left.length !== right.length) {
@@ -31,13 +33,29 @@ const nodeCrypto: ReconnectAuthCrypto = {
   },
 }
 
+const hashToken = (token: string) => nodeCrypto.hashHex(ReconnectTokenInput.make(token))
+
 type ReconnectAuthClient = {
-  readonly has: ReconnectAuth['has']
+  readonly has: (player: string) => boolean
   readonly issue: (player: string) => Promise<string | undefined>
   readonly revoke: (player: PlayerId) => Promise<boolean>
   readonly rotate: (player: string, token: string) => Promise<string | undefined>
   readonly resume: (token: string) => Promise<{ readonly player: PlayerId; readonly token: string } | undefined>
 }
+
+const adaptReconnectAuth = (auth: ReconnectAuth) => ({
+  has: (player: string) => auth.has(PlayerId.make(player)),
+  issue: (player: string) => auth.issue(PlayerId.make(player)),
+  revoke: (player: PlayerId) => auth.revoke(player),
+  rotate: (player: string, token: string) => auth.rotate(PlayerId.make(player), ReconnectTokenInput.make(token)),
+  resume: (token: string) => auth.resume(ReconnectTokenInput.make(token)),
+})
+
+const createReconnectAuthEffect = (
+  crypto: ReconnectAuthCrypto,
+  store: ReconnectAuthStore,
+  options?: Parameters<typeof createReconnectAuthProduction>[2],
+) => Effect.map(createReconnectAuthProduction(crypto, store, options), adaptReconnectAuth)
 
 const createReconnectAuth = async (
   crypto: ReconnectAuthCrypto,
@@ -49,7 +67,7 @@ const createReconnectAuth = async (
     issue: (player) => Effect.runPromise(auth.issue(player)),
     revoke: (player) => Effect.runPromise(auth.revoke(player)),
     rotate: (player, token) => Effect.runPromise(auth.rotate(player, token)),
-    resume: (token) => Effect.runPromise(auth.resume(ReconnectTokenInput.make(token))),
+    resume: (token) => Effect.runPromise(auth.resume(token)),
   }
 }
 
@@ -60,8 +78,10 @@ const definedOrThrow = <Value>(value: Value | undefined): Value => {
   return value
 }
 
+const asStoreContents = (source: string): ReconnectAuthStoreContents => ReconnectAuthStoreContents.make(source)
+
 const inMemoryStore = (): ReconnectAuthStore & { readonly writes: string[] } => {
-  let contents: string | undefined = undefined
+  let contents: ReconnectAuthStoreContents | undefined = undefined
   const writes: string[] = []
   return {
     load: () => Effect.sync(() => contents),
@@ -122,7 +142,7 @@ describe('createReconnectAuth', () => {
   })
 
   it('restores a revoked token record when persistence fails', async () => {
-    let saved: string | undefined = undefined
+    let saved: ReconnectAuthStoreContents | undefined = undefined
     let failSave = false
     const store: ReconnectAuthStore = {
       load: () => Effect.succeed(saved),
@@ -167,9 +187,8 @@ describe('createReconnectAuth', () => {
     expect(second).toBeUndefined()
   })
 
-  it('rejects issuing for an empty player id', async () => {
-    const auth = await createReconnectAuth(nodeCrypto, inMemoryStore())
-    expect(await auth.issue('')).toBeUndefined()
+  it('rejects an empty player id before it reaches the auth API', () => {
+    expect(() => PlayerId.make('')).toThrow()
   })
 
   it('does not expose a player-only token reissue operation', async () => {
@@ -237,13 +256,13 @@ describe('createReconnectAuth', () => {
 
   it('resume rejects a token that matches more than one stored player', async () => {
     const token = 'A'.repeat(43)
-    const hash = nodeCrypto.hashHex(token)
+    const hash = hashToken(token)
     let writes = 0
     const store: ReconnectAuthStore = {
-      load: () => Effect.succeed(JSON.stringify({
+      load: () => Effect.succeed(asStoreContents(JSON.stringify({
         format: 2,
         players: { alice: { current: hash }, bob: { current: hash } },
-      })),
+      }))),
       save: () => {
         writes += 1
         return Effect.void
@@ -269,7 +288,7 @@ describe('createReconnectAuth', () => {
 
   it('does not return an identity or rotate the token when resume persistence fails', async () => {
     let allowSave = true
-    const contents: { value: string | undefined } = { value: undefined }
+    const contents: { value: ReconnectAuthStoreContents | undefined } = { value: undefined }
     const store: ReconnectAuthStore = {
       load: () => Effect.sync(() => contents.value),
       save: (next) => {
@@ -304,7 +323,7 @@ describe('createReconnectAuth', () => {
 
   it('restores the previous hash on a persistence failure during rotate', async () => {
     let allowSave = true
-    const contents: { value: string | undefined } = { value: undefined }
+    const contents: { value: ReconnectAuthStoreContents | undefined } = { value: undefined }
     const store: ReconnectAuthStore = {
       load: () => Effect.sync(() => contents.value),
       save: (next) => {
@@ -326,16 +345,16 @@ describe('createReconnectAuth', () => {
 
   it('rejects a legacy-format (v1) persisted file with an invalid hash', async () => {
     const store: ReconnectAuthStore = {
-      load: () => Effect.succeed(JSON.stringify({ format: 1, players: { alice: 'not-a-hash' } })),
+      load: () => Effect.succeed(asStoreContents(JSON.stringify({ format: 1, players: { alice: 'not-a-hash' } }))),
       save: () => Effect.void,
     }
     await expect(createReconnectAuth(nodeCrypto, store)).rejects.toThrow()
   })
 
   it('loads a legacy-format (v1) persisted file with a valid hash', async () => {
-    const hash = nodeCrypto.hashHex('seed-token')
+    const hash = hashToken('seed-token')
     const store: ReconnectAuthStore = {
-      load: () => Effect.succeed(JSON.stringify({ format: 1, players: { alice: hash } })),
+      load: () => Effect.succeed(asStoreContents(JSON.stringify({ format: 1, players: { alice: hash } }))),
       save: () => Effect.void,
     }
     const auth = await createReconnectAuth(nodeCrypto, store)
@@ -347,7 +366,7 @@ describe('createReconnectAuth', () => {
     const store: ReconnectAuthStore = {
       load: () =>
         Effect.succeed(
-          JSON.stringify({ format: 2, players: { alice: { current: nodeCrypto.hashHex('x'), extra: 'y' } } }),
+          asStoreContents(JSON.stringify({ format: 2, players: { alice: { current: hashToken('x'), extra: 'y' } } })),
         ),
       save: () => Effect.void,
     }
@@ -356,7 +375,7 @@ describe('createReconnectAuth', () => {
 
   it('rejects a current-format persisted file whose current hash is malformed', async () => {
     const store: ReconnectAuthStore = {
-      load: () => Effect.succeed(JSON.stringify({ format: 2, players: { alice: { current: 'not-a-hash' } } })),
+      load: () => Effect.succeed(asStoreContents(JSON.stringify({ format: 2, players: { alice: { current: 'not-a-hash' } } }))),
       save: () => Effect.void,
     }
     await expect(createReconnectAuth(nodeCrypto, store)).rejects.toThrow()
@@ -366,7 +385,7 @@ describe('createReconnectAuth', () => {
     const seedToken = randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url')
     const store: ReconnectAuthStore = {
       load: () =>
-        Effect.succeed(JSON.stringify({ format: 2, players: { alice: { current: nodeCrypto.hashHex(seedToken) } } })),
+        Effect.succeed(asStoreContents(JSON.stringify({ format: 2, players: { alice: { current: hashToken(seedToken) } } }))),
       save: () => Effect.void,
     }
     const auth = await createReconnectAuth(nodeCrypto, store)
@@ -380,12 +399,12 @@ describe('createReconnectAuth', () => {
     const store: ReconnectAuthStore = {
       load: () =>
         Effect.succeed(
-          JSON.stringify({
+          asStoreContents(JSON.stringify({
             format: 2,
             players: {
-              alice: { current: nodeCrypto.hashHex(currentToken), previous: nodeCrypto.hashHex(previousToken) },
+              alice: { current: hashToken(currentToken), previous: hashToken(previousToken) },
             },
-          }),
+          })),
         ),
       save: () => Effect.void,
     }
@@ -398,7 +417,7 @@ describe('createReconnectAuth', () => {
     const store: ReconnectAuthStore = {
       load: () =>
         Effect.succeed(
-          JSON.stringify({ format: 2, players: { alice: { current: nodeCrypto.hashHex('x'), previous: 'not-a-hash' } } }),
+          asStoreContents(JSON.stringify({ format: 2, players: { alice: { current: hashToken('x'), previous: 'not-a-hash' } } })),
         ),
       save: () => Effect.void,
     }
@@ -406,13 +425,13 @@ describe('createReconnectAuth', () => {
   })
 
   it('rejects a file that is not valid JSON', async () => {
-    const store: ReconnectAuthStore = { load: () => Effect.succeed('not json'), save: () => Effect.void }
+    const store: ReconnectAuthStore = { load: () => Effect.succeed(asStoreContents('not json')), save: () => Effect.void }
     await expect(createReconnectAuth(nodeCrypto, store)).rejects.toThrow()
   })
 
   it('rejects a file with an unknown format number', async () => {
     const store: ReconnectAuthStore = {
-      load: () => Effect.succeed(JSON.stringify({ format: 99, players: {} })),
+      load: () => Effect.succeed(asStoreContents(JSON.stringify({ format: 99, players: {} }))),
       save: () => Effect.void,
     }
     await expect(createReconnectAuth(nodeCrypto, store)).rejects.toThrow()
@@ -488,7 +507,7 @@ describe('createReconnectAuth', () => {
       yield* TestClock.adjust(Duration.hours(1))
       const token = randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url')
       const store: ReconnectAuthStore = {
-        load: () => Effect.succeed(JSON.stringify({ format: 1, players: { alice: nodeCrypto.hashHex(token) } })),
+        load: () => Effect.succeed(asStoreContents(JSON.stringify({ format: 1, players: { alice: hashToken(token) } }))),
         save: () => Effect.void,
       }
       const auth = yield* createReconnectAuthEffect(nodeCrypto, store, { tokenTtl: Duration.seconds(10) })
@@ -508,10 +527,10 @@ describe('createReconnectAuth', () => {
       const source = JSON.stringify({
         format: 2,
         players: {
-          alice: { current: nodeCrypto.hashHex(currentToken), previous: nodeCrypto.hashHex(previousToken) },
+              alice: { current: hashToken(currentToken), previous: hashToken(previousToken) },
         },
       })
-      const makeStore = (): ReconnectAuthStore => ({ load: () => Effect.succeed(source), save: () => Effect.void })
+      const makeStore = (): ReconnectAuthStore => ({ load: () => Effect.succeed(asStoreContents(source)), save: () => Effect.void })
       const options = { tokenTtl: Duration.seconds(10) }
       const currentAuth = yield* createReconnectAuthEffect(nodeCrypto, makeStore(), options)
       const previousAuth = yield* createReconnectAuthEffect(nodeCrypto, makeStore(), options)
@@ -604,7 +623,7 @@ describe('createReconnectAuth', () => {
   it.effect('keeps expired records when the cleanup save fails', () =>
     Effect.gen(function* () {
       let allowSave = true
-      const contents: { value: string | undefined } = { value: undefined }
+      const contents: { value: ReconnectAuthStoreContents | undefined } = { value: undefined }
       const store: ReconnectAuthStore = {
         load: () => Effect.sync(() => contents.value),
         save: (next) => {
@@ -648,7 +667,7 @@ describe('createReconnectAuth', () => {
 
   // This catches a format 3 parser that accepts malformed issue times, hash objects, or file envelopes.
   it('rejects format 3 entries with invalid issue times or extra fields', async () => {
-    const hash = nodeCrypto.hashHex('seed-token')
+    const hash = hashToken('seed-token')
     const malformedFiles = [
       JSON.stringify({ format: 3, players: { alice: { current: { hash, issuedAt: 'yesterday' } } } }),
       JSON.stringify({ format: 3, players: { alice: { current: { hash, issuedAt: 0, extra: true } } } }),
@@ -658,7 +677,7 @@ describe('createReconnectAuth', () => {
     ]
 
     await Promise.all(malformedFiles.map(async (source) => {
-      const store: ReconnectAuthStore = { load: () => Effect.succeed(source), save: () => Effect.void }
+      const store: ReconnectAuthStore = { load: () => Effect.succeed(asStoreContents(source)), save: () => Effect.void }
       await expect(createReconnectAuth(nodeCrypto, store)).rejects.toThrow()
     }))
   })

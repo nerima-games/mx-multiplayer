@@ -75,11 +75,11 @@ const ownerChange = (owner: string, state: unknown): ReplicatedOwnerChange => ({
 
 const blockPosition = (x: number, y = 64, z = 0): BlockPosition => Schema.decodeUnknownSync(BlockPositionSchema)({ x, y, z })
 
-const blockRead = (x: number, block: number, y = 64, z = 0): ReplicatedWorldSnapshot['blocks'][number] => ({
+const blockRead = (x: number, block: number, y = 64, z = 0, state = zeroBlockState): ReplicatedWorldSnapshot['blocks'][number] => ({
   dimension: 'overworld',
   position: blockPosition(x, y, z),
   reading: { _tag: 'Block', block: Schema.decodeUnknownSync(BlockIdSchema)(block) },
-  state: zeroBlockState,
+  state,
 })
 
 const blockChange = (x: number, after: number): ReplicatedWorldDeltaMessage['blockChanges'][number] => ({
@@ -972,6 +972,44 @@ describe('C4 snapshot transfer receiver', () => {
         },
       })
       expect(invalidReceiver.isReceiving).toBe(false)
+    }),
+  )
+
+  it.effect('preserves block state while splitting, transferring, and reconstructing a snapshot', () =>
+    Effect.sync(() => {
+      const owners = makeEmptyOwnerRegistry()
+      const state = Schema.decodeUnknownSync(EncodedBlockStateSchema)(16)
+      const snapshotWithState = replicatedSnapshot(20, [], [blockRead(3, 106, 64, 0, state)])
+      const frame = encodeTransferredSnapshotFrame(snapshotWithState, owners, 1024)
+      if (Result.isFailure(frame)) {
+        throw frame.failure
+      }
+      const bytes = asciiBytes(frame.success)
+      const transfer = 'snapshot-block-state-roundtrip'
+      const chunkBytes = Math.floor(bytes.length / 2)
+      const chunks = transferChunks(bytes, transfer, chunkBytes)
+      const receiver = makeTransferReceiver(transferLimits(bytes, chunkBytes))
+
+      expect(chunks.length).toBeGreaterThan(1)
+      expect(receiver.begin(transferStart(bytes, transfer, 20, chunkBytes), replicatedRevision(19)))
+        .toStrictEqual({ accepted: true })
+      for (const chunk of chunks) {
+        expect(receiver.append(chunk)).toStrictEqual({ accepted: true })
+      }
+      const completed = receiver.finish(transferEnd(transfer))
+      expect(completed.accepted).toBe(true)
+      if (!completed.accepted) {
+        throw new Error('stateful snapshot transfer did not complete')
+      }
+
+      const client = new AuthoritativeClientState()
+      const applied = client.applyTransfer(completed.completion, owners)
+      expect(applied.accepted).toBe(true)
+      const transferredBlock = client.world(overworld)?.blocks.values().next().value
+      expect(transferredBlock).toMatchObject({
+        reading: { _tag: 'Block', block: 106 },
+        state,
+      })
     }),
   )
 

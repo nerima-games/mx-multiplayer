@@ -21,11 +21,14 @@ import {
 import type { WorldWriteServices } from '../src/application/server/command-application.js'
 import {
   createServerAdapter,
-  type ServerAdapter,
   type ServerAdapterConfiguration,
+  type ServerInboundOutcome,
+  type ServerProjectionFailure,
   type ServerOwnerLocationIndex,
   type ServerOwnerLocationResolution,
   type ServerSnapshotProjectionInputs,
+  type TargetedDeltaDelivery,
+  type TargetedSnapshotDelivery,
 } from '../src/application/server/server-adapter.js'
 import { EntityId, PlayerId, WorldId, type AuthoritativeSnapshot } from '../src/domain/protocol.js'
 
@@ -177,7 +180,7 @@ const authoritativeSnapshot = (): AuthoritativeSnapshot => ({
   world: WORLD,
 })
 
-const makeAdapter = (): ServerAdapter => {
+const makeAdapter = () => {
   const session = new AuthoritativeSession((world) => world === WORLD ? 4 : undefined)
   session.restore(authoritativeSnapshot())
   const config: ServerAdapterConfiguration<never> = {
@@ -190,14 +193,67 @@ const makeAdapter = (): ServerAdapter => {
     }),
     commandServices: EMPTY_SERVICES,
     interestInputFor: () => ({ chunks: [{ dimension: 'overworld', x: 0, z: 0 }], ownerIds: [] }),
+    applyAcceptedInbound: () => Effect.succeed(undefined),
     ownerRegistry,
     reconnectAuth: { resume: () => Effect.succeed(undefined) },
     session,
   }
-  return createServerAdapter(config)
+  const adapter = createServerAdapter(config)
+  return {
+    ...adapter,
+    connect: (player: typeof PLAYER, world: typeof WORLD) => {
+      const outcome = Effect.runSync(adapter.handle({ _tag: 'Connect', player, world }))
+      if (outcome._tag !== 'Connected' && outcome._tag !== 'ConnectionRejected') {
+        throw new Error('unexpected connection outcome')
+      }
+      return outcome
+    },
+    projectSnapshot: (
+      connection: unknown,
+      authoritative: unknown,
+      inputs: ServerSnapshotProjectionInputs,
+    ): Result.Result<TargetedSnapshotDelivery, ServerProjectionFailure> => {
+      const outcome = Effect.runSync(adapter.handle({
+        _tag: 'PublishWorldState',
+        delivery: { snapshots: [{ world: WORLD, authoritative, inputs }] },
+      }))
+      if (outcome._tag === 'WorldStateRefused') {
+        return Result.fail(outcome.failure)
+      }
+      if (outcome._tag !== 'WorldStatePublished') {
+        throw new Error('unexpected snapshot outcome')
+      }
+      const targeted = outcome.deliveries.snapshots.find((delivery) => delivery.connection === connection)
+      return targeted === undefined
+        ? Result.fail({ _tag: 'ServerProjectionRefused', reason: 'unknown-connection' })
+        : Result.succeed(targeted)
+    },
+    projectDelta: (delta: unknown): Result.Result<ReadonlyArray<TargetedDeltaDelivery>, ServerProjectionFailure> => {
+      const outcome = Effect.runSync(adapter.handle({ _tag: 'PublishWorldState', delivery: { delta } }))
+      if (outcome._tag === 'WorldStateRefused') {
+        return Result.fail(outcome.failure)
+      }
+      if (outcome._tag !== 'WorldStatePublished') {
+        throw new Error('unexpected delta outcome')
+      }
+      return Result.succeed(outcome.deliveries.deltas)
+    },
+    receiveFrame: (connection: unknown, frame: unknown) => Effect.map(
+      adapter.handle({ _tag: 'ReceiveFrame', connection, frame }),
+      (outcome): ServerInboundOutcome => {
+        if (outcome._tag === 'FrameHandled') {
+          return outcome.inbound
+        }
+        if (outcome._tag === 'FrameDeliveryRefused' && outcome.inbound !== undefined) {
+          return outcome.inbound
+        }
+        throw new Error('unexpected receive outcome')
+      },
+    ),
+  }
 }
 
-const connect = (adapter: ServerAdapter) => {
+const connect = (adapter: ReturnType<typeof makeAdapter>) => {
   const result = adapter.connect(PLAYER, WORLD)
   if (result._tag !== 'Connected') {
     throw new Error('expected connection admission')
@@ -219,7 +275,21 @@ const replicatedSnapshot = (
 const snapshotInputs = (
   replicatedWorld: unknown,
   locations: ServerOwnerLocationIndex = new Map(),
-): ServerSnapshotProjectionInputs => ({ locations, replicatedWorld })
+): ServerSnapshotProjectionInputs => ({
+  locations,
+  playerDimensions: new Map(),
+  replicatedWorld,
+  worldSnapshot: {
+    _tag: 'WorldSnapshot',
+    blocks: [],
+    levers: [],
+    players: [],
+    poweredRails: [],
+    revision: 4,
+    seed: 42,
+    world: WORLD,
+  },
+})
 
 const emptyDelta = () => ({
   _tag: 'ReplicatedWorldDelta' as const,

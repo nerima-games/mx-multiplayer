@@ -12,8 +12,8 @@ const FIXED_SEED = 59
 const ONE_FRAME = 1
 const VALID_TAG_COUNT = 16
 const MALFORMED_COUNT = 1
-const ACCEPTED_COMMAND_COUNT = 3
-const UNSUPPORTED_COMMAND_COUNT = 7
+const ACCEPTED_COMMAND_COUNT = 4
+const UNSUPPORTED_COMMAND_COUNT = 6
 const SPOOFED_COMMAND_COUNT = 10
 
 describe('entities and combat scenarios', () => {
@@ -38,7 +38,7 @@ describe('entities and combat scenarios', () => {
     )).toHaveLength(MALFORMED_COUNT)
   })
 
-  // Fails if an accepted C2 intent is rejected or an unsupported G5 command loses its typed reason.
+  // Fails if an accepted C2 intent is rejected or an unsupported command loses its typed reason.
   it('records supported and unsupported entities command authority outcomes', async () => {
     const runtime = await createScenarioRuntime(entitiesAuthorityScenario, { seed: FIXED_SEED })
     const result = await runtime.run(ONE_FRAME)
@@ -47,7 +47,7 @@ describe('entities and combat scenarios', () => {
     expect(result.verdict.status).toBe('pass')
     expect(result.wireLog.map(({ tag, outcome, result: decision }) => [tag, outcome, decision])).toStrictEqual([
       ['WorldTimeWeatherCommand', 'rejected', 'authority marked command unsupported: no-matching-c2-intent-payload'],
-      ['EntityAttackCommand', 'rejected', 'authority marked command unsupported: intent-payload-does-not-preserve-command'],
+      ['EntityAttackCommand', 'accepted', 'authority accepted canonical intent; world state was not applied'],
       ['EntityPickupCommand', 'rejected', 'authority marked command unsupported: no-matching-c2-intent-payload'],
       ['BowUseCommand', 'accepted', 'authority accepted canonical intent; world state was not applied'],
       ['IgniteTntCommand', 'rejected', 'authority marked command unsupported: no-matching-c2-intent-payload'],
