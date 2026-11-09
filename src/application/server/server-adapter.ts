@@ -1,6 +1,7 @@
 import {
   type AreaOfInterest,
   type AreaOfInterestInputError,
+  type ChunkInterest,
   areaOfInterestIncludesLocation,
   areaOfInterestIncludesOwner,
   createAreaOfInterest,
@@ -301,7 +302,7 @@ export type ServerSnapshotProjectionInputs = Readonly<{
 }>
 
 export type ServerLoadedInterestInput = Readonly<{
-  chunks: ReadonlyArray<Readonly<{ dimension: typeof ServerDimensionSchema.Type; x: number; z: number }>>
+  chunks: ReadonlyArray<ChunkInterest>
   ownerIds: ReadonlyArray<ReplicatedOwnerId>
 }>
 

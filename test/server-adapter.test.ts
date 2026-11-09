@@ -16,6 +16,7 @@ import { makeReplicatedOwnerId } from '@nerima-games/mc-sim'
 import type { WorldBlockRead } from '@nerima-games/mc-sim'
 import {
   AuthoritativeSession,
+  ChunkCoordinateSchema,
   CommandId,
   EntityId,
   PlayerId,
@@ -147,9 +148,19 @@ const snapshotInputs = (
   ]),
 ): ServerSnapshotProjectionInputs => ({ locations, playerDimensions, replicatedWorld, worldSnapshot: worldSnapshotInput })
 
+const interestChunk = (
+  dimension: 'overworld' | 'nether' | 'end',
+  x: number,
+  z = 0,
+): ServerLoadedInterestInput['chunks'][number] => ({
+  dimension,
+  x: Schema.decodeUnknownSync(ChunkCoordinateSchema)(x),
+  z: Schema.decodeUnknownSync(ChunkCoordinateSchema)(z),
+})
+
 const makeAdapter = (
   interestInputFor: ServerAdapterConfiguration<never>['interestInputFor'] = (_identity, player) => ({
-    chunks: [{ dimension: player === PLAYER_A ? 'nether' : 'overworld', x: 0, z: 0 }],
+    chunks: [interestChunk(player === PLAYER_A ? 'nether' : 'overworld', 0)],
     ownerIds: [],
   }),
   blockStatesForChange: ServerAdapterConfiguration<never>['blockStatesForChange'] = () => Result.succeed({
@@ -794,7 +805,7 @@ describe('createServerAdapter', () => {
 
   it('projects WorldSnapshot player position and facing to each recipient AOI', () => {
     const adapter = makeAdapter((_identity, player) => ({
-      chunks: [{ dimension: 'overworld', x: player === PLAYER_A ? 0 : 1, z: 0 }],
+      chunks: [interestChunk('overworld', player === PLAYER_A ? 0 : 1)],
       ownerIds: [],
     }))
     const connectionA = connected(adapter, PLAYER_A)
@@ -848,7 +859,7 @@ describe('createServerAdapter', () => {
     const applied: Array<ServerAcceptedInboundOutcome> = []
     const adapter = makeAdapter(
       (_identity, player) => ({
-        chunks: [{ dimension: 'overworld', x: player === PLAYER_A ? 0 : 1, z: 0 }],
+        chunks: [interestChunk('overworld', player === PLAYER_A ? 0 : 1)],
         ownerIds: [],
       }),
       undefined,
@@ -956,7 +967,7 @@ describe('createServerAdapter', () => {
 
   it('delivers only changed blocks from chunks declared loaded in the recipient interest', () => {
     const adapter = makeAdapter(() => ({
-      chunks: [{ dimension: 'overworld', x: 0, z: 0 }],
+      chunks: [interestChunk('overworld', 0)],
       ownerIds: [],
     }))
     const connection = connected(adapter, PLAYER_B)
@@ -998,9 +1009,9 @@ describe('createServerAdapter', () => {
   })
 
   it('tracks a successful AOI shrink and requests resync after a later expansion', () => {
-    let chunks = [
-      { dimension: 'overworld' as const, x: 0, z: 0 },
-      { dimension: 'nether' as const, x: 0, z: 0 },
+    let chunks: Array<ServerLoadedInterestInput['chunks'][number]> = [
+      interestChunk('overworld', 0),
+      interestChunk('nether', 0),
     ]
     const adapter = makeAdapter(() => ({ chunks, ownerIds: [] }))
     const connectionB = connected(adapter, PLAYER_B)
@@ -1013,11 +1024,11 @@ describe('createServerAdapter', () => {
       world: KERNEL_WORLD,
     }
 
-    chunks = [{ dimension: 'nether', x: 0, z: 0 }]
+    chunks = [interestChunk('nether', 0)]
     expect(Result.getOrThrow(adapter.projectDelta(emptyDelta))).toHaveLength(0)
     chunks = [
-      { dimension: 'overworld', x: 0, z: 0 },
-      { dimension: 'nether', x: 0, z: 0 },
+      interestChunk('overworld', 0),
+      interestChunk('nether', 0),
     ]
     const expanded = Result.getOrThrow(adapter.projectDelta(emptyDelta))
 

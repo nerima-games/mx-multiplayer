@@ -380,7 +380,7 @@ type CommandIntentContext = {
 type ServerOwnerLocationIndex = ReadonlyMap<ReplicatedOwnerId, unknown>
 
 type ServerLoadedInterestInput = {
-  chunks: ReadonlyArray<{ dimension: 'overworld' | 'nether' | 'end'; x: number; z: number }>
+  chunks: ReadonlyArray<ChunkInterest>
   ownerIds: ReadonlyArray<ReplicatedOwnerId>
 }
 
@@ -415,7 +415,8 @@ commands use a burst of 20 and refill at 10/second, movement a burst of 40 and r
 messages a burst of 80 and refill at 25/second. Chat overages return `warn`, command/movement/other overages
 return `drop`, and global overages return `disconnect`; the transport host applies the requested action.
 
-`interestInputFor` returns `{ chunks, ownerIds }`. Its chunks must already be loaded and visible to that player;
+`interestInputFor` returns `{ chunks, ownerIds }`. Each `ChunkInterest` uses `ChunkCoordinate` values decoded with
+`ChunkCoordinateSchema`. Chunks must already be loaded and visible to that player;
 the adapter validates their dimensions and integer coordinates before using them. Delta projection keeps changes
 only in those chunks. `commandContextFor` and `commandServices` connect accepted commands to host-owned gameplay
 rules and world writes. `blockStatesForChange` resolves the before/after state pair for a delta, and

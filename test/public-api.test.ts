@@ -133,6 +133,7 @@ describe('public API surface', () => {
         // Per-recipient scale projection
         'AreaOfInterestInputError',
         'chunkInterestKeyForBlockChange',
+        'ChunkCoordinateSchema',
         'createAreaOfInterest',
         'isAreaOfInterest',
         'areaOfInterestIncludesOwner',

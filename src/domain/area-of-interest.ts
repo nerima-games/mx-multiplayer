@@ -4,7 +4,7 @@ import { type ReplicatedBlockChange, type ReplicatedOwnerId, ReplicatedOwnerIdSc
 import { BlockPos } from './protocol/identifiers.js'
 import { DIMENSIONS } from '@nerima-games/mc-kernel'
 
-const ChunkCoordinateSchema: Schema.brand<typeof Schema.Number, 'ChunkCoordinate'> = Schema.Number.pipe(
+export const ChunkCoordinateSchema: Schema.brand<typeof Schema.Number, 'ChunkCoordinate'> = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThanOrEqualTo(-Number.MAX_SAFE_INTEGER)),
   Schema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),

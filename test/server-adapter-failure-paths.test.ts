@@ -9,6 +9,7 @@ import {
   WorldRevisionSchema,
 } from '@nerima-games/mc-kernel'
 import { makeReplicatedOwnerId } from '@nerima-games/mc-sim'
+import { ChunkCoordinateSchema } from '../src/domain/area-of-interest.js'
 import { Effect, Result, Schema } from 'effect'
 import { afterEach, beforeEach, vi } from 'vitest'
 import { AuthoritativeSession } from '../src/domain/authoritative-session.js'
@@ -192,7 +193,14 @@ const makeAdapter = () => {
       targetTick: Schema.decodeUnknownSync(SimulationTickSchema)(0),
     }),
     commandServices: EMPTY_SERVICES,
-    interestInputFor: () => ({ chunks: [{ dimension: 'overworld', x: 0, z: 0 }], ownerIds: [] }),
+    interestInputFor: () => ({
+      chunks: [{
+        dimension: 'overworld',
+        x: Schema.decodeUnknownSync(ChunkCoordinateSchema)(0),
+        z: Schema.decodeUnknownSync(ChunkCoordinateSchema)(0),
+      }],
+      ownerIds: [],
+    }),
     applyAcceptedInbound: () => Effect.succeed(undefined),
     ownerRegistry,
     reconnectAuth: { resume: () => Effect.succeed(undefined) },
