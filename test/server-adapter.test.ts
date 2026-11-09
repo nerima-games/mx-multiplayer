@@ -1,7 +1,10 @@
 /* eslint-disable no-magic-numbers -- The small fixtures identify exact protocol, rate, and AOI boundaries. */
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
+import * as Clock from 'effect/Clock'
+import * as Deferred from 'effect/Deferred'
 import { Effect, Result, Schema } from 'effect'
+import * as Fiber from 'effect/Fiber'
 import {
   BlockIdSchema,
   BlockPositionSchema,
@@ -35,6 +38,7 @@ import {
   type AuthoritativeSnapshot,
   type ReplicatedOwnerRegistryLimits,
   type ServerAdapterConfiguration,
+  type ServerFrameDeliveryInput,
   type ServerOwnerLocationIndex,
   type ServerOwnerLocationResolution,
   type ReplicatedWorldSnapshot,
@@ -45,6 +49,7 @@ import type { WorldWriteServices } from '../src/application/server/command-appli
 import { ReconnectToken } from '../src/application/server/reconnect-auth.js'
 
 const WORLD = WorldId.make('adapter-world')
+const OTHER_WORLD = WorldId.make('other-adapter-world')
 const KERNEL_WORLD = Schema.decodeUnknownSync(KernelWorldIdSchema)('adapter-world')
 const PLAYER_A = PlayerId.make('alice')
 const PLAYER_B = PlayerId.make('bob')
@@ -142,7 +147,7 @@ const snapshotInputs = (
   replicatedWorld: unknown = replicatedSnapshot(),
   locations: ServerOwnerLocationIndex = emptyLocations,
   worldSnapshotInput: unknown = worldSnapshot(),
-  playerDimensions: ReadonlyMap<typeof PLAYER_A, 'overworld' | 'nether'> = new Map([
+  playerDimensions: ServerSnapshotProjectionInputs['playerDimensions'] = new Map([
     [PLAYER_A, 'overworld'],
     [PLAYER_B, 'overworld'],
   ]),
@@ -831,6 +836,163 @@ describe('createServerAdapter', () => {
     expect(snapshotB?.snapshot.worldSnapshot.players).toEqual([playerSnapshot(PLAYER_B, 17, 'Bob')])
   })
 
+  it('projects only matching-world snapshots and filters players from other worlds before location lookup', () => {
+    const adapter = makeAdapter()
+    const connectionB = connected(adapter, PLAYER_B)
+    const foreignAdmission = Effect.runSync(adapter.handle({
+      _tag: 'Connect',
+      player: PlayerId.make('charlie'),
+      world: OTHER_WORLD,
+    }))
+    expect(foreignAdmission._tag).toBe('Connected')
+    if (foreignAdmission._tag !== 'Connected') {
+      throw new Error('expected other-world connection admission')
+    }
+
+    const foreignPlayer = {
+      ...playerSnapshot(PlayerId.make('charlie'), 1, 'Charlie'),
+      world: OTHER_WORLD,
+    }
+    const outcome = Effect.runSync(adapter.handle({
+      _tag: 'PublishWorldState',
+      delivery: {
+        snapshots: [{
+          world: WORLD,
+          authoritative: authoritativeSnapshot(),
+          inputs: snapshotInputs(replicatedSnapshot(), emptyLocations, worldSnapshot([foreignPlayer])),
+        }],
+      },
+    }))
+
+    expect(outcome._tag).toBe('WorldStatePublished')
+    if (outcome._tag !== 'WorldStatePublished') {
+      throw new Error('expected world state publication')
+    }
+    expect(outcome.deliveries.snapshots).toHaveLength(1)
+    expect(outcome.deliveries.snapshots[0]?.connection).toBe(connectionB)
+    expect(outcome.deliveries.snapshots[0]?.snapshot.worldSnapshot.players).toEqual([])
+  })
+
+  it('returns typed failures for malformed world routing and player location data', () => {
+    const adapter = makeAdapter()
+    connected(adapter, PLAYER_B)
+    const inputs = snapshotInputs()
+    const invalidWorldInput = { world: WORLD, authoritative: authoritativeSnapshot(), inputs }
+    Object.defineProperty(invalidWorldInput, 'world', { value: '' })
+    const invalidWorld = Effect.runSync(adapter.handle({
+      _tag: 'PublishWorldState',
+      delivery: {
+        snapshots: [invalidWorldInput],
+      },
+    }))
+    expect(invalidWorld).toMatchObject({
+      _tag: 'WorldStateRefused',
+      failure: { _tag: 'ServerProjectionRefused', reason: 'invalid-authoritative-snapshot' },
+    })
+
+    const invalidSnapshotDelivery: ServerFrameDeliveryInput = { snapshots: [] }
+    Object.defineProperty(invalidSnapshotDelivery, 'snapshots', { value: { malformed: true } })
+    const invalidSnapshotList = Effect.runSync(adapter.handle({
+      _tag: 'PublishWorldState',
+      delivery: invalidSnapshotDelivery,
+    }))
+    expect(invalidSnapshotList).toMatchObject({
+      _tag: 'WorldStateRefused',
+      failure: { _tag: 'ServerProjectionRefused', reason: 'invalid-authoritative-snapshot' },
+    })
+
+    const validPlayer = playerSnapshot(PLAYER_A, 1, 'Alice')
+    const invalidDimensions: ServerSnapshotProjectionInputs['playerDimensions'] = new Map([[PLAYER_A, 'overworld']])
+    Reflect.apply(Map.prototype.set, invalidDimensions, [PLAYER_A, 'moon'])
+    const cases = [
+      {
+        id: 'missing dimension',
+        player: validPlayer,
+        playerDimensions: new Map(),
+      },
+      {
+        id: 'invalid dimension',
+        player: validPlayer,
+        playerDimensions: invalidDimensions,
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const result = Effect.runSync(adapter.handle({
+        _tag: 'PublishWorldState',
+        delivery: {
+          snapshots: [{
+            world: WORLD,
+            authoritative: authoritativeSnapshot(),
+            inputs: snapshotInputs(
+              replicatedSnapshot(),
+              emptyLocations,
+              worldSnapshot([testCase.player]),
+              testCase.playerDimensions,
+            ),
+          }],
+        },
+      }))
+      expect(result, testCase.id).toMatchObject({
+        _tag: 'WorldStateRefused',
+        failure: { _tag: 'ServerProjectionRefused', reason: 'invalid-player-location' },
+      })
+    }
+  })
+
+  it.effect('does not apply an accepted frame after the connection is removed during rate limiting', () =>
+    Effect.gen(function* () {
+      const applied: Array<ServerAcceptedInboundOutcome> = []
+      const adapter = makeAdapter(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (_connection, inbound) => {
+          applied.push(inbound)
+          return Effect.succeed(undefined)
+        },
+      )
+      const connection = connected(adapter, PLAYER_A)
+      const frame = makeFrame({ _tag: 'Chat', player: PLAYER_A, text: 'hello' })
+      const clockRead = yield* Deferred.make<void>()
+      const releaseClock = yield* Deferred.make<number>()
+      const clock: Clock.Clock = {
+        currentTimeMillisUnsafe: () => 1,
+        currentTimeMillis: Effect.andThen(
+          Deferred.succeed(clockRead, undefined),
+          Deferred.await(releaseClock),
+        ),
+        currentTimeNanosUnsafe: () => 1n,
+        currentTimeNanos: Effect.succeed(1n),
+        monotonicTimeNanosUnsafe: () => 1n,
+        monotonicTimeNanos: Effect.succeed(1n),
+        sleep: () => Effect.succeed(undefined),
+      }
+      const receiving = yield* Effect.provideService(
+        adapter.handle({ _tag: 'ReceiveFrame', connection, frame }),
+        Clock.Clock,
+        clock,
+      ).pipe(Effect.forkChild)
+
+      yield* Deferred.await(clockRead)
+      expect(yield* adapter.handle({ _tag: 'Disconnect', connection })).toEqual({
+        _tag: 'Disconnected',
+        disconnected: true,
+      })
+      yield* Deferred.succeed(releaseClock, 1)
+
+      const outcome = yield* Fiber.join(receiving)
+      expect(outcome).toMatchObject({
+        _tag: 'FrameHandled',
+        inbound: { _tag: 'ChatReceived' },
+        deliveries: { snapshots: [], deltas: [] },
+      })
+      expect(applied).toEqual([])
+    }),
+  )
+
   it('handles a command through recipient delivery while enforcing privacy, AOI, capacity, and resume tokens', async () => {
     const attackState = {
       snapshots: [{
@@ -921,6 +1083,79 @@ describe('createServerAdapter', () => {
     expect(await Effect.runPromise(capacityAdapter.handle({ _tag: 'Resume', token: undefined }))).toEqual({
       _tag: 'ResumeRejected',
       reason: 'missing-token',
+    })
+  })
+
+  it('returns typed host application and delivery failures without exposing exceptions', async () => {
+    const frame = makeFrame({ _tag: 'Chat', player: PLAYER_A, text: 'hello' })
+    const syncThrowAdapter = makeAdapter(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        throw new Error('secret from sync host callback')
+      },
+    )
+    const syncThrowConnection = connected(syncThrowAdapter, PLAYER_A)
+    const syncThrow = await Effect.runPromise(syncThrowAdapter.handle({
+      _tag: 'ReceiveFrame',
+      connection: syncThrowConnection,
+      frame,
+    }))
+    expect(syncThrow).toMatchObject({
+      _tag: 'FrameApplicationFailed',
+      inbound: { _tag: 'ChatReceived' },
+      reason: 'host-application-failed',
+    })
+    expect(JSON.stringify(syncThrow)).not.toContain('secret')
+
+    const effectFailureAdapter = makeAdapter(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => Effect.fail(new Error('secret from failed host effect')),
+    )
+    const effectFailureConnection = connected(effectFailureAdapter, PLAYER_A)
+    const effectFailure = await Effect.runPromise(effectFailureAdapter.handle({
+      _tag: 'ReceiveFrame',
+      connection: effectFailureConnection,
+      frame,
+    }))
+    expect(effectFailure).toMatchObject({
+      _tag: 'FrameApplicationFailed',
+      inbound: { _tag: 'ChatReceived' },
+      reason: 'host-application-failed',
+    })
+    expect(JSON.stringify(effectFailure)).not.toContain('secret')
+
+    const invalidDeliveryAdapter = makeAdapter(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => Effect.succeed({
+        snapshots: [{
+          world: WORLD,
+          authoritative: authoritativeSnapshot(),
+          inputs: snapshotInputs(replicatedSnapshot(), emptyLocations, null),
+        }],
+      }),
+    )
+    const invalidDeliveryConnection = connected(invalidDeliveryAdapter, PLAYER_A)
+    const invalidDelivery = await Effect.runPromise(invalidDeliveryAdapter.handle({
+      _tag: 'ReceiveFrame',
+      connection: invalidDeliveryConnection,
+      frame,
+    }))
+    expect(invalidDelivery._tag).toBe('FrameDeliveryRefused')
+    expect(invalidDelivery).toMatchObject({
+      failure: { _tag: 'ServerProjectionRefused', reason: 'invalid-world-snapshot' },
+      inbound: { _tag: 'ChatReceived' },
     })
   })
 

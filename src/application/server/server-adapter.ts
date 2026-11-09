@@ -634,17 +634,15 @@ const playerLocationIsVisible = (
   interest: AreaOfInterest,
   dimension: typeof ServerDimensionSchema.Type,
   player: WorldSnapshotValue['players'][number],
-): Result.Result<boolean, ServerProjectionRefusal> => {
-  const visible = areaOfInterestIncludesLocation(interest, dimension, {
-    x: Math.floor(player.at.x),
-    y: Math.floor(player.at.y),
-    z: Math.floor(player.at.z),
-  })
-  if (Result.isFailure(visible)) {
-    return Result.fail(refusal('invalid-player-location'))
-  }
-  return Result.succeed(visible.success)
-}
+): Result.Result<boolean, ServerProjectionRefusal> =>
+  Result.mapError(
+    areaOfInterestIncludesLocation(interest, dimension, {
+      x: Math.floor(player.at.x),
+      y: Math.floor(player.at.y),
+      z: Math.floor(player.at.z),
+    }),
+    () => refusal('invalid-player-location'),
+  )
 
 const worldSnapshotPlayerIsVisible = (
   request: Readonly<{
