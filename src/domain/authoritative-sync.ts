@@ -971,11 +971,13 @@ export const ReplicatedBlockKeySchema: Schema.brand<typeof Schema.String, 'Repli
 )
 export type ReplicatedBlockKey = typeof ReplicatedBlockKeySchema.Type
 
+type AuthoritativeWorldBlockRead = ReplicatedWorldSnapshot['blocks'][number]
+
 export type AuthoritativeWorldState = Readonly<{
   readonly world: WorldId
   readonly revision: WorldRevision
   readonly owners: ReadonlyMap<ReplicatedOwnerChange['owner'], ReplicatedOwnerChange['state']>
-  readonly blocks: ReadonlyMap<ReplicatedBlockKey, ReplicatedWorldSnapshot['blocks'][number]>
+  readonly blocks: ReadonlyMap<ReplicatedBlockKey, AuthoritativeWorldBlockRead>
 }>
 
 export type AuthoritativeClientSnapshot = ReadonlyMap<WorldId, AuthoritativeWorldState>
@@ -1002,7 +1004,6 @@ export type ClientSyncTransition =
       readonly state: AuthoritativeClientSnapshot
     }
 
-type AuthoritativeWorldBlockRead = ReplicatedWorldSnapshot['blocks'][number]
 type AuthoritativeWorldBlockChange = ReplicatedWorldDeltaMessage['blockChanges'][number]
 
 const blockAddress = (block: Pick<AuthoritativeWorldBlockRead, 'dimension' | 'position'>): ReplicatedBlockKey =>
