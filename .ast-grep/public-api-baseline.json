@@ -36,7 +36,7 @@
     "text": "string"
   },
   {
-    "count": 14,
+    "count": 12,
     "file": "src/application/server/reconnect-auth.ts",
     "ruleId": "no-raw-exported-type-field",
     "text": "string"
