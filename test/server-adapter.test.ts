@@ -1238,6 +1238,25 @@ describe('createServerAdapter', () => {
         .toBe(Schema.decodeUnknownSync(EncodedBlockStateSchema)(0))
     }
 
+    expect(defaultAdapter.projectDelta(statefulDelta)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ServerProjectionRefused', reason: 'invalid-block-state' },
+    })
+
+    const unknownBlockId = Schema.decodeUnknownSync(BlockIdSchema)(65_535)
+    const unknownBlockDelta = {
+      ...omittedStateDelta,
+      blockChanges: [{
+        ...omittedStateDelta.blockChanges[0],
+        after: unknownBlockId,
+        before: unknownBlockId,
+      }],
+    }
+    expect(defaultAdapter.projectDelta(unknownBlockDelta)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ServerProjectionRefused', reason: 'invalid-block-state' },
+    })
+
     const incompatibleStateDelta = {
       ...statefulDelta,
       blockChanges: [{ ...statefulDelta.blockChanges[0], state: { waterlogged: true } }],

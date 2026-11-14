@@ -766,13 +766,16 @@ const enrichBlockStateChange = <Behaviour>(
     dimension: request.change.dimension,
     position: request.change.position,
   }
+  const afterState = encodeAfterBlockState(request.change)
+  if (Result.isFailure(afterState)) {
+    return Result.fail(refusal('invalid-block-state'))
+  }
   const states = resolveBlockStatePair(request, change)
   if (Result.isFailure(states)) {
     return Result.fail(states.failure)
   }
-  const afterState = encodeAfterBlockState(request.change)
   // Keep the resolved world state consistent with the state emitted by mc-sim.
-  if (Result.isFailure(afterState) || afterState.success !== states.success.afterState) {
+  if (afterState.success !== states.success.afterState) {
     return Result.fail(refusal('invalid-block-state'))
   }
   return Result.succeed({ ...change, ...states.success, afterState: afterState.success })
