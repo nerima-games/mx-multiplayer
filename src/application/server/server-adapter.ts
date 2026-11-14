@@ -11,6 +11,8 @@ import {
   AuthoritativeResyncRequest,
   AuthoritativeSnapshot,
   type AuthoritativeSnapshot as AuthoritativeSnapshotValue,
+  type BlockBreak,
+  type BlockPlace,
   type NetworkMessage as NetworkMessageValue,
   type PlayerId as PlayerIdValue,
   type PlayerMove as PlayerMoveValue,
@@ -254,6 +256,8 @@ export type ServerInboundOutcome =
     }>
   | Readonly<{ _tag: 'ChatReceived'; message: Extract<NetworkMessageValue, { readonly _tag: 'Chat' }> }>
   | Readonly<{ _tag: 'MovementReceived'; message: PlayerMoveValue }>
+  | Readonly<{ _tag: 'BlockPlaceReceived'; message: BlockPlace }>
+  | Readonly<{ _tag: 'BlockBreakReceived'; message: BlockBreak }>
   | Readonly<{ _tag: 'ResyncRequested'; request: typeof AuthoritativeResyncRequest.Type }>
   | Readonly<{ _tag: 'CommandApplied'; command: typeof AuthoritativeCommand.Type; outcome: CommandApplicationOutcome }>
   | Readonly<{ _tag: 'CommandApplicationRefused'; failure: CommandApplicationFailure }>
@@ -314,7 +318,9 @@ export type ServerLoadedInterestInput = Readonly<{
 export type ServerPlayerDimensionIndex = ReadonlyMap<PlayerIdValue, typeof ServerDimensionSchema.Type>
 
 export type ServerAcceptedInboundOutcome =
-  | Extract<ServerInboundOutcome, { readonly _tag: 'ChatReceived' | 'MovementReceived' | 'ResyncRequested' }>
+  | Extract<ServerInboundOutcome, {
+      readonly _tag: 'ChatReceived' | 'MovementReceived' | 'ResyncRequested' | 'BlockPlaceReceived' | 'BlockBreakReceived'
+    }>
   | Readonly<{
       _tag: 'CommandApplied'
       command: typeof AuthoritativeCommand.Type
@@ -1052,6 +1058,19 @@ const dispatchMovement = (connection: ConnectionRecord, message: PlayerMoveValue
   return { _tag: 'MovementReceived', message }
 }
 
+const dispatchBlockEdit = (connection: ConnectionRecord, message: BlockPlace | BlockBreak): ServerInboundOutcome => {
+  if (message.player !== connection.player) {
+    return { _tag: 'ConnectionRefused', reason: 'sender-mismatch' }
+  }
+  if (message.world === undefined || message.world !== connection.world) {
+    return { _tag: 'ConnectionRefused', reason: 'wrong-world' }
+  }
+  if (message._tag === 'BlockPlace') {
+    return { _tag: 'BlockPlaceReceived', message }
+  }
+  return { _tag: 'BlockBreakReceived', message }
+}
+
 const dispatchResync = (
   connection: ConnectionRecord,
   request: typeof AuthoritativeResyncRequest.Type,
@@ -1082,6 +1101,9 @@ const dispatchInboundMessage = <Behaviour>(
       return dispatchChat(connection, message)
     case 'PlayerMove':
       return dispatchMovement(connection, message)
+    case 'BlockPlace':
+    case 'BlockBreak':
+      return dispatchBlockEdit(connection, message)
     case 'AuthoritativeResyncRequest':
       return dispatchResync(connection, message)
     default:
@@ -1364,6 +1386,7 @@ const isAcceptedInboundOutcome = (outcome: ServerInboundOutcome): outcome is Ser
     return outcome.outcome._tag === 'AuthoritativeCommandIntentAccepted'
   }
   return outcome._tag === 'ChatReceived' || outcome._tag === 'MovementReceived' || outcome._tag === 'ResyncRequested'
+    || outcome._tag === 'BlockPlaceReceived' || outcome._tag === 'BlockBreakReceived'
 }
 
 export const createServerAdapter = <Behaviour>(

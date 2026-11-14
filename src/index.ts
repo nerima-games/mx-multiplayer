@@ -53,6 +53,7 @@ export * from './domain/rate-limit.js'
 export * from './domain/snapshot-interpolation.js'
 export * from './domain/survival-authority.js'
 export * from './domain/transport.js'
+export type { MultiplayerWorldWriter } from './domain/world-write.js'
 
 // --- Stages: this repository's contribution to the frame ---------------------
 //

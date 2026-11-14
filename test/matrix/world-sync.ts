@@ -223,12 +223,7 @@ export const worldSync: Record<
   ),
   BlockPlace: row(
     a1(),
-    gap(
-      'Placement carries client-claimed player, block, and position values, but no authoritative application path applies or explicitly rejects this tag.',
-      'src/domain/protocol.ts:179-203',
-      'src/domain/protocol.ts:1109-1154',
-      'src/stages/registration.ts:450-452',
-    ),
+    covered(reference('test/server-adapter.test.ts', 1468, 'delivers authenticated block edits to the host once and distributes their delta')),
     gap(
       'Placement changes shared block state, but no multi-client projection test applies BlockPlace and compares the resulting views.',
       'src/domain/protocol.ts:179-203',
@@ -246,21 +241,11 @@ export const worldSync: Record<
       'src/domain/chunk-delta.ts:368-388',
       'src/stages/registration.ts:450-452',
     ),
-    gap(
-      'A client can claim another player, a different world, or a tampered block position, but no server route authenticates this legacy claim.',
-      'src/domain/protocol.ts:179-203',
-      'src/domain/protocol.ts:1109-1154',
-      'src/stages/registration.ts:450-452',
-    ),
+    covered(reference('test/server-adapter.test.ts', 1577, 'property-checks block edit sender and world authentication before host application')),
   ),
   BlockBreak: row(
     a1(reference('test/codec.test.ts', 2591, 'rejects a non-integral block coordinate')),
-    gap(
-      'Breaking carries a client-claimed player and position, but no authoritative application path applies or explicitly rejects this tag.',
-      'src/domain/protocol.ts:205-214',
-      'src/domain/protocol.ts:1109-1154',
-      'src/stages/registration.ts:450-452',
-    ),
+    covered(reference('test/server-adapter.test.ts', 1468, 'delivers authenticated block edits to the host once and distributes their delta')),
     gap(
       'Breaking changes shared block state, but no multi-client projection test applies BlockBreak and compares the resulting views.',
       'src/domain/protocol.ts:205-214',
@@ -278,12 +263,7 @@ export const worldSync: Record<
       'src/domain/chunk-delta.ts:368-388',
       'src/stages/registration.ts:450-452',
     ),
-    gap(
-      'A client can claim another player or tamper with the break position, but no server route authenticates this legacy claim.',
-      'src/domain/protocol.ts:205-214',
-      'src/domain/protocol.ts:1109-1154',
-      'src/stages/registration.ts:450-452',
-    ),
+    covered(reference('test/server-adapter.test.ts', 1577, 'property-checks block edit sender and world authentication before host application')),
   ),
   Chat: row(
     a1(),

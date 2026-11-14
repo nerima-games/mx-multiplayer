@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
-import { BlockPositionSchema, EncodedBlockStateSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { BLOCK_STATE_MAX_USED_BITS, BLOCK_STATE_TYPES, BlockPositionSchema, EncodedBlockStateSchema, WorldRevisionSchema, blockIdOf, blockStateDefinitionOf, encodeBlockState, type BlockStateDefinition, type EncodedBlockState } from '@nerima-games/mc-kernel'
 import { makeReplicatedOwnerId, type ReplicatedOwnerRegistration } from '@nerima-games/mc-sim'
 import { Effect, Result, Option, Schema } from 'effect'
 import {
@@ -3074,6 +3074,82 @@ describe('malformed input', () => {
 
 
 describe('codec properties', () => {
+  it.effect('preserves stateful BlockPlace and BlockBreak frames across encode and decode', () =>
+    Effect.sync(() => {
+      const valuesForSlots = (slots: BlockStateDefinition['slots'], values: ReadonlyArray<unknown>) => {
+        const stateValues: Record<string, unknown> = {}
+        const connections: Record<string, unknown> = {}
+        slots.forEach((slot, index) => {
+          if (slot.property === 'connections') {
+            connections[slot.direction] = values[index]
+          } else {
+            stateValues[slot.property] = values[index]
+          }
+        })
+        if (Object.keys(connections).length > 0) {
+          stateValues['connections'] = connections
+        }
+        return stateValues
+      }
+      const assertBlockEditRoundTrip = (
+        block: string,
+        state: EncodedBlockState,
+        position: { x: number; y: number; z: number },
+      ) => {
+        const messages = [
+          { _tag: 'BlockPlace', at: position, block, state, player: alice, world: overworld },
+          { _tag: 'BlockBreak', at: position, player: alice, world: overworld },
+        ]
+        for (const message of messages) {
+          const roundTripFrame = Result.getOrThrow(encodeFrame(message, EMPTY_OWNER_REGISTRY))
+          const decoded = Result.getOrThrow(decodeFrame(roundTripFrame, EMPTY_OWNER_REGISTRY))
+          expect(decoded).toStrictEqual(message)
+        }
+      }
+      expect(BLOCK_STATE_TYPES.length).toBeGreaterThan(0)
+      let largestState = 0
+      for (const block of BLOCK_STATE_TYPES) {
+        const blockId = Option.getOrThrow(blockIdOf(block))
+        const definition = Result.getOrThrow(blockStateDefinitionOf(blockId))
+        const defaultState = Result.getOrThrow(encodeBlockState(blockId, definition.defaultState))
+        const maximumValues = definition.slots.map((slot) => slot.values[slot.values.length - 1])
+        const maximumState = Result.getOrThrow(encodeBlockState(blockId, valuesForSlots(definition.slots, maximumValues)))
+        expect(maximumState, block).not.toBe(defaultState)
+        assertBlockEditRoundTrip(block, maximumState, { x: -1, y: 64, z: 3 })
+        largestState = Math.max(largestState, maximumState)
+        for (const [index, slot] of definition.slots.entries()) {
+          for (const value of slot.values) {
+            const values = definition.slots.map((entry) => entry.values[0])
+            values[index] = value
+            const state = Result.getOrThrow(encodeBlockState(blockId, valuesForSlots(definition.slots, values)))
+            assertBlockEditRoundTrip(block, state, { x: -1, y: 64, z: 3 })
+          }
+        }
+      }
+      expect(Math.floor(Math.log2(largestState)) + 1).toBe(BLOCK_STATE_MAX_USED_BITS)
+      const blockStateArbitrary = fc.constantFrom(...BLOCK_STATE_TYPES).chain((block) => {
+        const blockId = Option.getOrThrow(blockIdOf(block))
+        const definition = Result.getOrThrow(blockStateDefinitionOf(blockId))
+        return fc.tuple(...definition.slots.map((slot) => fc.constantFrom<unknown>(...slot.values))).map((values) => ({
+          block,
+          state: Result.getOrThrow(encodeBlockState(blockId, valuesForSlots(definition.slots, values))),
+        }))
+      })
+      fc.assert(fc.property(
+        fc.record({
+          x: fc.integer(),
+          y: fc.integer(),
+          z: fc.integer(),
+        }),
+        blockStateArbitrary,
+        (at, { block, state }) => {
+          const position = { x: at.x, y: at.y, z: at.z }
+          assertBlockEditRoundTrip(block, state, position)
+        },
+      ))
+    }),
+  )
+
   it.effect('returns a typed result without throwing for arbitrary byte sequences', () =>
     Effect.sync(() => {
       fc.assert(fc.property(fc.uint8Array(), (bytes) => {
