@@ -3074,6 +3074,40 @@ describe('malformed input', () => {
 
 
 describe('codec properties', () => {
+  it.effect('preserves stateful BlockPlace and BlockBreak frames across encode and decode', () =>
+    Effect.sync(() => {
+      fc.assert(fc.property(
+        fc.record({
+          x: fc.integer(),
+          y: fc.integer(),
+          z: fc.integer(),
+        }),
+        fc.integer({ min: 1, max: 63 }),
+        (at, state) => {
+          const position = { x: at.x, y: at.y, z: at.z }
+          const messages = [
+            { _tag: 'BlockPlace', at: position, block: 'door', state, player: alice, world: overworld },
+            { _tag: 'BlockBreak', at: position, player: alice, world: overworld },
+          ]
+          for (const message of messages) {
+            const roundTripFrame = encodeFrame(message, EMPTY_OWNER_REGISTRY)
+            expect(Result.isSuccess(roundTripFrame)).toBe(true)
+            if (Result.isFailure(roundTripFrame)) {
+              return false
+            }
+            const decoded = decodeFrame(roundTripFrame.success, EMPTY_OWNER_REGISTRY)
+            expect(Result.isSuccess(decoded)).toBe(true)
+            if (Result.isFailure(decoded)) {
+              return false
+            }
+            expect(decoded.success).toStrictEqual(message)
+          }
+          return true
+        },
+      ))
+    }),
+  )
+
   it.effect('returns a typed result without throwing for arbitrary byte sequences', () =>
     Effect.sync(() => {
       fc.assert(fc.property(fc.uint8Array(), (bytes) => {

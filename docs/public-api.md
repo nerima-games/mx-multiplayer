@@ -347,8 +347,8 @@ Persisted formats 1 and 2 are earlier reconnect-auth file layouts. When the impl
 ### 8.3 Server integration adapter
 
 `createServerAdapter` is exported from the package root. The adapter exposes one `handle` entry for connection
-admission, disconnect, resume, inbound frames, and world-state publication. An inbound frame is inspected,
-rate-limited, and applied to the authoritative session before the configured host callback runs. That callback
+admission, disconnect, resume, inbound frames, and world-state publication. An inbound frame is inspected and
+rate-limited; authoritative commands are applied to the session before the configured host callback runs. That callback
 can apply accepted gameplay intents and return snapshots or deltas; the same entry projects them per recipient.
 The host supplies command services, owner locations, loaded chunk interest, block-state lookups, a reconnect-auth
 resume operation, an accepted-input handler, and an `AuthoritativeSession`:
@@ -356,6 +356,7 @@ resume operation, an accepted-input handler, and an `AuthoritativeSession`:
 ```ts
 const MAX_SERVER_CONNECTIONS: number // 20 concurrent connections per adapter
 const createServerAdapter: <Behaviour>(config: ServerAdapterConfiguration<Behaviour>) => ServerAdapter
+type MultiplayerWorldWriter = WorldWritePort['Service']
 
 import { EncodedBlockStateSchema } from '@nerima-games/mc-kernel'
 
@@ -409,7 +410,7 @@ type ServerAdapter = {
 ```
 
 `handle({ _tag: 'ReceiveFrame', ... })` checks the protocol version and frame bounds before decoding JSON, then returns typed rejection,
-rate-limit, chat, movement, resync, or command outcomes. Global limits use 25 frames/second, 1,089,775 bytes/second,
+rate-limit, chat, movement, block-edit, resync, or command outcomes. Global limits use 25 frames/second, 1,089,775 bytes/second,
 an 80-frame burst, and a 54,489-byte maximum delta. Message-kind limits allow 3 chat messages per 10 seconds;
 commands use a burst of 20 and refill at 10/second, movement a burst of 40 and refill at 20/second, and other
 messages a burst of 80 and refill at 25/second. Chat overages return `warn`, command/movement/other overages
@@ -425,10 +426,22 @@ rules and world writes. `blockStatesForChange` resolves the before/after state p
 `ServerOwnerLocationIndex` and per-player dimensions, validates each location, and filters players by recipient AOI.
 
 The `ReceiveFrame` path invokes `applyAcceptedInbound` only after protocol validation, both rate limiters, and
-authoritative command application. Its returned state is projected into targeted deliveries before `handle`
+message-specific admission checks. Authoritative commands are applied before the callback.
+Its returned state is projected into targeted deliveries before `handle`
 returns. `PublishWorldState` uses that same projection path for periodic state updates. Private inventories and
 vitals are filtered to their owner; `WorldSnapshot.players` are filtered using their positions, dimensions, and
 the recipient's loaded chunks. Every delivery carries its recipient connection handle.
+
+`BlockPlace` and `BlockBreak` reach `applyAcceptedInbound` as `BlockPlaceReceived` and `BlockBreakReceived`,
+each carrying the original `message`. The adapter first checks that `player` and `world` match the connection;
+an omitted `world` is rejected. These variants are part of both `ServerInboundOutcome` and
+`ServerAcceptedInboundOutcome`, so hosts with exhaustive switches must handle them. The host checks gameplay
+rules, builds a `WorldWriteBatch`, and calls `WorldWritePort.applyBatch` through WCC. If gameplay rules or the
+world write reject the edit, the host sends `BlockMutationRejected` to the sender. `MultiplayerWorldWriter`
+is the public type alias for `WorldWritePort['Service']` required by mc-compose's
+[C7 generic world-write contract](https://github.com/nerima-games/mc-compose/blob/main/docs/execution/contracts.md#L961);
+it adds no runtime writer implementation. The wire schema and `PROTOCOL_VERSION`
+remain unchanged at version 11.
 
 `EntityAttackCommand` becomes an ID-only `MeleeAttack` intent. `applyAcceptedInbound` receives both that intent
 and the validated original command, including the requested entity and held slot. A host can call

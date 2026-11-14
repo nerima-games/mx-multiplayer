@@ -36,7 +36,7 @@ import {
   type ServerLoadedInterestInput,
   type TargetedDeltaDelivery,
   type TargetedSnapshotDelivery,
-  type AuthoritativeSnapshot,
+  type AuthoritativeSnapshot, type BlockBreak, type BlockPlace,
   type ReplicatedOwnerRegistryLimits,
   type ServerAdapterConfiguration,
   type ServerFrameDeliveryInput,
@@ -730,8 +730,8 @@ describe('createServerAdapter', () => {
         at: { x: 0, y: 64, z: 0 },
         block: 'stone',
         player: PLAYER_A,
-        state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0),
-      }))).toMatchObject({ _tag: 'ConnectionRefused', reason: 'unsupported-message' })
+        state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0), world: WORLD,
+      }))).toEqual({ _tag: 'BlockPlaceReceived', message: { _tag: 'BlockPlace', at: { x: 0, y: 64, z: 0 }, block: 'stone', player: PLAYER_A, state: 0, world: WORLD } })
 
       const invalidContextAdapter = makeAdapter(
         undefined,
@@ -1462,5 +1462,189 @@ describe('createServerAdapter', () => {
     }
     expect(adapter.disconnect(first)).toBe(true)
     expect(adapter.connect(PLAYER_B, WORLD)._tag).toBe('Connected')
+  })
+  for (const tag of ['BlockPlace', 'BlockBreak'] as const) {
+    describe(tag, () => {
+      it('delivers authenticated block edits to the host once and distributes their delta', async () => {
+        const message: BlockPlace | BlockBreak = tag === 'BlockPlace'
+          ? {
+              _tag: tag,
+              at: { x: 1, y: 64, z: 0 },
+              block: 'door',
+              player: PLAYER_A,
+              state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(16),
+              world: WORLD,
+            }
+          : { _tag: tag, at: { x: 1, y: 64, z: 0 }, player: PLAYER_A, world: WORLD }
+        const expectedInbound = { _tag: tag === 'BlockPlace' ? 'BlockPlaceReceived' : 'BlockBreakReceived', message }
+
+        const applied: Array<{ connection: unknown; inbound: ServerAcceptedInboundOutcome }> = []
+        const adapter = makeAdapter(
+          () => ({ chunks: [interestChunk('overworld', 0)], ownerIds: [] }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (connection, inbound) => {
+            applied.push({ connection, inbound })
+            return Effect.succeed({
+              delta: {
+                _tag: 'ReplicatedWorldDelta',
+                blockChanges: [{
+                  after: tag === 'BlockPlace' ? BLOCK_ID : AIR_BLOCK_ID,
+                  before: tag === 'BlockPlace' ? AIR_BLOCK_ID : BLOCK_ID,
+                  dimension: 'overworld',
+                  position: Schema.decodeUnknownSync(BlockPositionSchema)({ x: 1, y: 64, z: 0 }),
+                }],
+                changes: [],
+                revision: Schema.decodeUnknownSync(WorldRevisionSchema)(5),
+                world: KERNEL_WORLD,
+              },
+            })
+          },
+        )
+        const sender = connected(adapter, PLAYER_A)
+        const recipient = connected(adapter, PLAYER_B)
+        Result.getOrThrow(adapter.projectSnapshot(sender, authoritativeSnapshot(), snapshotInputs()))
+        Result.getOrThrow(adapter.projectSnapshot(recipient, authoritativeSnapshot(), snapshotInputs()))
+        const outcome = await Effect.runPromise(adapter.handle({
+          _tag: 'ReceiveFrame', connection: sender, frame: makeFrame(message),
+        }))
+        expect(applied).toEqual([{ connection: sender, inbound: expectedInbound }])
+        expect(outcome).toMatchObject({ _tag: 'FrameHandled', inbound: expectedInbound })
+        if (outcome._tag !== 'FrameHandled') {
+          throw new Error('expected block edit and host delta delivery')
+        }
+        expect(outcome.deliveries.snapshots).toEqual([])
+        expect(outcome.deliveries.deltas.map((delivery) => delivery.connection)).toEqual([sender, recipient])
+        for (const delivery of outcome.deliveries.deltas) {
+          expect(delivery._tag).toBe('TargetedDelta')
+          expect(delivery.outcome).toMatchObject({
+            _tag: 'ProjectedDelta',
+            message: { revision: 5, world: KERNEL_WORLD, blockChanges: [{ position: { x: 1, y: 64, z: 0 } }] },
+          })
+        }
+      })
+
+      for (const testCase of [
+        { id: 'sender-mismatch', player: PLAYER_B, world: WORLD, reason: 'sender-mismatch' },
+        { id: 'wrong-world', player: PLAYER_A, world: OTHER_WORLD, reason: 'wrong-world' },
+        { id: 'missing-world', player: PLAYER_A, reason: 'wrong-world' },
+      ] as const) {
+        it(`refuses ${tag} ${testCase.id} before invoking the host`, async () => {
+          const applied: Array<ServerAcceptedInboundOutcome> = []
+          const adapter = makeAdapter(undefined, undefined, undefined, undefined, undefined, (_connection, inbound) => {
+            applied.push(inbound)
+            return Effect.succeed(undefined)
+          })
+          const connection = connected(adapter, PLAYER_A)
+          const identity = 'world' in testCase
+            ? { player: testCase.player, world: testCase.world }
+            : { player: testCase.player }
+          const message = tag === 'BlockPlace'
+            ? { _tag: tag, at: { x: 1, y: 64, z: 0 }, block: 'stone', state: 0, ...identity }
+            : { _tag: tag, at: { x: 1, y: 64, z: 0 }, ...identity }
+          expect(await Effect.runPromise(adapter.handle({
+            _tag: 'ReceiveFrame', connection, frame: makeFrame(message),
+          }))).toEqual({
+            _tag: 'FrameHandled',
+            inbound: { _tag: 'ConnectionRefused', reason: testCase.reason },
+            deliveries: { snapshots: [], deltas: [] },
+          })
+          expect(applied).toEqual([])
+        })
+      }
+
+      it(`reports a host application failure for ${tag}`, async () => {
+        const applied: Array<ServerAcceptedInboundOutcome> = []
+        const adapter = makeAdapter(undefined, undefined, undefined, undefined, undefined, (_connection, inbound) => {
+          applied.push(inbound)
+          return Effect.fail('application-failed')
+        })
+        const connection = connected(adapter, PLAYER_A)
+        const message = tag === 'BlockPlace'
+          ? { _tag: tag, at: { x: 1, y: 64, z: 0 }, block: 'stone', state: 0, player: PLAYER_A, world: WORLD }
+          : { _tag: tag, at: { x: 1, y: 64, z: 0 }, player: PLAYER_A, world: WORLD }
+        const expectedInbound = { _tag: tag === 'BlockPlace' ? 'BlockPlaceReceived' : 'BlockBreakReceived', message }
+        expect(await Effect.runPromise(adapter.handle({
+          _tag: 'ReceiveFrame', connection, frame: makeFrame(message),
+        }))).toEqual({ _tag: 'FrameApplicationFailed', inbound: expectedInbound, reason: 'host-application-failed' })
+        expect(applied).toEqual([expectedInbound])
+      })
+    })
+  }
+
+  it('property-checks block edit sender and world authentication before host application', async () => {
+    await fc.assert(fc.asyncProperty(
+      fc.constantFrom('BlockPlace', 'BlockBreak'),
+      fc.record({ x: fc.integer(), y: fc.integer(), z: fc.integer() }),
+      fc.boolean(),
+      fc.constantFrom('matching', 'other', 'missing'),
+      async (tag, at, matchingPlayer, worldCase) => {
+        const applied: Array<ServerAcceptedInboundOutcome> = []
+        const adapter = makeAdapter(undefined, undefined, undefined, undefined, undefined, (_connection, inbound) => {
+          applied.push(inbound)
+          return Effect.succeed(undefined)
+        })
+        const connection = connected(adapter, PLAYER_A)
+        const world = worldCase === 'missing' ? {} : { world: worldCase === 'matching' ? WORLD : OTHER_WORLD }
+        const identity = { player: matchingPlayer ? PLAYER_A : PLAYER_B, ...world }
+        const message = tag === 'BlockPlace'
+          ? { _tag: tag, at, block: 'stone', state: 0, ...identity }
+          : { _tag: tag, at, ...identity }
+        const outcome = await Effect.runPromise(adapter.handle({
+          _tag: 'ReceiveFrame', connection, frame: makeFrame(message),
+        }))
+        const expectedInbound = matchingPlayer && worldCase === 'matching'
+          ? { _tag: tag === 'BlockPlace' ? 'BlockPlaceReceived' : 'BlockBreakReceived', message }
+          : { _tag: 'ConnectionRefused', reason: matchingPlayer ? 'wrong-world' : 'sender-mismatch' }
+        expect(outcome).toEqual({
+          _tag: 'FrameHandled', inbound: expectedInbound, deliveries: { snapshots: [], deltas: [] },
+        })
+        expect(applied).toEqual(matchingPlayer && worldCase === 'matching' ? [expectedInbound] : [])
+      },
+    ))
+  })
+
+  it('rejects BlockPlace with an invalid known block state before invoking the host', async () => {
+    const applied: Array<ServerAcceptedInboundOutcome> = []
+    const adapter = makeAdapter(undefined, undefined, undefined, undefined, undefined, (_connection, inbound) => {
+      applied.push(inbound)
+      return Effect.succeed(undefined)
+    })
+    const connection = connected(adapter, PLAYER_A)
+    const frame = JSON.stringify({
+      protocolVersion: 11,
+      message: { _tag: 'BlockPlace', at: { x: 0, y: 64, z: 0 }, block: 'stone', state: 1, player: PLAYER_A, world: WORLD },
+    })
+    expect(Result.isFailure(decodeFrame(frame, ownerRegistry))).toBe(true)
+    expect(await Effect.runPromise(adapter.handle({ _tag: 'ReceiveFrame', connection, frame }))).toMatchObject({
+      _tag: 'FrameHandled', inbound: { _tag: 'FrameRejected', inspection: { reason: 'malformed-frame' } },
+      deliveries: { snapshots: [], deltas: [] },
+    })
+    expect(applied).toEqual([])
+  })
+
+  it('refuses server-only replicated frames without invoking the host', async () => {
+    const applied: Array<ServerAcceptedInboundOutcome> = []
+    const adapter = makeAdapter(undefined, undefined, undefined, undefined, undefined, (_connection, inbound) => {
+      applied.push(inbound)
+      return Effect.succeed(undefined)
+    })
+    const connection = connected(adapter, PLAYER_A)
+    const frame = makeFrame({
+      _tag: 'ReplicatedWorldDelta',
+      blockChanges: [],
+      changes: [],
+      revision: Schema.decodeUnknownSync(WorldRevisionSchema)(5),
+      world: KERNEL_WORLD,
+    })
+    expect(Result.isSuccess(decodeFrame(frame, ownerRegistry))).toBe(true)
+    expect(await Effect.runPromise(adapter.handle({ _tag: 'ReceiveFrame', connection, frame }))).toEqual({
+      _tag: 'FrameHandled',
+      inbound: { _tag: 'ConnectionRefused', reason: 'unsupported-message' },
+      deliveries: { snapshots: [], deltas: [] },
+    })
+    expect(applied).toEqual([])
   })
 })

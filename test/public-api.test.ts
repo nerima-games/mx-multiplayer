@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { expectTypeOf } from 'vitest'
 import { Effect } from 'effect'
 import type { Intent } from '@nerima-games/mc-sim'
+import type { WorldWritePort } from '@nerima-games/mc-kernel'
 import * as multiplayer from '../src/index'
 import { decodeFrame, encodeFrame } from '../src/domain/codec'
 import { MESSAGE_TAGS, PROTOCOL_VERSION } from '../src/domain/protocol'
@@ -34,6 +35,7 @@ import type {
   HungerResult,
   InboundFrameInspection,
   NonNegativeSafeInteger,
+  MultiplayerWorldWriter,
   PositiveSafeInteger,
   RateLimitConfigurationErrorReason,
   RateLimitExceededReason,
@@ -91,6 +93,7 @@ type NewPublicTypes = {
   limitFailure: ConnectionRateLimitFailure
   limiter: ConnectionRateLimiter
   nonNegativeSafeInteger: NonNegativeSafeInteger
+  multiplayerWorldWriter: MultiplayerWorldWriter
   positiveSafeInteger: PositiveSafeInteger
   projectionErrorReason: DeltaProjectionErrorReason
   projectionOutcome: DeltaProjectionOutcome
@@ -298,6 +301,8 @@ describe('public API surface', () => {
     Effect.sync(() => {
       expectTypeOf<NewPublicTypes>().toBeObject()
       expectTypeOf<keyof ServerAdapter>().toEqualTypeOf<'handle'>()
+      expectTypeOf<MultiplayerWorldWriter>().toExtend<WorldWritePort['Service']>()
+      expectTypeOf<WorldWritePort['Service']>().toExtend<MultiplayerWorldWriter>()
       expectTypeOf<Extract<HungerResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
       expectTypeOf<Extract<SurvivalCommandResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
     }),
