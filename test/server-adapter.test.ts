@@ -28,6 +28,7 @@ import {
   ReplicatedOwnerRegistryLimitsSchema,
   WorldId,
   createServerAdapter,
+  decodeFrame,
   encodeFrame,
   type ServerAcceptedInboundOutcome,
   type ServerInboundOutcome,
@@ -169,7 +170,7 @@ const makeAdapter = (
     ownerIds: [],
   }),
   blockStatesForChange: ServerAdapterConfiguration<never>['blockStatesForChange'] = () => Result.succeed({
-    afterState: Schema.decodeUnknownSync(EncodedBlockStateSchema)(16),
+    afterState: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0),
     beforeState: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0),
   }),
   blockStateForRead: ServerAdapterConfiguration<never>['blockStateForRead'] = () =>
@@ -1165,8 +1166,11 @@ describe('createServerAdapter', () => {
     })
   })
 
-  it('accepts ID-only deltas, enriches state-only changes, and targets the recipient AOI', () => {
-    const adapter = makeAdapter()
+  it('preserves simulation block states, defaults omissions, and targets the recipient AOI', () => {
+    const adapter = makeAdapter(undefined, () => Result.succeed({
+      afterState: Schema.decodeUnknownSync(EncodedBlockStateSchema)(16),
+      beforeState: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0),
+    }))
     const connectionA = connected(adapter, PLAYER_A)
     const connectionB = connected(adapter, PLAYER_B)
     const snapshot = authoritativeSnapshot()
@@ -1174,27 +1178,32 @@ describe('createServerAdapter', () => {
     expect(Result.isSuccess(adapter.projectSnapshot(connectionA, snapshot, snapshotInputs(c4WorldSnapshot)))).toBe(true)
     expect(Result.isSuccess(adapter.projectSnapshot(connectionB, snapshot, snapshotInputs(c4WorldSnapshot)))).toBe(true)
 
-    const stateOnlyDelta = {
+    const doorState = { facing: 'north', half: 'lower', hinge: 'left', open: true, powered: false }
+    const statefulDelta = {
       _tag: 'ReplicatedWorldDelta',
       blockChanges: [{
         after: BLOCK_ID,
         before: BLOCK_ID,
         dimension: 'overworld',
         position: Schema.decodeUnknownSync(BlockPositionSchema)({ x: 0, y: 64, z: 0 }),
+        state: doorState,
       }],
       changes: [],
       revision: Schema.decodeUnknownSync(WorldRevisionSchema)(5),
       world: KERNEL_WORLD,
     }
-    expect(stateOnlyDelta.blockChanges[0]).not.toHaveProperty('beforeState')
-    expect(stateOnlyDelta.blockChanges[0]).not.toHaveProperty('afterState')
-    const deliveries = Result.getOrThrow(adapter.projectDelta(stateOnlyDelta))
+    expect(statefulDelta.blockChanges[0]).toHaveProperty('state', doorState)
+    expect(statefulDelta.blockChanges[0]).not.toHaveProperty('beforeState')
+    expect(statefulDelta.blockChanges[0]).not.toHaveProperty('afterState')
+    const deliveries = Result.getOrThrow(adapter.projectDelta(statefulDelta))
 
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]?.connection).toBe(connectionB)
     const outcome = deliveries[0]?.outcome
     expect(outcome?._tag).toBe('ProjectedDelta')
     if (outcome?._tag === 'ProjectedDelta') {
+      const wire = Result.getOrThrow(encodeFrame(outcome.message, ownerRegistry))
+      expect(Result.getOrThrow(decodeFrame(wire, ownerRegistry))).toStrictEqual(outcome.message)
       expect(outcome.message.blockChanges).toHaveLength(1)
       expect(outcome.message.blockChanges[0]).toMatchObject({
         after: BLOCK_ID,
@@ -1204,6 +1213,39 @@ describe('createServerAdapter', () => {
       })
     }
     expect(deliveries.some((delivery) => delivery.connection === connectionA)).toBe(false)
+
+    const defaultAdapter = makeAdapter()
+    const defaultConnection = connected(defaultAdapter, PLAYER_B)
+    expect(Result.isSuccess(defaultAdapter.projectSnapshot(
+      defaultConnection,
+      authoritativeSnapshot(),
+      snapshotInputs(replicatedSnapshot()),
+    ))).toBe(true)
+    const omittedStateDelta = {
+      ...statefulDelta,
+      blockChanges: [{
+        after: BLOCK_ID,
+        before: BLOCK_ID,
+        dimension: 'overworld',
+        position: Schema.decodeUnknownSync(BlockPositionSchema)({ x: 0, y: 64, z: 0 }),
+      }],
+    }
+    const defaultDeliveries = Result.getOrThrow(defaultAdapter.projectDelta(omittedStateDelta))
+    const defaultOutcome = defaultDeliveries[0]?.outcome
+    expect(defaultOutcome?._tag).toBe('ProjectedDelta')
+    if (defaultOutcome?._tag === 'ProjectedDelta') {
+      expect(defaultOutcome.message.blockChanges[0]?.afterState)
+        .toBe(Schema.decodeUnknownSync(EncodedBlockStateSchema)(0))
+    }
+
+    const incompatibleStateDelta = {
+      ...statefulDelta,
+      blockChanges: [{ ...statefulDelta.blockChanges[0], state: { waterlogged: true } }],
+    }
+    expect(adapter.projectDelta(incompatibleStateDelta)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ServerProjectionRefused', reason: 'invalid-block-state' },
+    })
   })
 
   it('delivers only changed blocks from chunks declared loaded in the recipient interest', () => {
@@ -1278,7 +1320,7 @@ describe('createServerAdapter', () => {
     expect(expanded[0]?.outcome).toMatchObject({ _tag: 'ResyncRequired', reason: 'interest-expanded' })
   })
 
-  it('refuses missing or block-incompatible authoritative state instead of defaulting', () => {
+  it('refuses missing before state and state incompatible with its block ID', () => {
     const adapter = makeAdapter(undefined, () => Result.fail('state missing'))
     const stateOnlyDelta = {
       _tag: 'ReplicatedWorldDelta',

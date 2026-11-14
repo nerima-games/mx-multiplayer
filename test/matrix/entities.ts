@@ -20,7 +20,7 @@ const entitiesAuthority = reference(
 )
 const meleeThroughU6b = reference(
   'test/server-adapter.test.ts',
-  1002,
+  1003,
   'handles a command through recipient delivery while enforcing privacy, AOI, capacity, and resume tokens',
 )
 const entitiesUnauthorized = reference(

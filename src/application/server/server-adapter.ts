@@ -31,11 +31,14 @@ import {
 import {
   BlockIdSchema,
   BlockPositionSchema,
+  BlockStateValuesSchema,
   DIMENSIONS,
   EncodedBlockStateSchema,
   WorldIdSchema as KernelWorldIdSchema,
   WorldRevisionSchema,
   decodeBlockState,
+  defaultBlockState,
+  encodeBlockState,
 } from '@nerima-games/mc-kernel'
 import {
   CONNECTION_RATE_LIMITS,
@@ -110,11 +113,13 @@ const ServerBlockChangeSourceSchema: Schema.Struct<{
   before: typeof BlockIdSchema
   dimension: typeof ServerDimensionSchema
   position: typeof ServerBlockPositionSchema
+  state: Schema.optionalKey<typeof BlockStateValuesSchema>
 }> = Schema.Struct({
   after: BlockIdSchema,
   before: BlockIdSchema,
   dimension: ServerDimensionSchema,
   position: ServerBlockPositionSchema,
+  state: Schema.optionalKey(BlockStateValuesSchema),
 })
 const ServerBlockReadingBlockSourceSchema: Schema.TaggedStruct<'Block', { block: typeof BlockIdSchema }> =
   Schema.TaggedStruct('Block', { block: BlockIdSchema })
@@ -166,7 +171,7 @@ const ServerSnapshotSourceSchema: Schema.TaggedStruct<'ReplicatedWorldSnapshot',
 export type ServerOwnerLocationResolution = typeof ServerOwnerLocationResolutionSchema.Type
 export type ServerOwnerLocationIndex = ReadonlyMap<ReplicatedOwnerId, unknown>
 export type ServerBlockStateLookup = Readonly<{
-  change: typeof ServerBlockChangeSourceSchema.Type
+  change: Omit<typeof ServerBlockChangeSourceSchema.Type, 'state'>
   revision: typeof WorldRevisionSchema.Type
   world: typeof KernelWorldIdSchema.Type
 }>
@@ -724,18 +729,53 @@ const hasValidBlockStatePair = (
   Result.isSuccess(decodeBlockState(change.before, states.beforeState))
   && Result.isSuccess(decodeBlockState(change.after, states.afterState))
 
-const enrichBlockStateChange = <Behaviour>(
+const encodeAfterBlockState = (
+  change: typeof ServerBlockChangeSourceSchema.Type,
+): Result.Result<typeof EncodedBlockStateSchema.Type, unknown> => {
+  if (change.state === undefined) {
+    const defaults = defaultBlockState(change.after)
+    if (Result.isFailure(defaults)) {
+      return Result.fail(defaults.failure)
+    }
+    return encodeBlockState(change.after, defaults.success)
+  }
+  return encodeBlockState(change.after, change.state)
+}
+
+const resolveBlockStatePair = <Behaviour>(
   request: BlockStateChangeEnrichmentRequest<Behaviour>,
-): Result.Result<ReplicatedWorldDeltaValue['blockChanges'][number], ServerProjectionRefusal> => {
-  const resolved = request.resolver({ change: request.change, revision: request.revision, world: request.world })
+  change: Omit<typeof ServerBlockChangeSourceSchema.Type, 'state'>,
+): Result.Result<ServerBlockStatePair, ServerProjectionRefusal> => {
+  const resolved = request.resolver({ change, revision: request.revision, world: request.world })
   if (Result.isFailure(resolved)) {
     return Result.fail(refusal('invalid-block-state'))
   }
   const states = Schema.decodeUnknownResult(ServerBlockStatePairSchema, strictParseOptions)(resolved.success)
-  if (Result.isFailure(states) || !hasValidBlockStatePair(request.change, states.success)) {
+  if (Result.isFailure(states) || !hasValidBlockStatePair(change, states.success)) {
     return Result.fail(refusal('invalid-block-state'))
   }
-  return Result.succeed({ ...request.change, ...states.success })
+  return Result.succeed(states.success)
+}
+
+const enrichBlockStateChange = <Behaviour>(
+  request: BlockStateChangeEnrichmentRequest<Behaviour>,
+): Result.Result<ReplicatedWorldDeltaValue['blockChanges'][number], ServerProjectionRefusal> => {
+  const change = {
+    after: request.change.after,
+    before: request.change.before,
+    dimension: request.change.dimension,
+    position: request.change.position,
+  }
+  const states = resolveBlockStatePair(request, change)
+  if (Result.isFailure(states)) {
+    return Result.fail(states.failure)
+  }
+  const afterState = encodeAfterBlockState(request.change)
+  // Keep the resolved world state consistent with the state emitted by mc-sim.
+  if (Result.isFailure(afterState) || afterState.success !== states.success.afterState) {
+    return Result.fail(refusal('invalid-block-state'))
+  }
+  return Result.succeed({ ...change, ...states.success, afterState: afterState.success })
 }
 
 const enrichBlockStates = <Behaviour>(
