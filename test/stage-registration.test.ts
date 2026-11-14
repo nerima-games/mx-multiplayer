@@ -411,6 +411,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
         at: { x: 0, y: 0, z: 0 },
         block: 'SCULK_SHRIEKER_FROM_A_NEWER_BUILD',
         player: alice,
+        state: 0,
       })
 
       yield* Result.match(encodeFrame(fromNewerPeer), {
@@ -493,7 +494,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       const stages = multiplayerStages(state, local, sync)
 
       yield* Ref.set(state.connection, connected)
-      yield* peer.send('{"protocolVersion":10,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":1,"changes":[]}}')
+      yield* peer.send('{"protocolVersion":11,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":1,"changes":[]}}')
       yield* runStage(stages[0])
 
       expect(yield* Ref.get(state.inbound)).toStrictEqual([])
@@ -630,7 +631,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
 
       yield* Ref.set(state.connection, connected)
       yield* sendMessages(peer, [baseline, start], sync)
-      yield* peer.send('{"protocolVersion":10,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":4,"changes":[]}}')
+      yield* peer.send('{"protocolVersion":11,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":4,"changes":[]}}')
       yield* runStage(stages[0])
 
       expect(sync.transfers.isReceiving).toBe(false)

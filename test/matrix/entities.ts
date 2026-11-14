@@ -5,7 +5,7 @@ const reference = (file: `test/${string}`, line: number, testName: string): Test
 
 const codecRoundTrip = reference(
   'test/codec.test.ts',
-  1233,
+  1241,
   'every message decodes back to a value strictly equal to the one encoded',
 )
 const entitiesWireShape = reference(
@@ -18,6 +18,11 @@ const entitiesAuthority = reference(
   42,
   'records supported and unsupported entities command authority outcomes',
 )
+const meleeThroughU6b = reference(
+  'test/server-adapter.test.ts',
+  1003,
+  'handles a command through recipient delivery while enforcing privacy, AOI, capacity, and resume tokens',
+)
 const entitiesUnauthorized = reference(
   'test/scenarios/entities.test.ts',
   64,
@@ -26,12 +31,12 @@ const entitiesUnauthorized = reference(
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'pins current golden bytes and version rejection for every representative family',
+  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
 )
 
 const covered = (...tests: [TestReference, ...TestReference[]]): MatrixCell => ({ status: 'covered', tests })
 const a1 = covered(codecRoundTrip, entitiesWireShape)
-const authorityOutcome = covered(entitiesAuthority)
+const authorityOutcome = covered(entitiesAuthority, meleeThroughU6b)
 const unauthorizedCommand = covered(entitiesUnauthorized)
 const excluded = (reason: string): MatrixCell => ({ status: 'excluded', reason })
 const gap = (reason: string, evidence: readonly string[]): MatrixCell => ({ status: 'gap', reason, evidence })
@@ -61,8 +66,8 @@ const noServerDirectionRejection = gap(
   ['src/domain/protocol.ts:767-794', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:760', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:772-774'],
 )
 const entityAttackStateGap = gap(
-  'A3 requires comparing client state after an entity attack. mc-sim MeleeAttack carries no target EntityId, so mx-multiplayer cannot apply or project the resulting target state.',
-  ['src/application/server/command-application.ts:202-210', 'apps/debug-ui/entrypoints/scenarios/scenario-runtime.ts:813-819', 'node_modules/@nerima-games/mc-sim/dist/application/intent-queue.d.ts:56-58,128-130'],
+  'A3 requires comparing client state after authoritative attack damage. U6b passes the accepted MeleeAttack intent and original target/slot to the host callback, but this package does not call GP5 or apply its damage event.',
+  ['src/application/server/command-application.ts:123', 'src/application/server/server-adapter.ts:216', 'src/application/server/server-adapter.ts:1464'],
 )
 const noDeltaOrderingAndResync = gap(
   'A4 requires observing G5 state after loss, duplication, reordering, delay, and resync. The scenario runtime only decodes non-command G5 messages and has no receiver for their applied state.',
@@ -155,7 +160,7 @@ export const entities: Record<
   EntityDespawnDelta: deltaRow(a1, noClientStateApplication, noDeltaReconnectSnapshot, legacyWireCompatibility),
   LightningStrikeDelta: deltaRow(a1, lightningHasNoPersistentConvergence, lightningHasNoReconnectReplay),
   WorldTimeWeatherCommand: commandRow(a1, unsupported(noMatchingIntent)),
-  EntityAttackCommand: commandRow(a1, unsupported(intentDoesNotPreserveCommand), entityAttackStateGap),
+  EntityAttackCommand: commandRow(a1, authorityOutcome, entityAttackStateGap),
   EntityPickupCommand: commandRow(a1, unsupported(noMatchingIntent)),
   BowUseCommand: commandRow(a1, authorityOutcome),
   IgniteTntCommand: commandRow(a1, unsupported(noMatchingIntent)),

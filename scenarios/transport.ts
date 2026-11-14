@@ -17,7 +17,9 @@ import {
   type ReconnectAuth,
   type ReconnectAuthCrypto,
   type ReconnectAuthStore,
+  ReconnectAuthStoreContents,
   ReconnectToken,
+  ReconnectTokenDigest,
   ReconnectTokenInput,
   createReconnectAuth,
 } from '../src/application/server/reconnect-auth.js'
@@ -135,7 +137,7 @@ const tokenHash = (token: string): string => {
 }
 
 const createTokenStore = (): ReconnectAuthStore => {
-  let contents: string | undefined = undefined
+  let contents: ReconnectAuthStoreContents | undefined = undefined
   return {
     load: () => Effect.sync(() => contents),
     save: (next) => Effect.sync(() => { contents = next }),
@@ -145,7 +147,7 @@ const createTokenStore = (): ReconnectAuthStore => {
 const createReconnectAuthFixture = (): Effect.Effect<ReconnectAuth, unknown> => {
   let tokenIndex = ZERO
   const crypto: ReconnectAuthCrypto = {
-    hashHex: tokenHash,
+    hashHex: (token) => ReconnectTokenDigest.make(tokenHash(token)),
     randomToken: () => {
       const token = TOKEN_VALUES[tokenIndex]
       if (token === undefined) {
@@ -177,17 +179,17 @@ const forgedTokensRejected = (auth: ReconnectAuth, aliceToken: string): Effect.E
 })
 
 const mismatchedIdentityRejected = (auth: ReconnectAuth, aliceToken: string): Effect.Effect<boolean, unknown> => Effect.gen(function* () {
-  const bobToken = yield* auth.issue('bob')
+  const bobToken = yield* auth.issue(PlayerId.make('bob'))
   if (bobToken === undefined) {
     return false
   }
-  return (yield* auth.rotate('bob', aliceToken)) === undefined
+  return (yield* auth.rotate(PlayerId.make('bob'), ReconnectTokenInput.make(aliceToken))) === undefined
 })
 
-const rotateToken = (auth: ReconnectAuth, token: string): Effect.Effect<string | undefined, unknown> =>
-  auth.rotate('alice', token)
+const rotateToken = (auth: ReconnectAuth, token: ReconnectTokenInput): Effect.Effect<ReconnectToken | undefined, unknown> =>
+  auth.rotate(PlayerId.make('alice'), token)
 
-const rotateTwice = (auth: ReconnectAuth, token: string): Effect.Effect<string | undefined, unknown> => Effect.gen(function* () {
+const rotateTwice = (auth: ReconnectAuth, token: ReconnectTokenInput): Effect.Effect<ReconnectToken | undefined, unknown> => Effect.gen(function* () {
   const firstRotation = yield* rotateToken(auth, token)
   if (firstRotation === undefined) {
     return undefined
@@ -197,7 +199,7 @@ const rotateTwice = (auth: ReconnectAuth, token: string): Effect.Effect<string |
 
 const tokenRevokedAfterTwoRotations = (): Effect.Effect<boolean, unknown> => Effect.gen(function* () {
   const auth = yield* createReconnectAuthFixture()
-  const originalToken = yield* auth.issue('alice')
+  const originalToken = yield* auth.issue(PlayerId.make('alice'))
   if (originalToken === undefined) {
     return false
   }
@@ -207,7 +209,7 @@ const tokenRevokedAfterTwoRotations = (): Effect.Effect<boolean, unknown> => Eff
 
 const reconnectAuthPasses = (): Effect.Effect<boolean, unknown> => Effect.gen(function* () {
   const auth = yield* createReconnectAuthFixture()
-  const aliceToken = yield* auth.issue('alice')
+  const aliceToken = yield* auth.issue(PlayerId.make('alice'))
   if (aliceToken === undefined) {
     return false
   }

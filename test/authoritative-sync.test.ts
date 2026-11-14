@@ -2,14 +2,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
 import { Effect, Result, Schema } from 'effect'
-import { BlockIdSchema, BlockPositionSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { BlockIdSchema, BlockPositionSchema, EncodedBlockStateSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import type { BlockPosition, WorldRevision } from '@nerima-games/mc-kernel'
 import { ReplicatedOwnerIdSchema } from '@nerima-games/mc-sim'
 import type {
-  ReplicatedBlockChange,
   ReplicatedOwnerChange,
   ReplicatedOwnerId,
-  WorldBlockRead,
 } from '@nerima-games/mc-sim'
 import {
   AuthoritativeClientState,
@@ -48,6 +46,7 @@ import {
 
 const overworld = WorldId.make('overworld')
 const nether = WorldId.make('nether')
+const zeroBlockState = Schema.decodeUnknownSync(EncodedBlockStateSchema)(0)
 
 const snapshot = (world: WorldId, revision: number): WorldSnapshot => ({
   _tag: 'WorldSnapshot',
@@ -76,23 +75,26 @@ const ownerChange = (owner: string, state: unknown): ReplicatedOwnerChange => ({
 
 const blockPosition = (x: number, y = 64, z = 0): BlockPosition => Schema.decodeUnknownSync(BlockPositionSchema)({ x, y, z })
 
-const blockRead = (x: number, block: number, y = 64, z = 0): WorldBlockRead => ({
+const blockRead = (x: number, block: number, y = 64, z = 0, state = zeroBlockState): ReplicatedWorldSnapshot['blocks'][number] => ({
   dimension: 'overworld',
   position: blockPosition(x, y, z),
   reading: { _tag: 'Block', block: Schema.decodeUnknownSync(BlockIdSchema)(block) },
+  state,
 })
 
-const blockChange = (x: number, after: number): ReplicatedBlockChange => ({
+const blockChange = (x: number, after: number): ReplicatedWorldDeltaMessage['blockChanges'][number] => ({
   before: Schema.decodeUnknownSync(BlockIdSchema)(0),
+  beforeState: zeroBlockState,
   dimension: 'overworld',
   position: blockPosition(x),
   after: Schema.decodeUnknownSync(BlockIdSchema)(after),
+  afterState: zeroBlockState,
 })
 
 const replicatedSnapshot = (
   revision: number,
   owners: ReadonlyArray<ReplicatedOwnerChange> = [],
-  blocks: ReadonlyArray<WorldBlockRead> = [],
+  blocks: ReadonlyArray<ReplicatedWorldSnapshot['blocks'][number]> = [],
 ): ReplicatedWorldSnapshot => ({
   _tag: 'ReplicatedWorldSnapshot',
   blocks,
@@ -104,7 +106,7 @@ const replicatedSnapshot = (
 const replicatedDelta = (
   revision: number,
   changes: ReadonlyArray<ReplicatedOwnerChange> = [],
-  blockChanges: ReadonlyArray<ReplicatedBlockChange> = [],
+  blockChanges: ReadonlyArray<ReplicatedWorldDeltaMessage['blockChanges'][number]> = [],
 ): ReplicatedWorldDeltaMessage => ({
   _tag: 'ReplicatedWorldDelta',
   blockChanges,
@@ -138,26 +140,28 @@ const MAXIMUM_AOI_OWNER_STATE = {
     '',
   ],
 }
-const MAXIMUM_AOI_BLOCK_BEFORE = 65_535
-const MAXIMUM_AOI_BLOCK_AFTER = 65_534
-const MAXIMUM_AOI_BLOCK_READ = 65_535
+const MAXIMUM_AOI_BLOCK_BEFORE = 124
+const MAXIMUM_AOI_BLOCK_AFTER = 123
+const MAXIMUM_AOI_BLOCK_READ = 124
 const MAXIMUM_AOI_BLOCK_AXIS = Number.MIN_SAFE_INTEGER
 const maximumAoiBlockPosition = (index: number): BlockPosition => blockPosition(
   MAXIMUM_AOI_BLOCK_AXIS + index,
   MAXIMUM_AOI_BLOCK_AXIS,
   MAXIMUM_AOI_BLOCK_AXIS,
 )
-const maximumAoiBlockRead = (index: number): WorldBlockRead => blockRead(
+const maximumAoiBlockRead = (index: number): ReplicatedWorldSnapshot['blocks'][number] => blockRead(
   MAXIMUM_AOI_BLOCK_AXIS + index,
   MAXIMUM_AOI_BLOCK_READ,
   MAXIMUM_AOI_BLOCK_AXIS,
   MAXIMUM_AOI_BLOCK_AXIS,
 )
-const maximumAoiBlockChange = (index: number): ReplicatedBlockChange => ({
+const maximumAoiBlockChange = (index: number): ReplicatedWorldDeltaMessage['blockChanges'][number] => ({
   before: Schema.decodeUnknownSync(BlockIdSchema)(MAXIMUM_AOI_BLOCK_BEFORE),
+  beforeState: zeroBlockState,
   dimension: 'overworld',
   position: maximumAoiBlockPosition(index),
   after: Schema.decodeUnknownSync(BlockIdSchema)(MAXIMUM_AOI_BLOCK_AFTER),
+  afterState: zeroBlockState,
 })
 const MAXIMUM_AOI_OWNER_CHANGES = MAXIMUM_AOI_OWNER_IDS.map((owner) => ({ owner, state: MAXIMUM_AOI_OWNER_STATE }))
 const MAXIMUM_AOI_OWNER_REGISTRATIONS = MAXIMUM_AOI_OWNER_IDS.map((registeredOwnerId) => ({
@@ -971,6 +975,44 @@ describe('C4 snapshot transfer receiver', () => {
     }),
   )
 
+  it.effect('preserves block state while splitting, transferring, and reconstructing a snapshot', () =>
+    Effect.sync(() => {
+      const owners = makeEmptyOwnerRegistry()
+      const state = Schema.decodeUnknownSync(EncodedBlockStateSchema)(16)
+      const snapshotWithState = replicatedSnapshot(20, [], [blockRead(3, 106, 64, 0, state)])
+      const frame = encodeTransferredSnapshotFrame(snapshotWithState, owners, 1024)
+      if (Result.isFailure(frame)) {
+        throw frame.failure
+      }
+      const bytes = asciiBytes(frame.success)
+      const transfer = 'snapshot-block-state-roundtrip'
+      const chunkBytes = Math.floor(bytes.length / 2)
+      const chunks = transferChunks(bytes, transfer, chunkBytes)
+      const receiver = makeTransferReceiver(transferLimits(bytes, chunkBytes))
+
+      expect(chunks.length).toBeGreaterThan(1)
+      expect(receiver.begin(transferStart(bytes, transfer, 20, chunkBytes), replicatedRevision(19)))
+        .toStrictEqual({ accepted: true })
+      for (const chunk of chunks) {
+        expect(receiver.append(chunk)).toStrictEqual({ accepted: true })
+      }
+      const completed = receiver.finish(transferEnd(transfer))
+      expect(completed.accepted).toBe(true)
+      if (!completed.accepted) {
+        throw new Error('stateful snapshot transfer did not complete')
+      }
+
+      const client = new AuthoritativeClientState()
+      const applied = client.applyTransfer(completed.completion, owners)
+      expect(applied.accepted).toBe(true)
+      const transferredBlock = client.world(overworld)?.blocks.values().next().value
+      expect(transferredBlock).toMatchObject({
+        reading: { _tag: 'Block', block: 106 },
+        state,
+      })
+    }),
+  )
+
   it.effect('rejects chunks that arrive out of order', () =>
     Effect.sync(() => {
       const bytes = snapshotFrameBytes(20)
@@ -1192,8 +1234,8 @@ describe('C4 snapshot transfer receiver', () => {
       if (maximumDelta === undefined) {
         throw new Error('maximum delta fixture was empty')
       }
-      const snapshotShape = measureJsonShape({ message: maximumSnapshot, protocolVersion: 10 })
-      const deltaShape = measureJsonShape({ message: maximumDelta, protocolVersion: 10 })
+      const snapshotShape = measureJsonShape({ message: maximumSnapshot, protocolVersion: PROTOCOL_VERSION })
+      const deltaShape = measureJsonShape({ message: maximumDelta, protocolVersion: PROTOCOL_VERSION })
       const sizingLimits: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
         maxRegisteredOwners: ownerCountLimit,
         maxDeltaBlockChanges: deltaBlockLimit,
@@ -1265,20 +1307,20 @@ describe('C4 snapshot transfer receiver', () => {
           "chunkBytes": 655360,
           "chunkCountLimit": 8,
           "collectionLimit": 23438,
-          "deltaByteLimit": 54484,
+          "deltaByteLimit": 65284,
           "depthLimit": 9,
           "maxDeltaBlockChanges": 320,
-          "maxQueueBytes": 3486960,
+          "maxQueueBytes": 4178160,
           "maxQueueCount": 80,
           "maxSnapshotBlockReads": 18750,
-          "maxSnapshotBytes": 3422754,
+          "maxSnapshotBytes": 3610254,
           "measuredChunkBytes": 524288,
           "measuredChunkCount": 6,
           "measuredCollectionItems": 18750,
-          "measuredDeltaBytes": 43587,
+          "measuredDeltaBytes": 52227,
           "measuredDepth": 7,
-          "measuredQueueBurstBytes": 2789568,
-          "measuredSnapshotBytes": 2738203,
+          "measuredQueueBurstBytes": 3342528,
+          "measuredSnapshotBytes": 2888203,
           "ownerCountLimit": 4,
         }
       `)

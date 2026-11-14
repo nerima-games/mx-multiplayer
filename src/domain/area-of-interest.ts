@@ -1,9 +1,10 @@
 import { Data, Result, Schema } from 'effect'
 import { type NonNegativeSafeInteger, NonNegativeSafeIntegerSchema } from './codec.js'
 import { type ReplicatedBlockChange, type ReplicatedOwnerId, ReplicatedOwnerIdSchema } from '@nerima-games/mc-sim'
+import { BlockPos } from './protocol/identifiers.js'
 import { DIMENSIONS } from '@nerima-games/mc-kernel'
 
-const ChunkCoordinateSchema: Schema.brand<typeof Schema.Number, 'ChunkCoordinate'> = Schema.Number.pipe(
+export const ChunkCoordinateSchema: Schema.brand<typeof Schema.Number, 'ChunkCoordinate'> = Schema.Number.pipe(
   Schema.check(Schema.isInt()),
   Schema.check(Schema.isGreaterThanOrEqualTo(-Number.MAX_SAFE_INTEGER)),
   Schema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
@@ -41,6 +42,7 @@ export type AreaOfInterestInputErrorReason =
   | 'duplicate-owner'
   | 'invalid-chunk'
   | 'duplicate-chunk'
+  | 'invalid-interest'
 
 const AreaOfInterestInputError_base: ReturnType<typeof Data.TaggedError<'AreaOfInterestInputError'>> =
   Data.TaggedError('AreaOfInterestInputError')
@@ -308,6 +310,39 @@ export const areaOfInterestIncludesBlockChange = (
   interest: unknown,
   change: ReplicatedBlockChange,
 ): boolean => areaInterestState(interest)?.chunks.has(chunkInterestKeyForBlockChange(change)) ?? false
+
+const locationChunkKey = (
+  dimensionInput: unknown,
+  positionInput: unknown,
+): Result.Result<ChunkInterestKey, AreaOfInterestInputError> => {
+  if (!isChunkDimension(dimensionInput)) {
+    return fail('invalid-chunk', 'location.dimension')
+  }
+  const position = Schema.decodeUnknownResult(BlockPos, strictParseOptions)(positionInput)
+  if (Result.isFailure(position)) {
+    return fail('invalid-chunk', 'location.position')
+  }
+  // BlockPos axes are safe integers, so division by the positive chunk width stays safe.
+  const x = Math.floor(position.success.x / CHUNK_SIDE_BLOCKS)
+  const z = Math.floor(position.success.z / CHUNK_SIDE_BLOCKS)
+  return Result.succeed(chunkKey(dimensionInput, x, z))
+}
+
+export const areaOfInterestIncludesLocation = (
+  interest: unknown,
+  dimensionInput: unknown,
+  positionInput: unknown,
+): Result.Result<boolean, AreaOfInterestInputError> => {
+  const state = areaInterestState(interest)
+  if (state === undefined) {
+    return fail('invalid-interest', 'interest')
+  }
+  const key = locationChunkKey(dimensionInput, positionInput)
+  if (Result.isFailure(key)) {
+    return Result.fail(key.failure)
+  }
+  return Result.succeed(state.chunks.has(key.success))
+}
 
 export const areaOfInterestExpanded = (previous: unknown, current: unknown): boolean => {
   const currentState = areaInterestState(current)

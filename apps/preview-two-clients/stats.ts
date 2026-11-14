@@ -18,7 +18,7 @@
  * Every check answers a question of the form "if this were broken, what would I
  * see?". A measurement with no such answer is a number, not a check.
  */
-import { WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { EncodedBlockStateSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { Effect, Queue, Result, Schema } from 'effect'
 import { decodeFrame, encodeFrame, encodeFrameAsVersion } from '../../src/domain/codec'
 import {
@@ -107,7 +107,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     revision: 1,
     world: OVERWORLD,
   },
-  BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: ALICE },
+  BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: ALICE, state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0) },
   BowUseCommand: { _tag: 'BowUseCommand', ...COMMAND_HEADER, action: 'release' },
   BrewingCommand: { _tag: 'BrewingCommand', ...COMMAND_HEADER, action: { _tag: 'insert', slot: 0 }, at: { x: 1, y: 64, z: 0 } },
   BrewingCommandAccepted: { _tag: 'BrewingCommandAccepted', commandId: COMMAND_ID, revision: 2 },
@@ -129,7 +129,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   DamageEnderDragonCommand: { _tag: 'DamageEnderDragonCommand', commandId: COMMAND_ID, expectedRevision: 1, player: ALICE },
   DamageEnderDragonCommandAccepted: { _tag: 'DamageEnderDragonCommandAccepted', commandId: COMMAND_ID, revision: 2 },
   DamageEnderDragonCommandRejected: { _tag: 'DamageEnderDragonCommandRejected', commandId: COMMAND_ID, reason: 'stale-revision', revision: 1 },
-  DamageWitherCommand: { _tag: 'DamageWitherCommand', amount: 4, commandId: COMMAND_ID, expectedRevision: 1, kind: 'melee', player: ALICE, witherId: 'wither-1' },
+  DamageWitherCommand: { _tag: 'DamageWitherCommand', commandId: COMMAND_ID, expectedRevision: 1, kind: 'melee', player: ALICE, witherId: 'wither-1' },
   SummonWitherCommand: { _tag: 'SummonWitherCommand', commandId: COMMAND_ID, dimension: 'end', expectedRevision: 1, player: ALICE, position: { x: 0, y: 70, z: 0 } },
   WitherCommandAccepted: { _tag: 'WitherCommandAccepted', commandId: COMMAND_ID, revision: 2 },
   WitherCommandRejected: { _tag: 'WitherCommandRejected', commandId: COMMAND_ID, reason: 'invalid-command', revision: 1 },
@@ -162,7 +162,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     snapshot: { health: 200, phase: 'circling', phaseTimerSecs: 0, rewardEmitted: false },
   },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...COMMAND_HEADER },
-  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
+  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...COMMAND_HEADER, entityId: ENTITY_ID, heldSlot: 0 },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', entityId: ENTITY_ID, revision: 2, world: OVERWORLD },
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...COMMAND_HEADER, entityId: ENTITY_ID },
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', entity: ENTITY, revision: 2, world: OVERWORLD },
@@ -179,7 +179,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...COMMAND_HEADER, portal: { x: 1, y: 64, z: 0 } },
   Ping: { _tag: 'Ping', nonce: 7 },
   PlayerAnvilNamesDelta: { _tag: 'PlayerAnvilNamesDelta', names: [{ name: 'Excalibur', slot: 0 }], player: ALICE, revision: 2, world: OVERWORLD },
-  PlayerDamageCommand: { _tag: 'PlayerDamageCommand', ...COMMAND_HEADER, amount: 4 },
+  PlayerDamageCommand: { _tag: 'PlayerDamageCommand', ...COMMAND_HEADER },
   PlayerDamageCommandAccepted: { _tag: 'PlayerDamageCommandAccepted', commandId: COMMAND_ID, revision: 2 },
   PlayerDamageCommandRejected: { _tag: 'PlayerDamageCommandRejected', commandId: COMMAND_ID, reason: 'invalid-command', revision: 1 },
   PlayerEnchantmentsDelta: {
@@ -619,7 +619,7 @@ const encodeSideValidation = Effect.sync((): Check => {
 const contentSkew = Effect.sync((): Check => {
   const unknownBlock = decodeFrame(
     JSON.stringify({
-      message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium', player: 'alice' },
+      message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium', player: 'alice', state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0) },
       protocolVersion: PROTOCOL_VERSION,
     }),
   )

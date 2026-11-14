@@ -1,5 +1,5 @@
 /**
- * Inspect a v10 wire frame before passing it on to a transport handler.
+ * Inspect a v11 wire frame before passing it on to a transport handler.
  *
  * `decodeFrame` enforces the shared byte and JSON-shape limits before decoding
  * the strict message schema. `frameTag` remains for callers holding a bounded

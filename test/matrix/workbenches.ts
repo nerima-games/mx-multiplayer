@@ -2,7 +2,7 @@ import type { MatrixCell, MatrixRow, TestReference } from './index.js'
 
 const roundTrip: TestReference = {
   file: 'test/codec.test.ts',
-  line: 1233,
+  line: 1241,
   testName: 'every message decodes back to a value strictly equal to the one encoded',
 }
 const wireShape: TestReference = {
@@ -13,17 +13,17 @@ const wireShape: TestReference = {
 
 const malformedAnvilCrafting: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2720,
+  line: 2803,
   testName: 'rejects malformed anvil, crafting and player-damage payloads',
 }
 const malformedBrewing: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2749,
+  line: 2832,
   testName: 'rejects malformed brewing and status-effect payloads',
 }
 const malformedEnchanting: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2818,
+  line: 2901,
   testName: 'rejects malformed enchanting payloads',
 }
 
@@ -37,7 +37,7 @@ const wireOnlyEnchanting = covered(roundTrip, wireShape, malformedEnchanting)
 const legacyWireFixture: TestReference = {
   file: 'test/wire-fixtures.test.ts',
   line: 124,
-  testName: 'pins current golden bytes and version rejection for every representative family',
+  testName: 'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
 }
 const legacyWireCompatibility = covered(legacyWireFixture)
 const noLegacyWireFixture = excluded(

@@ -38,9 +38,27 @@ import type {
   RateLimitConfigurationErrorReason,
   RateLimitExceededReason,
   RateLimitInputErrorReason,
+  ReconnectAuth,
+  ReconnectAuthCrypto,
+  ReconnectAuthStore,
+  ReconnectAuthStoreContents,
+  ReconnectTokenDigest,
+  ServerAdapter,
+  ServerAdapterConfiguration,
+  ServerAcceptedInboundOutcome,
+  ServerAdapterRequest,
+  ServerAdapterOutcome,
+  ServerFrameDeliveryInput,
+  ServerLoadedInterestInput,
+  ServerConnectOutcome,
+  ServerInboundOutcome,
+  ServerProjectionFailure,
+  ServerResumeOutcome,
   ServerConnectionIdentity,
   SurvivalAuthorityResult,
   SurvivalCommandResult,
+  TargetedDeltaDelivery,
+  TargetedSnapshotDelivery,
   TransportService,
   WireText,
 } from '../src/index'
@@ -80,9 +98,27 @@ type NewPublicTypes = {
   rateConfigurationErrorReason: RateLimitConfigurationErrorReason
   rateExceededReason: RateLimitExceededReason
   rateInputErrorReason: RateLimitInputErrorReason
+  reconnectAuth: ReconnectAuth
+  reconnectAuthCrypto: ReconnectAuthCrypto
+  reconnectAuthStore: ReconnectAuthStore
+  reconnectAuthStoreContents: ReconnectAuthStoreContents
+  reconnectTokenDigest: ReconnectTokenDigest
+  serverAdapter: ServerAdapter
+  serverAdapterRequest: ServerAdapterRequest
+  serverAdapterOutcome: ServerAdapterOutcome
+  serverAdapterConfiguration: ServerAdapterConfiguration<never>
+  serverAcceptedInboundOutcome: ServerAcceptedInboundOutcome
+  serverFrameDeliveryInput: ServerFrameDeliveryInput
+  serverLoadedInterestInput: ServerLoadedInterestInput
+  serverConnectOutcome: ServerConnectOutcome
+  serverInboundOutcome: ServerInboundOutcome
+  serverProjectionFailure: ServerProjectionFailure
+  serverResumeOutcome: ServerResumeOutcome
   survivalAuthorityResult: SurvivalAuthorityResult
   survivalCommandResult: SurvivalCommandResult
   survivalIntent: Intent
+  targetedDeltaDelivery: TargetedDeltaDelivery
+  targetedSnapshotDelivery: TargetedSnapshotDelivery
   transportService: TransportService
   wireText: WireText
 }
@@ -97,6 +133,7 @@ describe('public API surface', () => {
         // Per-recipient scale projection
         'AreaOfInterestInputError',
         'chunkInterestKeyForBlockChange',
+        'ChunkCoordinateSchema',
         'createAreaOfInterest',
         'isAreaOfInterest',
         'areaOfInterestIncludesOwner',
@@ -111,6 +148,10 @@ describe('public API surface', () => {
         'RateLimitInputError',
         'RateLimitExceeded',
         'createConnectionRateLimiter',
+        'MAX_SERVER_CONNECTIONS',
+        'createServerAdapter',
+        'ReconnectAuthStoreContents',
+        'ReconnectTokenDigest',
         // Transport safety and liveness
         'makeBrowserWebSocketTransport',
         'validateMultiplayerUrl',
@@ -249,13 +290,14 @@ describe('public API surface', () => {
   // Docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(10)
+      expect(PROTOCOL_VERSION).toBe(11)
     }),
   )
 
   it.effect('keeps the public type surface concrete', () =>
     Effect.sync(() => {
       expectTypeOf<NewPublicTypes>().toBeObject()
+      expectTypeOf<keyof ServerAdapter>().toEqualTypeOf<'handle'>()
       expectTypeOf<Extract<HungerResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
       expectTypeOf<Extract<SurvivalCommandResult, { accepted: true }>['intent']>().toEqualTypeOf<Intent>()
     }),

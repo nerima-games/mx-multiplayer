@@ -66,12 +66,12 @@ const samples = [
   },
 ]
 
-const currentSource = {
+const protocol10Source = {
   directory: 'v0.14.0',
   sourceVersion: '0.14.0',
   sourceTag: 'v0.14.0',
   sourceCommit: 'f01d7083c833d171190eb3579882c0feec970fee',
-  protocolVersion: PROTOCOL_VERSION,
+  protocolVersion: 10,
   generatingCommand: 'nix develop --command pnpm exec tsx /tmp/x2-old/current/generate-wire-frames.mjs',
 }
 const legacySources = [
@@ -104,7 +104,7 @@ const readManifest = (directory: string, slug: string): unknown =>
   JSON.parse(readFileSync(new URL(`./fixtures/wire/${directory}/${slug}.manifest.json`, import.meta.url), 'utf8'))
 
 const expectedManifest = (
-  source: typeof currentSource | (typeof legacySources)[number],
+  source: typeof protocol10Source | (typeof legacySources)[number],
   family: string,
   messageTag: string,
 ) => ({
@@ -120,16 +120,25 @@ const expectedManifest = (
 })
 
 describe('released wire fixtures', () => {
-  // REGRESSION: version-8 frames must be explicitly rejected before their payloads are parsed as version 10.
-  it.effect('pins current golden bytes and version rejection for every representative family', () =>
+  // REGRESSION: protocol-10 goldens remain immutable evidence of the compatibility refusal.
+  it.effect('rejects old golden bytes and checks the protocol-11 envelope for each representative family', () =>
     Effect.sync(() => {
       for (const sample of samples) {
-        const currentBytes = readFrame(currentSource.directory, sample.slug)
-        const currentText = currentBytes.toString('utf8')
-        expect(readManifest(currentSource.directory, sample.slug)).toStrictEqual(
-          expectedManifest(currentSource, sample.family, sample.message._tag),
+        const protocol10Bytes = readFrame(protocol10Source.directory, sample.slug)
+        const protocol10Text = protocol10Bytes.toString('utf8')
+        expect(readManifest(protocol10Source.directory, sample.slug)).toStrictEqual(
+          expectedManifest(protocol10Source, sample.family, sample.message._tag),
         )
 
+        const protocol10Decoded = decodeFrame(protocol10Text)
+        if (Result.isSuccess(protocol10Decoded)) {
+          expect(protocol10Decoded.success).toStrictEqual(sample.message)
+          throw new Error(`protocol 10 ${sample.message._tag} unexpectedly accepted an old frame`)
+        }
+        expect(protocol10Decoded.failure.reason).toBe('unsupported-protocol-version')
+
+        const currentText = protocol10Text.replace('"protocolVersion":10', `"protocolVersion":${PROTOCOL_VERSION}`)
+        const currentBytes = Buffer.from(currentText, 'utf8')
         const encoded = encodeFrame(sample.message)
         if (Result.isFailure(encoded)) {
           throw new Error(`${sample.message._tag} current sample cannot encode: ${encoded.failure.reason}`)
@@ -158,23 +167,25 @@ describe('released wire fixtures', () => {
     }),
   )
 
-  // REGRESSION: changing one protocol-version byte must flip an accepted golden into a typed rejection.
-  it.effect('changes the verdict after a one-byte mutation of a current fixture', () =>
+  // REGRESSION: changing one protocol-version byte must flip an accepted protocol-11 frame into a typed rejection.
+  it.effect('changes the verdict after a one-byte mutation of a protocol-11 frame', () =>
     Effect.sync(() => {
-      const originalBytes = readFrame(currentSource.directory, 'player-move')
-      const versionMarker = Buffer.from(`"protocolVersion":${PROTOCOL_VERSION}`)
-      const versionMarkerOffset = originalBytes.indexOf(versionMarker)
+      const protocol10Bytes = readFrame(protocol10Source.directory, 'player-move')
+      const protocol10Marker = Buffer.from('"protocolVersion":10')
+      const versionMarkerOffset = protocol10Bytes.indexOf(protocol10Marker)
       if (versionMarkerOffset < 0) {
-        throw new Error('current fixture has no protocolVersion marker')
+        throw new Error('protocol-10 fixture has no protocolVersion marker')
       }
-      const versionByteOffset = versionMarkerOffset + versionMarker.length - 1
-      const originalVersionByte = originalBytes.at(versionByteOffset)
-      if (originalVersionByte === undefined) {
-        throw new Error('current fixture protocolVersion byte is missing')
+      const versionByteOffset = versionMarkerOffset + protocol10Marker.length - 1
+      const protocol10VersionByte = protocol10Bytes.at(versionByteOffset)
+      if (protocol10VersionByte !== 0x30) {
+        throw new Error('protocol-10 fixture has an unexpected version digit')
       }
 
+      const originalBytes = Buffer.from(protocol10Bytes)
+      originalBytes.set([0x31], versionByteOffset)
       const mutatedBytes = Buffer.from(originalBytes)
-      mutatedBytes.set([originalVersionByte === 0x30 ? 0x31 : 0x30], versionByteOffset)
+      mutatedBytes.set([0x30], versionByteOffset)
       let changedByteCount = 0
       for (let index = 0; index < originalBytes.length; index += 1) {
         if (originalBytes.at(index) !== mutatedBytes.at(index)) {
@@ -185,14 +196,14 @@ describe('released wire fixtures', () => {
 
       const originalVerdict = decodeFrame(originalBytes.toString('utf8'))
       if (Result.isFailure(originalVerdict)) {
-        throw new Error(`current fixture unexpectedly rejected: ${originalVerdict.failure.reason}`)
+        throw new Error(`protocol-11 frame unexpectedly rejected: ${originalVerdict.failure.reason}`)
       }
       expect(originalVerdict.success).toStrictEqual(playerMove)
 
       const mutatedVerdict = decodeFrame(mutatedBytes.toString('utf8'))
       if (Result.isSuccess(mutatedVerdict)) {
         expect(mutatedVerdict.success).toStrictEqual(playerMove)
-        throw new Error('one-byte protocolVersion mutation was unexpectedly accepted')
+        throw new Error('one-byte mutation to protocol 10 was unexpectedly accepted')
       }
       expect(mutatedVerdict.failure.reason).toBe('unsupported-protocol-version')
     }),

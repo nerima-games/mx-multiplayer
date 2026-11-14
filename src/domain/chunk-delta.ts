@@ -22,9 +22,10 @@ import {
   wireFrameByteLength,
 } from './codec.js'
 import { PlayerId, type PlayerId as PlayerIdType } from './protocol/identifiers.js'
-import type { ReplicatedBlockChange } from '@nerima-games/mc-sim'
 
 export const MAX_C4_DELTA_FRAME_BYTES = 54_489
+
+type ProjectedBlockChange = ReplicatedWorldDelta['blockChanges'][number]
 
 export type DeltaProjectionRecipient = Readonly<{
   id: PlayerIdType
@@ -73,7 +74,7 @@ type RecipientFields = Readonly<{
 }>
 
 type ProjectionContext = Readonly<{
-  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ProjectedBlockChange>>
   delta: ReplicatedWorldDelta
   owners: ReplicatedOwnerRegistry
   recipient: ValidRecipient
@@ -87,7 +88,7 @@ type EncodedProjectionContext = Readonly<{
 }>
 
 type BatchProjectionContext = Readonly<{
-  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ProjectedBlockChange>>
   delta: ReplicatedWorldDelta
   owners: ReplicatedOwnerRegistry
   recipients: ReadonlyArray<ValidRecipient>
@@ -267,9 +268,9 @@ const makeResyncOutcome = (
 const visibleBlockChanges = (
   delta: ReplicatedWorldDelta,
   interest: AreaOfInterest,
-  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>,
-): ReadonlyArray<ReplicatedBlockChange> => {
-  const visibleChanges = new Set<ReplicatedBlockChange>()
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ProjectedBlockChange>>,
+): ReadonlyArray<ProjectedBlockChange> => {
+  const visibleChanges = new Set<ProjectedBlockChange>()
   for (const [key, group] of blockGroups) {
     if (areaOfInterestIncludesChunkKey(interest, key)) {
       for (const change of group) {
@@ -283,7 +284,7 @@ const visibleBlockChanges = (
 const projectedDelta = (
   delta: ReplicatedWorldDelta,
   recipient: ValidRecipient,
-  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>>,
+  blockGroups: ReadonlyMap<ChunkInterestKey, ReadonlyArray<ProjectedBlockChange>>,
 ): ReplicatedWorldDelta => ({
   _tag: 'ReplicatedWorldDelta',
   blockChanges: visibleBlockChanges(delta, recipient.interest, blockGroups),
@@ -335,9 +336,9 @@ const projectForRecipient = (
 }
 
 const groupBlockChanges = (
-  changes: ReadonlyArray<ReplicatedBlockChange>,
-): ReadonlyMap<ChunkInterestKey, ReadonlyArray<ReplicatedBlockChange>> => {
-  const groupedChanges = new Map<ChunkInterestKey, Array<ReplicatedBlockChange>>()
+  changes: ReadonlyArray<ProjectedBlockChange>,
+): ReadonlyMap<ChunkInterestKey, ReadonlyArray<ProjectedBlockChange>> => {
+  const groupedChanges = new Map<ChunkInterestKey, Array<ProjectedBlockChange>>()
   for (const change of changes) {
     const key = chunkInterestKeyForBlockChange(change)
     const group = groupedChanges.get(key)

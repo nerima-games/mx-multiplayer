@@ -42,7 +42,7 @@ export class RateLimitConfigurationError extends RateLimitConfigurationError_bas
   readonly field: ConnectionRateLimitConfigField | 'config'
 }> {}
 
-export type RateLimitInputErrorReason = 'invalid-frame-size' | 'invalid-time' | 'time-regressed'
+export type RateLimitInputErrorReason = 'invalid-frame-size' | 'invalid-message-kind' | 'invalid-time' | 'time-regressed'
 
 const RateLimitInputError_base: ReturnType<typeof Data.TaggedError<'RateLimitInputError'>> =
   Data.TaggedError('RateLimitInputError')
@@ -275,3 +275,221 @@ export const createConnectionRateLimiter = (
     })
   },
 )
+
+export type ConnectionMessageKind = 'chat' | 'command' | 'movement' | 'other'
+
+const CHAT_MESSAGE_WINDOW_MS_VALUE = 10_000
+const CHAT_MESSAGE_LIMIT_VALUE = 3
+const COMMAND_BURST_VALUE = 20
+const COMMAND_MESSAGES_PER_SECOND_VALUE = 10
+const MOVEMENT_BURST_VALUE = 40
+const MOVEMENT_MESSAGES_PER_SECOND_VALUE = 20
+const OTHER_BURST_VALUE = 80
+const OTHER_MESSAGES_PER_SECOND_VALUE = 25
+const positiveMessageLimit = (value: number): PositiveSafeInteger =>
+  Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(value)
+
+export const CHAT_MESSAGE_WINDOW_MS: PositiveSafeInteger = positiveMessageLimit(CHAT_MESSAGE_WINDOW_MS_VALUE)
+export const CHAT_MESSAGE_LIMIT: PositiveSafeInteger = positiveMessageLimit(CHAT_MESSAGE_LIMIT_VALUE)
+
+type MessageKindPolicy = Readonly<{
+  burst: PositiveSafeInteger
+  messagesPerSecond: PositiveSafeInteger
+}>
+
+type MessageKindRateLimits = Readonly<{
+  chat: Readonly<{
+    messages: PositiveSafeInteger
+    windowMs: PositiveSafeInteger
+  }>
+} & Readonly<Record<Exclude<ConnectionMessageKind, 'chat'>, MessageKindPolicy>>>
+
+const MESSAGE_KIND_POLICIES: Readonly<Record<Exclude<ConnectionMessageKind, 'chat'>, MessageKindPolicy>> = Object.freeze({
+  command: Object.freeze({
+    burst: positiveMessageLimit(COMMAND_BURST_VALUE),
+    messagesPerSecond: positiveMessageLimit(COMMAND_MESSAGES_PER_SECOND_VALUE),
+  }),
+  movement: Object.freeze({
+    burst: positiveMessageLimit(MOVEMENT_BURST_VALUE),
+    messagesPerSecond: positiveMessageLimit(MOVEMENT_MESSAGES_PER_SECOND_VALUE),
+  }),
+  other: Object.freeze({
+    burst: positiveMessageLimit(OTHER_BURST_VALUE),
+    messagesPerSecond: positiveMessageLimit(OTHER_MESSAGES_PER_SECOND_VALUE),
+  }),
+})
+
+export const MESSAGE_KIND_RATE_LIMITS: MessageKindRateLimits = Object.freeze({
+  chat: Object.freeze({ messages: CHAT_MESSAGE_LIMIT, windowMs: CHAT_MESSAGE_WINDOW_MS }),
+  ...MESSAGE_KIND_POLICIES,
+})
+
+export type MessageKindRateLimitReason = 'chat-window' | 'kind-rate'
+
+export type MessageKindRateLimitDetails = Readonly<{
+  kind: ConnectionMessageKind
+  limit: PositiveSafeInteger
+  reason: MessageKindRateLimitReason
+  requested: PositiveSafeInteger
+}>
+
+const MessageKindRateLimitExceeded_base: ReturnType<typeof Data.TaggedError<'MessageKindRateLimitExceeded'>> =
+  Data.TaggedError('MessageKindRateLimitExceeded')
+
+export class MessageKindRateLimitExceeded extends MessageKindRateLimitExceeded_base<MessageKindRateLimitDetails> {}
+
+export type MessageKindRateLimitFailure = RateLimitInputError | MessageKindRateLimitExceeded
+
+export type ConnectionMessageRateLimiter = Readonly<{
+  consume: (kind: unknown, nowMs: unknown) => Result.Result<void, MessageKindRateLimitFailure>
+}>
+
+type MessageKindBucket = {
+  readonly burst: PositiveSafeInteger
+  readonly messagesPerSecond: number
+  hasLastRefillAt: boolean
+  lastRefillAt: number
+  tokens: number
+}
+
+const makeMessageKindBucket = (
+  kind: Exclude<ConnectionMessageKind, 'chat'>,
+): MessageKindBucket => {
+  const policy = MESSAGE_KIND_POLICIES[kind]
+  return {
+    burst: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(policy.burst),
+    hasLastRefillAt: false,
+    lastRefillAt: ZERO,
+    messagesPerSecond: policy.messagesPerSecond,
+    tokens: policy.burst,
+  }
+}
+
+const isConnectionMessageKind = (value: unknown): value is ConnectionMessageKind =>
+  value === 'chat' || value === 'command' || value === 'movement' || value === 'other'
+
+const consumeChatMessage = (timestamps: Array<number>, nowMs: number): Result.Result<void, MessageKindRateLimitExceeded> => {
+  const cutoff = nowMs - CHAT_MESSAGE_WINDOW_MS
+  while (timestamps.length > ZERO) {
+    const oldest = timestamps[ZERO]
+    if (oldest === undefined || oldest > cutoff) {
+      break
+    }
+    timestamps.shift()
+  }
+  if (timestamps.length >= CHAT_MESSAGE_LIMIT) {
+    return Result.fail(new MessageKindRateLimitExceeded({
+      kind: 'chat',
+      limit: CHAT_MESSAGE_LIMIT,
+      reason: 'chat-window',
+      requested: positiveMessageLimit(ONE),
+    }))
+  }
+  timestamps.push(nowMs)
+  return Result.succeed(undefined)
+}
+
+const refillMessageKindBucket = (bucket: MessageKindBucket, nowMs: number): void => {
+  if (bucket.hasLastRefillAt) {
+    bucket.tokens = Math.min(
+      bucket.burst,
+      bucket.tokens + ((nowMs - bucket.lastRefillAt) * bucket.messagesPerSecond) / MILLISECONDS_PER_SECOND,
+    )
+  }
+  bucket.hasLastRefillAt = true
+  bucket.lastRefillAt = nowMs
+}
+
+const consumeMessageKindBucket = (
+  kind: Exclude<ConnectionMessageKind, 'chat'>,
+  bucket: MessageKindBucket,
+): Result.Result<void, MessageKindRateLimitExceeded> => {
+  if (bucket.tokens < ONE) {
+    return Result.fail(new MessageKindRateLimitExceeded({
+      kind,
+      limit: bucket.burst,
+      reason: 'kind-rate',
+      requested: Schema.decodeUnknownSync(PositiveSafeIntegerSchema)(ONE),
+    }))
+  }
+  bucket.tokens -= ONE
+  return Result.succeed(undefined)
+}
+
+type MessageRateLimiterState = {
+  buckets: Record<Exclude<ConnectionMessageKind, 'chat'>, MessageKindBucket>
+  chatTimestamps: Array<number>
+  hasLastObservedAt: boolean
+  lastObservedAt: number
+}
+
+type ValidatedMessageRateInput = Readonly<{
+  kind: ConnectionMessageKind
+  nowMs: number
+}>
+
+const decodeMessageRateInput = (
+  kindInput: unknown,
+  nowInput: unknown,
+): Result.Result<ValidatedMessageRateInput, RateLimitInputError> => {
+  if (!isConnectionMessageKind(kindInput)) {
+    return Result.fail(new RateLimitInputError({ reason: 'invalid-message-kind' }))
+  }
+  if (typeof nowInput !== 'number' || !Number.isFinite(nowInput) || nowInput < ZERO) {
+    return Result.fail(new RateLimitInputError({ reason: 'invalid-time' }))
+  }
+  return Result.succeed({ kind: kindInput, nowMs: nowInput })
+}
+
+const consumeMessageKind = (
+  state: MessageRateLimiterState,
+  kind: Exclude<ConnectionMessageKind, 'chat'>,
+  nowMs: number,
+): Result.Result<void, MessageKindRateLimitFailure> => {
+  const bucket = state.buckets[kind]
+  refillMessageKindBucket(bucket, nowMs)
+  return consumeMessageKindBucket(kind, bucket)
+}
+
+const consumeValidatedMessage = (
+  state: MessageRateLimiterState,
+  input: ValidatedMessageRateInput,
+): Result.Result<void, MessageKindRateLimitFailure> => {
+  if (state.hasLastObservedAt && input.nowMs < state.lastObservedAt) {
+    return Result.fail(new RateLimitInputError({ reason: 'time-regressed' }))
+  }
+  state.hasLastObservedAt = true
+  state.lastObservedAt = input.nowMs
+  if (input.kind === 'chat') {
+    return consumeChatMessage(state.chatTimestamps, input.nowMs)
+  }
+  return consumeMessageKind(state, input.kind, input.nowMs)
+}
+
+const consumeMessage = (
+  state: MessageRateLimiterState,
+  kindInput: unknown,
+  nowInput: unknown,
+): Result.Result<void, MessageKindRateLimitFailure> => {
+  const input = decodeMessageRateInput(kindInput, nowInput)
+  if (Result.isFailure(input)) {
+    return Result.fail(input.failure)
+  }
+  return consumeValidatedMessage(state, input.success)
+}
+
+export const createConnectionMessageRateLimiter = (): ConnectionMessageRateLimiter => {
+  const state: MessageRateLimiterState = {
+    buckets: {
+      command: makeMessageKindBucket('command'),
+      movement: makeMessageKindBucket('movement'),
+      other: makeMessageKindBucket('other'),
+    },
+    chatTimestamps: [],
+    hasLastObservedAt: false,
+    lastObservedAt: ZERO,
+  }
+  return Object.freeze({
+    consume: (kindInput: unknown, nowInput: unknown) => consumeMessage(state, kindInput, nowInput),
+  })
+}

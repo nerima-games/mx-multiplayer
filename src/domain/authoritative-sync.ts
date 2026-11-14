@@ -21,8 +21,8 @@ import {
   decodeTransferredSnapshotFrame,
 } from './codec.js'
 import { ProtocolError, SnapshotTransferConfigError } from './errors.js'
-import type { ReplicatedBlockChange, ReplicatedOwnerChange, WorldBlockRead } from '@nerima-games/mc-sim'
 import { Result, Schema } from 'effect'
+import type { ReplicatedOwnerChange } from '@nerima-games/mc-sim'
 import type { WorldRevision } from '@nerima-games/mc-kernel'
 
 const ZERO = 0
@@ -971,11 +971,13 @@ export const ReplicatedBlockKeySchema: Schema.brand<typeof Schema.String, 'Repli
 )
 export type ReplicatedBlockKey = typeof ReplicatedBlockKeySchema.Type
 
+type AuthoritativeWorldBlockRead = ReplicatedWorldSnapshot['blocks'][number]
+
 export type AuthoritativeWorldState = Readonly<{
   readonly world: WorldId
   readonly revision: WorldRevision
   readonly owners: ReadonlyMap<ReplicatedOwnerChange['owner'], ReplicatedOwnerChange['state']>
-  readonly blocks: ReadonlyMap<ReplicatedBlockKey, WorldBlockRead>
+  readonly blocks: ReadonlyMap<ReplicatedBlockKey, AuthoritativeWorldBlockRead>
 }>
 
 export type AuthoritativeClientSnapshot = ReadonlyMap<WorldId, AuthoritativeWorldState>
@@ -1002,7 +1004,9 @@ export type ClientSyncTransition =
       readonly state: AuthoritativeClientSnapshot
     }
 
-const blockAddress = (block: Pick<WorldBlockRead, 'dimension' | 'position'>): ReplicatedBlockKey =>
+type AuthoritativeWorldBlockChange = ReplicatedWorldDeltaMessage['blockChanges'][number]
+
+const blockAddress = (block: Pick<AuthoritativeWorldBlockRead, 'dimension' | 'position'>): ReplicatedBlockKey =>
   Schema.decodeUnknownSync(ReplicatedBlockKeySchema)(
     JSON.stringify([block.dimension, block.position.x, block.position.y, block.position.z]),
   )
@@ -1056,8 +1060,8 @@ const addOwnerChanges = (
 }
 
 const addBlockReads = (
-  target: Map<ReplicatedBlockKey, WorldBlockRead>,
-  blocks: ReadonlyArray<WorldBlockRead>,
+  target: Map<ReplicatedBlockKey, AuthoritativeWorldBlockRead>,
+  blocks: ReadonlyArray<AuthoritativeWorldBlockRead>,
 ): boolean => {
   const seen = new Set<string>()
   for (const block of blocks) {
@@ -1072,8 +1076,8 @@ const addBlockReads = (
 }
 
 const addBlockChanges = (
-  target: Map<ReplicatedBlockKey, WorldBlockRead>,
-  changes: ReadonlyArray<ReplicatedBlockChange>,
+  target: Map<ReplicatedBlockKey, AuthoritativeWorldBlockRead>,
+  changes: ReadonlyArray<AuthoritativeWorldBlockChange>,
 ): boolean => {
   const seen = new Set<string>()
   for (const change of changes) {
@@ -1086,6 +1090,7 @@ const addBlockChanges = (
       dimension: change.dimension,
       position: change.position,
       reading: { _tag: 'Block', block: change.after },
+      state: change.afterState,
     })
   }
   return true
@@ -1105,7 +1110,7 @@ const buildSnapshotWorld = (snapshot: ReplicatedWorldSnapshot): AuthoritativeWor
   if (!addOwnerChanges(owners, snapshot.owners)) {
     return 'duplicate-owner'
   }
-  const blocks = new Map<ReplicatedBlockKey, WorldBlockRead>()
+  const blocks = new Map<ReplicatedBlockKey, AuthoritativeWorldBlockRead>()
   if (!addBlockReads(blocks, snapshot.blocks)) {
     return 'duplicate-block'
   }
@@ -1134,7 +1139,7 @@ const buildDeltaWorld = (
   if (!addOwnerChanges(owners, delta.changes)) {
     return 'duplicate-owner'
   }
-  const blocks = new Map(current.blocks)
+  const blocks = new Map<ReplicatedBlockKey, AuthoritativeWorldBlockRead>(current.blocks)
   if (!addBlockChanges(blocks, delta.blockChanges)) {
     return 'duplicate-block'
   }

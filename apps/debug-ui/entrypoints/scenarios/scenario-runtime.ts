@@ -26,7 +26,7 @@ import {
   receiveMessage,
   sendMessage,
 } from '../../../../src/index.js'
-import { BlockIdSchema, BlockPositionSchema, DimensionRevisionSchema, SimulationTickSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { BlockIdSchema, BlockPositionSchema, DimensionRevisionSchema, EncodedBlockStateSchema, SimulationTickSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { Effect, Queue, Result, Schema } from 'effect'
 import type {
   ScenarioAction,
@@ -275,6 +275,7 @@ const scenarioProjectionSnapshot = (revision: number): ReplicatedWorldSnapshot =
     dimension: PROJECTION_DIMENSION,
     position: SCENARIO_PROJECTION_BLOCK_POSITION,
     reading: { _tag: 'Block', block: SCENARIO_PROJECTION_BLOCK_ID },
+    state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(ZERO),
   }],
   owners: [],
   revision: Schema.decodeUnknownSync(WorldRevisionSchema)(revision),

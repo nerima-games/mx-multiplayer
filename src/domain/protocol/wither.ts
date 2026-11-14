@@ -166,7 +166,6 @@ export type SummonWitherCommand = typeof SummonWitherCommand.Type
 export const DamageWitherCommand: Schema.TaggedStruct<
   'DamageWitherCommand',
   {
-    amount: typeof Schema.Number
     commandId: typeof CommandId
     expectedRevision: typeof Revision
     kind: typeof WitherDamageKind
@@ -174,7 +173,6 @@ export const DamageWitherCommand: Schema.TaggedStruct<
     witherId: typeof WitherEntryId
   }
 > = Schema.TaggedStruct('DamageWitherCommand', {
-  amount: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThan(ZERO))),
   commandId: CommandId,
   expectedRevision: Revision,
   kind: WitherDamageKind,

@@ -4,7 +4,7 @@ const reference = (file: `test/${string}`, line: number, testName: string): Test
 
 const messageRoundTrip = reference(
   'test/codec.test.ts',
-  1233,
+  1241,
   'every message decodes back to a value strictly equal to the one encoded',
 )
 const covered = (...tests: [TestReference, ...TestReference[]]): MatrixCell => ({ status: 'covered', tests })
@@ -18,7 +18,7 @@ const a1 = (...malformedTests: TestReference[]): MatrixCell => {
 const legacyWireCompatibility = covered(reference(
   'test/wire-fixtures.test.ts',
   124,
-  'pins current golden bytes and version rejection for every representative family',
+  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
 ))
 const noLegacyWireFixture = excluded(
   'X2 freezes representative legacy frames by family, but this tag has no tag-specific v0.11.0 or v0.12.0 frame fixture (test/wire-fixtures.test.ts:124).',
@@ -42,17 +42,17 @@ const a4RevisionGap = reference(
 )
 const a4StageResync = reference(
   'test/stage-registration.test.ts',
-  430,
+  431,
   'a C4 revision gap preserves the last applied view and queues a resync request',
 )
 const a4ChunkOrder = reference(
   'test/authoritative-sync.test.ts',
-  974,
+  1016,
   'rejects chunks that arrive out of order',
 )
 const a4TransferOrder = reference(
   'test/authoritative-sync.test.ts',
-  690,
+  694,
   'rejects invalid limits and frames outside an active transfer',
 )
 const a5WorldSnapshot = reference(
@@ -149,7 +149,7 @@ export const worldSync: Record<
   PlayerLeave: row(
     a1(reference(
       'test/codec.test.ts',
-      2611,
+      2694,
       'rejects an empty player id, so an unidentified peer cannot be addressed',
     )),
     a2NotCommand,
@@ -185,10 +185,10 @@ export const worldSync: Record<
     a1(
       reference(
         'test/codec.test.ts',
-        2498,
+        2581,
         'rejects a coordinate that arrived as null, which is what a NaN turns into over JSON',
       ),
-      reference('test/codec.test.ts', 2596, 'rejects a pitch outside the range a head can actually turn'),
+      reference('test/codec.test.ts', 2679, 'rejects a pitch outside the range a head can actually turn'),
     ),
     gap(
       'Movement carries a client-claimed player and position, but no server path applies it through authoritative command handling or rejects it there.',
@@ -254,7 +254,7 @@ export const worldSync: Record<
     ),
   ),
   BlockBreak: row(
-    a1(reference('test/codec.test.ts', 2508, 'rejects a non-integral block coordinate')),
+    a1(reference('test/codec.test.ts', 2591, 'rejects a non-integral block coordinate')),
     gap(
       'Breaking carries a client-claimed player and position, but no authoritative application path applies or explicitly rejects this tag.',
       'src/domain/protocol.ts:205-214',
@@ -321,7 +321,7 @@ export const worldSync: Record<
     excluded('WorldInfo is server world metadata and has no client operation or claimed player identity for A7 to validate.'),
   ),
   WorldSnapshot: row(
-    a1(reference('test/codec.test.ts', 2538, 'rejects malformed snapshot members and unknown rejection reasons')),
+    a1(reference('test/codec.test.ts', 2621, 'rejects malformed snapshot members and unknown rejection reasons')),
     excluded('A complete world snapshot establishes state; it is not a client gameplay command to apply or reject.'),
     gap(
       'WorldSnapshot supplies shared blocks and players, but no test compares its resulting state across multiple clients.',
@@ -329,9 +329,9 @@ export const worldSync: Record<
       'src/stages/registration.ts:450-452',
     ),
     covered(
-      reference('test/authoritative-sync.test.ts', 310, 'requires a snapshot before applying incremental updates'),
-      reference('test/authoritative-sync.test.ts', 328, 'detects missing revisions without advancing past the gap'),
-      reference('test/authoritative-sync.test.ts', 347, 'rejects delayed snapshots and duplicate live updates'),
+      reference('test/authoritative-sync.test.ts', 314, 'requires a snapshot before applying incremental updates'),
+      reference('test/authoritative-sync.test.ts', 332, 'detects missing revisions without advancing past the gap'),
+      reference('test/authoritative-sync.test.ts', 351, 'rejects delayed snapshots and duplicate live updates'),
     ),
     covered(a5WorldSnapshot),
     gap(
@@ -343,7 +343,7 @@ export const worldSync: Record<
     a7NotClientOperation,
   ),
   BlockMutationRejected: row(
-    a1(reference('test/codec.test.ts', 2538, 'rejects malformed snapshot members and unknown rejection reasons')),
+    a1(reference('test/codec.test.ts', 2621, 'rejects malformed snapshot members and unknown rejection reasons')),
     excluded('BlockMutationRejected reports an already rejected mutation; it is not the command being applied.'),
     a3NotState,
     gap(
@@ -473,14 +473,14 @@ export const worldSync: Record<
   ReplicatedWorldDelta: row(
     a1(reference(
       'test/codec.test.ts',
-      1885,
+      1939,
       'rejects duplicate registrations, unknown owners, duplicate changes, and invalid owner state',
     )),
     excluded('ReplicatedWorldDelta is authoritative state replication, not a client gameplay command.'),
     covered(a3Convergence),
     covered(a4RevisionGap, reference(
       'test/authoritative-sync.test.ts',
-      557,
+      561,
       'rejects a revision gap without advancing or applying group members',
     ), a4StageResync),
     covered(a3Convergence),
@@ -490,14 +490,14 @@ export const worldSync: Record<
   ReplicatedWorldSnapshot: row(
     a1(reference(
       'test/codec.test.ts',
-      2010,
+      2064,
       'requires a registry and its block-read allowance for C4 snapshots',
     )),
     excluded('ReplicatedWorldSnapshot is authoritative state replication, not a client gameplay command.'),
     covered(a3Convergence),
     covered(
-      reference('test/authoritative-sync.test.ts', 435, 'rejects stale snapshots and a duplicate revision at the safe integer ceiling'),
-      reference('test/authoritative-sync.test.ts', 605, 'replaces the current projection with a same-revision resync snapshot'),
+      reference('test/authoritative-sync.test.ts', 439, 'rejects stale snapshots and a duplicate revision at the safe integer ceiling'),
+      reference('test/authoritative-sync.test.ts', 609, 'replaces the current projection with a same-revision resync snapshot'),
     ),
     covered(a3Convergence),
     gap(

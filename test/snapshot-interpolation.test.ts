@@ -1,13 +1,19 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
+import * as fc from 'fast-check'
 import {
+  EntityId,
   PlayerId,
+  type EntityTransformSnapshot,
   type PlayerTransformSnapshot,
+  createServerCorrectionPlan,
   SnapshotInterpolator,
 } from '../src/index'
 
 const alice = PlayerId.make('alice')
 const bob = PlayerId.make('bob')
+const zombie = EntityId.make('zombie-1')
+const skeleton = EntityId.make('skeleton-1')
 const snapshot = (
   sequence: number,
   tick: number,
@@ -16,6 +22,12 @@ const snapshot = (
 ): PlayerTransformSnapshot => ({
   at: { x, y: 64, z: 0 },
   facing: { pitchRadians: 0, yawRadians },
+  sequence,
+  tick,
+})
+
+const entitySnapshot = (sequence: number, tick: number, x: number): EntityTransformSnapshot => ({
+  at: { x, y: 64, z: 0 },
   sequence,
   tick,
 })
@@ -33,6 +45,44 @@ describe('snapshot admission and history', () => {
       expect(subject.ingest(alice, snapshot(5, 9, 1))).toEqual({ accepted: false, reason: 'duplicate-or-stale' })
       expect(subject.ingest(alice, snapshot(5.5, 12, 1))).toEqual({ accepted: false, reason: 'invalid' })
       expect(subject.historySize(alice)).toBe(1)
+    }),
+  )
+
+  it.effect('property-checks player admission as a typed result for arbitrary JSON inputs', () =>
+    Effect.sync(() => {
+      fc.assert(
+        fc.property(fc.jsonValue(), (input) => {
+          const result = makeSubject().ingest(alice, input)
+          expect(typeof result.accepted).toBe('boolean')
+          if (result.accepted) {
+            expect(Number.isSafeInteger(result.historySize)).toBe(true)
+          } else {
+            expect(['invalid', 'duplicate-or-stale']).toContain(result.reason)
+          }
+        }),
+        { numRuns: 100, seed: 38_400 },
+      )
+    }),
+  )
+
+  it.effect('rejects non-record positions and facings, and clears every entity history on disconnect', () =>
+    Effect.sync(() => {
+      const subject = makeSubject()
+      expect(subject.ingest(alice, { ...snapshot(1, 10, 0), at: null })).toEqual({
+        accepted: false,
+        reason: 'invalid',
+      })
+      expect(subject.ingest(alice, { ...snapshot(1, 10, 0), facing: null })).toEqual({
+        accepted: false,
+        reason: 'invalid',
+      })
+
+      subject.ingestEntity(zombie, entitySnapshot(1, 10, 0))
+      subject.ingestEntity(skeleton, entitySnapshot(1, 10, 1))
+      subject.disconnectEntity()
+
+      expect(subject.entityHistorySize(zombie)).toBe(0)
+      expect(subject.entityHistorySize(skeleton)).toBe(0)
     }),
   )
 
@@ -86,23 +136,27 @@ describe('deterministic interpolation', () => {
     }),
   )
 
-  it.effect('treats a gap exactly at teleportDistance as a teleport, not a lerp target one unit short', () =>
+  it.effect('teleports only when movement exceeds teleportDistance', () =>
     Effect.sync(() => {
-      // A movement distance strictly greater than the threshold (the case above)
-      // cannot distinguish `>=` from `>` on the boundary itself.
       const subject = makeSubject(4, 8)
       const before = snapshot(1, 0, 0)
       const exactlyAtThreshold = snapshot(2, 10, 8)
       subject.ingest(alice, before)
       subject.ingest(alice, exactlyAtThreshold)
-      // Midway in tick, but a lerp would place x at 4 — a teleport snap must not.
-      expect(subject.sample(alice, 5)?.at.x).toBe(0)
+      expect(subject.sample(alice, 5)?.at.x).toBe(4)
 
       const justBelowThreshold = makeSubject(4, 8)
       const near = snapshot(2, 10, 7.999)
       justBelowThreshold.ingest(alice, before)
       justBelowThreshold.ingest(alice, near)
       expect(justBelowThreshold.sample(alice, 5)?.at.x).toBeCloseTo(3.9995)
+
+      const justAboveThreshold = makeSubject(4, 8)
+      const far = snapshot(2, 10, 8.001)
+      justAboveThreshold.ingest(alice, before)
+      justAboveThreshold.ingest(alice, far)
+      expect(justAboveThreshold.sample(alice, 5)?.at.x).toBe(0)
+      expect(justAboveThreshold.sample(alice, 10)?.at.x).toBe(8.001)
     }),
   )
 
@@ -156,6 +210,231 @@ describe('deterministic interpolation', () => {
       // teleporting pair's later tick, which is the case boundary checks alone
       // cannot cover.
       expect(subject.sample(alice, 20)).toBe(teleported)
+    }),
+  )
+})
+
+describe('entity interpolation', () => {
+  it.effect('samples independent entity histories at server ticks', () =>
+    Effect.sync(() => {
+      const subject = makeSubject(4, 16)
+      subject.ingestEntity(zombie, entitySnapshot(1, 10, 2))
+      subject.ingestEntity(zombie, entitySnapshot(2, 20, 10))
+      subject.ingestEntity(skeleton, entitySnapshot(1, 10, 40))
+
+      expect(subject.sampleEntity(zombie, 15)).toStrictEqual({
+        at: { x: 6, y: 64, z: 0 },
+        sequence: 2,
+        tick: 15,
+      })
+      expect(subject.sampleEntity(skeleton, 15)?.at.x).toBe(40)
+      expect(subject.entityHistorySize(zombie)).toBe(2)
+      expect(subject.historySize(alice)).toBe(0)
+    }),
+  )
+
+  it.effect('rejects invalid and stale entity snapshots without growing their history', () =>
+    Effect.sync(() => {
+      const subject = makeSubject()
+      expect(subject.ingestEntity(zombie, entitySnapshot(1, 10, 0))).toEqual({ accepted: true, historySize: 1 })
+      expect(subject.ingestEntity(zombie, entitySnapshot(2, 9, 1))).toEqual({ accepted: false, reason: 'duplicate-or-stale' })
+      expect(subject.ingestEntity(zombie, entitySnapshot(2, 11, Number.NaN))).toEqual({ accepted: false, reason: 'invalid' })
+      expect(subject.entityHistorySize(zombie)).toBe(1)
+    }),
+  )
+
+  it.effect('property-checks entity admission as a typed result for arbitrary JSON inputs', () =>
+    Effect.sync(() => {
+      const subject = makeSubject()
+      fc.assert(
+        fc.property(fc.jsonValue(), (input) => {
+          const result = subject.ingestEntity(zombie, input)
+          expect(typeof result.accepted).toBe('boolean')
+          if (result.accepted) {
+            expect(Number.isSafeInteger(result.historySize)).toBe(true)
+          } else {
+            expect(['invalid', 'duplicate-or-stale']).toContain(result.reason)
+          }
+        }),
+        { numRuns: 100, seed: 38_404 },
+      )
+    }),
+  )
+
+  it.effect('property-checks tick interpolation for positions below the teleport threshold', () =>
+    Effect.sync(() => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 0, max: 1_000_000 }),
+          fc.integer({ min: 1, max: 100 }),
+          fc.integer({ min: 0, max: 1_000 }),
+          fc.integer({ min: 0, max: 15 }),
+          (startTick, tickSpan, startX, distance) => {
+            const subject = makeSubject(4, 16)
+            subject.ingestEntity(zombie, entitySnapshot(1, startTick, startX))
+            subject.ingestEntity(zombie, entitySnapshot(2, startTick + tickSpan, startX + distance))
+
+            const renderTick = startTick + tickSpan / 2
+            expect(subject.sampleEntity(zombie, renderTick)?.at.x).toBe(startX + distance / 2)
+            expect(subject.sampleEntity(zombie, renderTick)?.tick).toBe(renderTick)
+          },
+        ),
+        { numRuns: 100, seed: 38_401 },
+      )
+    }),
+  )
+
+  it.effect('teleports entity positions only above the threshold', () =>
+    Effect.sync(() => {
+      const exact = makeSubject(4, 8)
+      exact.ingestEntity(zombie, entitySnapshot(1, 0, 0))
+      exact.ingestEntity(zombie, entitySnapshot(2, 10, 8))
+      expect(exact.sampleEntity(zombie, 5)?.at.x).toBe(4)
+
+      const below = makeSubject(4, 8)
+      below.ingestEntity(zombie, entitySnapshot(1, 0, 0))
+      below.ingestEntity(zombie, entitySnapshot(2, 10, 7.999))
+      expect(below.sampleEntity(zombie, 5)?.at.x).toBeCloseTo(3.9995)
+
+      const above = makeSubject(4, 8)
+      above.ingestEntity(zombie, entitySnapshot(1, 0, 0))
+      above.ingestEntity(zombie, entitySnapshot(2, 10, 8.001))
+      expect(above.sampleEntity(zombie, 5)?.at.x).toBe(0)
+      expect(above.sampleEntity(zombie, 10)?.at.x).toBe(8.001)
+    }),
+  )
+
+  it.effect('clears entity history with its entity and on transport close', () =>
+    Effect.sync(() => {
+      const subject = makeSubject()
+      subject.ingestEntity(zombie, entitySnapshot(1, 1, 1))
+      subject.ingestEntity(skeleton, entitySnapshot(1, 1, 2))
+
+      subject.disconnectEntity(zombie)
+      expect(subject.sampleEntity(zombie, 1)).toBeUndefined()
+      expect(subject.sampleEntity(skeleton, 1)?.at.x).toBe(2)
+
+      subject.disconnect()
+      expect(subject.entityHistorySize(skeleton)).toBe(0)
+    }),
+  )
+})
+
+describe('server correction interpolation', () => {
+  const from = { x: 0, y: 2, z: 4 }
+  const to = { x: 8, y: 6, z: 12 }
+
+  it.effect('moves a normal correction over its configured simulation ticks', () =>
+    Effect.sync(() => {
+      const plan = Result.getOrThrow(createServerCorrectionPlan({
+        correctionDurationTicks: 4,
+        from,
+        startTick: 20,
+        teleportDistance: 16,
+        to,
+      }))
+
+      expect(Result.getOrThrow(plan.sample(19))).toEqual(from)
+      expect(Result.getOrThrow(plan.sample(20))).toEqual(from)
+      expect(Result.getOrThrow(plan.sample(22))).toEqual({ x: 4, y: 4, z: 8 })
+      expect(Result.getOrThrow(plan.sample(24))).toEqual(to)
+      expect(Result.getOrThrow(plan.sample(100))).toEqual(to)
+      expect(plan.sample(Number.NaN)).toMatchObject({ _tag: 'Failure', failure: { reason: 'invalid-sample-tick' } })
+    }),
+  )
+
+  it.effect('applies a correction immediately only when it exceeds the teleport threshold', () =>
+    Effect.sync(() => {
+      const exact = Result.getOrThrow(createServerCorrectionPlan({
+        correctionDurationTicks: 4,
+        from,
+        startTick: 20,
+        teleportDistance: 8,
+        to: { x: 8, y: 2, z: 4 },
+      }))
+      expect(Result.getOrThrow(exact.sample(20))).toEqual(from)
+      expect(Result.getOrThrow(exact.sample(22))).toEqual({ x: 4, y: 2, z: 4 })
+
+      const gradual = Result.getOrThrow(createServerCorrectionPlan({
+        correctionDurationTicks: 4,
+        from,
+        startTick: 20,
+        teleportDistance: 8,
+        to: { x: 7.999, y: 2, z: 4 },
+      }))
+      expect(Result.getOrThrow(gradual.sample(20))).toEqual(from)
+      expect(Result.getOrThrow(gradual.sample(22))).toEqual({ x: 3.9995, y: 2, z: 4 })
+      expect(Result.getOrThrow(gradual.sample(24))).toEqual({ x: 7.999, y: 2, z: 4 })
+
+      const teleport = Result.getOrThrow(createServerCorrectionPlan({
+        correctionDurationTicks: 4,
+        from,
+        startTick: 20,
+        teleportDistance: 8,
+        to: { x: 8.001, y: 2, z: 4 },
+      }))
+      expect(Result.getOrThrow(teleport.sample(19))).toEqual(from)
+      expect(Result.getOrThrow(teleport.sample(20))).toEqual({ x: 8.001, y: 2, z: 4 })
+    }),
+  )
+
+  it.effect('property-checks correction samples from absolute tick inputs', () =>
+    Effect.sync(() => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 0, max: 1_000_000 }),
+          fc.integer({ min: 1, max: 100 }),
+          fc.integer({ min: -1_000, max: 1_000 }),
+          fc.integer({ min: -1_000, max: 1_000 }),
+          (startTick, durationTicks, startX, targetX) => {
+            const plan = Result.getOrThrow(createServerCorrectionPlan({
+              correctionDurationTicks: durationTicks,
+              from: { x: startX, y: 0, z: 0 },
+              startTick,
+              teleportDistance: 10_000,
+              to: { x: targetX, y: 0, z: 0 },
+            }))
+            const halfwayTick = startTick + durationTicks / 2
+            const expectedMidpoint = (startX + targetX) / 2
+
+            expect(Result.getOrThrow(plan.sample(startTick))).toEqual({ x: startX, y: 0, z: 0 })
+            expect(Result.getOrThrow(plan.sample(halfwayTick))).toEqual({ x: expectedMidpoint, y: 0, z: 0 })
+            expect(Result.getOrThrow(plan.sample(startTick + durationTicks))).toEqual({ x: targetX, y: 0, z: 0 })
+          },
+        ),
+        { numRuns: 100, seed: 38_402 },
+      )
+    }),
+  )
+
+  it.effect('returns typed failures for invalid plans and ticks', () =>
+    Effect.sync(() => {
+      expect(createServerCorrectionPlan(null)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'ServerCorrectionError', reason: 'invalid-plan-input' },
+      })
+      expect(createServerCorrectionPlan({
+        correctionDurationTicks: 0,
+        from,
+        startTick: 20,
+        teleportDistance: 8,
+        to,
+      })).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'ServerCorrectionError', reason: 'invalid-plan-input' },
+      })
+
+      fc.assert(
+        fc.property(fc.jsonValue(), (input) => {
+          const result = createServerCorrectionPlan(input)
+          if (Result.isFailure(result)) {
+            expect(result.failure).toMatchObject({ _tag: 'ServerCorrectionError', reason: 'invalid-plan-input' })
+          } else {
+            expect(Result.isSuccess(result.success.sample(0))).toBe(true)
+          }
+        }),
+        { numRuns: 100, seed: 38_403 },
+      )
     }),
   )
 })

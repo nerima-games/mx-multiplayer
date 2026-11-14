@@ -207,6 +207,8 @@ try {
       "isAllowedWebSocketOrigin",
       "TransportSecurityError",
       "createReconnectAuth",
+      "MAX_SERVER_CONNECTIONS",
+      "createServerAdapter",
       "frameTag",
       "unknownRecord",
     ])};
@@ -268,15 +270,22 @@ import {
   initialConnectionState,
   transition,
   PROTOCOL_VERSION,
+  createServerAdapter,
+  MAX_SERVER_CONNECTIONS,
   MULTIPLAYER_STAGE_IDS,
   type NetworkMessage,
   type ConnectionState,
+  type ServerAdapter,
+  type ServerAdapterConfiguration,
 } from ${JSON.stringify(packageName)}
 
 const player: PlayerId = PlayerId.make('declaration-probe-player')
 const message: NetworkMessage = PlayerLeave.make({ player })
 const encoded = encodeFrame(message)
 const nextState: ConnectionState | undefined = transition(initialConnectionState, { _tag: 'ConnectRequested' })
+const serverAdapterFactory: typeof createServerAdapter = createServerAdapter
+type Adapter = ServerAdapter
+type AdapterConfig = ServerAdapterConfiguration<never>
 
 if (PROTOCOL_VERSION < 0) {
   throw new Error('Protocol version declaration consumer returned an invalid result')
@@ -284,9 +293,14 @@ if (PROTOCOL_VERSION < 0) {
 if (MULTIPLAYER_STAGE_IDS.inbound.length === 0) {
   throw new Error('Stage id declaration consumer returned an invalid result')
 }
+if (MAX_SERVER_CONNECTIONS !== 20) {
+  throw new Error('Server adapter connection limit did not match its declaration')
+}
 void encoded
 void decodeFrame
 void nextState
+void serverAdapterFactory
+void (null as unknown as Adapter | AdapterConfig)
 `;
   if (typeConsumerSource.trim().length === 0) {
     throw new Error("TypeScript consumer source must not be empty");

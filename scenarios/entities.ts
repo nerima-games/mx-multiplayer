@@ -6,7 +6,8 @@ const ZERO = 0
 const ONE = 1
 const TWO = 2
 const THREE = 3
-const UNSUPPORTED_COMMAND_COUNT = 7
+const FOUR = 4
+const UNSUPPORTED_COMMAND_COUNT = 6
 const WORLD = WorldId.make('overworld')
 const PLAYER_A = PlayerId.make('scenario-player-a')
 const PLAYER_B = PlayerId.make('scenario-player-b')
@@ -61,7 +62,7 @@ const commandHeader = (commandId: string, player: typeof PLAYER_A | typeof PLAYE
 
 const commands = (prefix: string, player = PLAYER_A): ReadonlyArray<EntityCommand> => [
   { ...commandHeader(`${prefix}-weather`, player), _tag: 'WorldTimeWeatherCommand', action: { _tag: 'set-weather', weather: 'rain' } },
-  { ...commandHeader(`${prefix}-attack`, player), _tag: 'EntityAttackCommand', entityId: ENTITY },
+  { ...commandHeader(`${prefix}-attack`, player), _tag: 'EntityAttackCommand', entityId: ENTITY, heldSlot: ZERO },
   { ...commandHeader(`${prefix}-pickup`, player), _tag: 'EntityPickupCommand', entityId: ENTITY },
   { ...commandHeader(`${prefix}-bow`, player), _tag: 'BowUseCommand', action: 'start' },
   { ...commandHeader(`${prefix}-tnt`, player), _tag: 'IgniteTntCommand', at: { x: ONE, y: 64, z: TWO } },
@@ -169,7 +170,7 @@ const evaluateAuthority = ({ authority, clients, frame, wireLog }: ScenarioEvalu
   const entries = wireLog.filter((entry) => ENTITIES_COMMAND_TAGS.includes(entry.tag as typeof ENTITIES_COMMAND_TAGS[number]))
   const expected: ReadonlyArray<ExpectedDecision> = [
     { outcome: 'rejected', result: `${COMMAND_UNSUPPORTED}no-matching-c2-intent-payload`, tag: 'WorldTimeWeatherCommand' },
-    { outcome: 'rejected', result: `${COMMAND_UNSUPPORTED}intent-payload-does-not-preserve-command`, tag: 'EntityAttackCommand' },
+    { outcome: 'accepted', result: CANONICAL_INTENT_ACCEPTED, tag: 'EntityAttackCommand' },
     { outcome: 'rejected', result: `${COMMAND_UNSUPPORTED}no-matching-c2-intent-payload`, tag: 'EntityPickupCommand' },
     { outcome: 'accepted', result: CANONICAL_INTENT_ACCEPTED, tag: 'BowUseCommand' },
     { outcome: 'rejected', result: `${COMMAND_UNSUPPORTED}no-matching-c2-intent-payload`, tag: 'IgniteTntCommand' },
@@ -181,9 +182,9 @@ const evaluateAuthority = ({ authority, clients, frame, wireLog }: ScenarioEvalu
   ]
   const accepted = clients.reduce((count, client) => count + client.accepted, ZERO)
   const rejected = clients.reduce((count, client) => count + client.rejected, ZERO)
-  if (decisionsMatch(entries, expected) && accepted === THREE && rejected === UNSUPPORTED_COMMAND_COUNT
-    && authority.acceptedCommands === THREE && authority.rejectedCommands === UNSUPPORTED_COMMAND_COUNT) {
-    return pass('three representable commands produced canonical intents and seven unsupported commands were rejected')
+  if (decisionsMatch(entries, expected) && accepted === FOUR && rejected === UNSUPPORTED_COMMAND_COUNT
+    && authority.acceptedCommands === FOUR && authority.rejectedCommands === UNSUPPORTED_COMMAND_COUNT) {
+    return pass('four representable commands produced canonical intents and six unsupported commands were rejected')
   }
   return fail('entities-group command authority outcomes changed')
 }

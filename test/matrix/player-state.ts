@@ -4,32 +4,32 @@ const reference = (file: `test/${string}`, line: number, testName: string): Test
 
 const messageRoundTrip = reference(
   'test/codec.test.ts',
-  1233,
+  1241,
   'every message decodes back to a value strictly equal to the one encoded',
 )
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'pins current golden bytes and version rejection for every representative family',
+  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
 )
 const malformedInventoryAction = reference(
   'test/codec.test.ts',
-  2621,
+  2704,
   'rejects command actions whose discriminant and payload cannot be executed',
 )
 const malformedInventoryDelta = reference(
   'test/codec.test.ts',
-  2694,
+  2777,
   'rejects malformed gameplay extension payloads',
 )
 const malformedDamage = reference(
   'test/codec.test.ts',
-  2720,
+  2803,
   'rejects malformed anvil, crafting and player-damage payloads',
 )
 const malformedStatusEffects = reference(
   'test/codec.test.ts',
-  2749,
+  2832,
   'rejects malformed brewing and status-effect payloads',
 )
 const malformedVitalsAndDamageResults = reference(

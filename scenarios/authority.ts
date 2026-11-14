@@ -26,8 +26,7 @@ import {
   encodeFrame,
   sha256Hex,
 } from '../src/index.js'
-import { BlockIdSchema, type BlockPosition, BlockPositionSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
-import type { ReplicatedBlockChange, WorldBlockRead } from '@nerima-games/mc-sim'
+import { BlockIdSchema, type BlockPosition, BlockPositionSchema, EncodedBlockStateSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { Result, Schema } from 'effect'
 import type { ScenarioAction, ScenarioDefinition, ScenarioEvaluationInput, ScenarioVerdict } from './types.js'
 
@@ -64,6 +63,7 @@ const BLOCK_POSITION: BlockPosition = Schema.decodeUnknownSync(BlockPositionSche
 const INITIAL_BLOCK_ID = Schema.decodeUnknownSync(BlockIdSchema)(ONE)
 const UPDATED_BLOCK_ID = Schema.decodeUnknownSync(BlockIdSchema)(TWO)
 const GAP_BLOCK_ID = Schema.decodeUnknownSync(BlockIdSchema)(THREE)
+const ZERO_BLOCK_STATE = Schema.decodeUnknownSync(EncodedBlockStateSchema)(ZERO)
 
 const EMPTY_OWNER_REGISTRY_LIMITS = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxCollectionItems: MAXIMUM_FRAME_ITEMS,
@@ -83,7 +83,6 @@ const UNSUPPORTED_COMMAND_TAGS = [
   'ContainerCommand',
   'EndPortalUseCommand',
   'EnderPearlCommand',
-  'EntityAttackCommand',
   'EntityPickupCommand',
   'FurnaceCommand',
   'IgniteTntCommand',
@@ -106,7 +105,6 @@ export const S3_EXPECTED_UNSUPPORTED_COMMAND_REASONS: Readonly<Record<Unsupporte
   ContainerCommand: NO_MATCHING_INTENT,
   EndPortalUseCommand: NO_MATCHING_INTENT,
   EnderPearlCommand: DOES_NOT_PRESERVE_COMMAND,
-  EntityAttackCommand: DOES_NOT_PRESERVE_COMMAND,
   EntityPickupCommand: NO_MATCHING_INTENT,
   FurnaceCommand: NO_MATCHING_INTENT,
   IgniteTntCommand: NO_MATCHING_INTENT,
@@ -153,7 +151,6 @@ const makeUnsupportedCommand = (tag: UnsupportedCommandTag, commandId: string): 
       return { ...header, _tag: tag, portal: position() }
     case 'EnderPearlCommand':
       return { ...header, _tag: tag }
-    case 'EntityAttackCommand':
     case 'EntityPickupCommand':
       return { ...header, _tag: tag, entityId: EntityId.make('s3-entity') }
     case 'FurnaceCommand':
@@ -204,18 +201,21 @@ const unsupportedCommands = (seed: number): ReadonlyArray<Readonly<{ command: Au
   },
 ]
 
-const makeBlockRead = (block: typeof INITIAL_BLOCK_ID | typeof UPDATED_BLOCK_ID | typeof GAP_BLOCK_ID): WorldBlockRead => ({
+const makeBlockRead = (block: typeof INITIAL_BLOCK_ID | typeof UPDATED_BLOCK_ID | typeof GAP_BLOCK_ID): ReplicatedWorldSnapshot['blocks'][number] => ({
   dimension: 'overworld',
   position: BLOCK_POSITION,
   reading: { _tag: 'Block', block },
+  state: ZERO_BLOCK_STATE,
 })
 
 const makeBlockChange = (
   before: typeof INITIAL_BLOCK_ID,
   after: typeof UPDATED_BLOCK_ID | typeof GAP_BLOCK_ID,
-): ReplicatedBlockChange => ({
+): ReplicatedWorldDeltaMessage['blockChanges'][number] => ({
   after,
+  afterState: ZERO_BLOCK_STATE,
   before,
+  beforeState: ZERO_BLOCK_STATE,
   dimension: 'overworld',
   position: BLOCK_POSITION,
 })
@@ -228,7 +228,7 @@ const makeSnapshot = (revision: number): ReplicatedWorldSnapshot => ({
   world: WORLD_ID,
 })
 
-const makeDelta = (revision: number, blockChange: ReplicatedBlockChange): ReplicatedWorldDeltaMessage => ({
+const makeDelta = (revision: number, blockChange: ReplicatedWorldDeltaMessage['blockChanges'][number]): ReplicatedWorldDeltaMessage => ({
   _tag: 'ReplicatedWorldDelta',
   blockChanges: [blockChange],
   changes: [],

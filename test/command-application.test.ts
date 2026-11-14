@@ -222,10 +222,6 @@ describe('applyAuthoritativeCommand', () => {
         reason: 'no-matching-c2-intent-payload',
       },
       {
-        command: { ...command('EntityPickupCommand', 'attack'), _tag: 'EntityAttackCommand' },
-        reason: 'intent-payload-does-not-preserve-command',
-      },
-      {
         command: { ...commandHeader('ignite-tnt'), _tag: 'IgniteTntCommand', at: { x: 0, y: 64, z: 0 } },
         reason: 'no-matching-c2-intent-payload',
       },
@@ -375,6 +371,40 @@ describe('applyAuthoritativeCommand', () => {
     if (Exit.isFailure(result)) {
       expect(Schema.isSchemaError(Cause.squash(result.cause))).toBe(true)
     }
+    expect(harness.lookups).toBe(0)
+    expect(harness.mutations).toBe(0)
+  })
+
+  it('maps entity attacks to server-owned melee intents and rejects client-selected damage fields', async () => {
+    const harness = makeHarness()
+    const attack: AuthoritativeCommand = {
+      ...commandHeader('attack-intent'),
+      _tag: 'EntityAttackCommand',
+      entityId: EntityId.make('entity-1'),
+      heldSlot: 4,
+    }
+    const apply = applyAuthoritativeCommand(harness.session, harness.services, intentContext(harness.identity))
+    const applied = await Effect.runPromise(apply(attack))
+    expect(applied).toMatchObject({
+      _tag: 'AuthoritativeCommandIntentAccepted',
+      intent: { payload: { _tag: 'MeleeAttack', actor: alice } },
+    })
+
+    const clientSelectedEffects: ReadonlyArray<unknown> = [
+      { ...attack, damage: 12 },
+      { ...attack, critical: true },
+      { ...attack, rollSeed: 42 },
+    ]
+    const invalidCommandResults = await Promise.all(
+      clientSelectedEffects.map((candidate) => Effect.runPromiseExit(apply(candidate))),
+    )
+    for (const result of invalidCommandResults) {
+      expect(Exit.isFailure(result)).toBe(true)
+      if (Exit.isFailure(result)) {
+        expect(Schema.isSchemaError(Cause.squash(result.cause))).toBe(true)
+      }
+    }
+
     expect(harness.lookups).toBe(0)
     expect(harness.mutations).toBe(0)
   })

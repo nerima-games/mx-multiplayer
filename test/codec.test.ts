@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
-import { BlockPositionSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { BlockPositionSchema, EncodedBlockStateSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
 import { makeReplicatedOwnerId, type ReplicatedOwnerRegistration } from '@nerima-games/mc-sim'
 import { Effect, Result, Option, Schema } from 'effect'
 import {
@@ -124,7 +124,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     revision: 12,
     world: overworld,
   },
-  BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: alice },
+  BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: alice, state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0) },
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
   BrewingCommand: { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: 0 }, at: { x: 1, y: 64, z: 1 } },
   BrewingCommandAccepted: { _tag: 'BrewingCommandAccepted', commandId, revision: 13 },
@@ -146,7 +146,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   DamageEnderDragonCommand: { _tag: 'DamageEnderDragonCommand', commandId, expectedRevision: 12, player: alice },
   DamageEnderDragonCommandAccepted: { _tag: 'DamageEnderDragonCommandAccepted', commandId, revision: 13 },
   DamageEnderDragonCommandRejected: { _tag: 'DamageEnderDragonCommandRejected', commandId, reason: 'stale-revision', revision: 12 },
-  DamageWitherCommand: { _tag: 'DamageWitherCommand', amount: 4, commandId, expectedRevision: 12, kind: 'melee', player: alice, witherId: 'wither-1' },
+  DamageWitherCommand: { _tag: 'DamageWitherCommand', commandId, expectedRevision: 12, kind: 'melee', player: alice, witherId: 'wither-1' },
   SummonWitherCommand: { _tag: 'SummonWitherCommand', commandId, dimension: 'end', expectedRevision: 12, player: alice, position: { x: 0, y: 70, z: 0 } },
   WitherCommandAccepted: { _tag: 'WitherCommandAccepted', commandId, revision: 13 },
   WitherCommandRejected: { _tag: 'WitherCommandRejected', commandId, reason: 'invalid-command', revision: 12 },
@@ -185,7 +185,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
     snapshot: { health: 200, phase: 'circling', phaseTimerSecs: 0, rewardEmitted: false },
   },
   EnderPearlCommand: { _tag: 'EnderPearlCommand', ...commandHeader },
-  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...commandHeader, entityId },
+  EntityAttackCommand: { _tag: 'EntityAttackCommand', ...commandHeader, entityId, heldSlot: 0 },
   EntityDespawnDelta: { _tag: 'EntityDespawnDelta', entityId, revision: 13, world: overworld },
   EntityPickupCommand: { _tag: 'EntityPickupCommand', ...commandHeader, entityId },
   EntitySpawnDelta: { _tag: 'EntitySpawnDelta', entity: living, revision: 13, world: overworld },
@@ -206,7 +206,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   NetherPortalUseCommand: { _tag: 'NetherPortalUseCommand', ...commandHeader, portal: { x: 1, y: 64, z: 1 } },
   Ping: { _tag: 'Ping', nonce: 7 },
   PlayerAnvilNamesDelta: { _tag: 'PlayerAnvilNamesDelta', names: [{ name: 'Excalibur', slot: 0 }], player: alice, revision: 13, world: overworld },
-  PlayerDamageCommand: { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 4 },
+  PlayerDamageCommand: { _tag: 'PlayerDamageCommand', ...commandHeader },
   PlayerDamageCommandAccepted: { _tag: 'PlayerDamageCommandAccepted', commandId, revision: 13 },
   PlayerDamageCommandRejected: { _tag: 'PlayerDamageCommandRejected', commandId, reason: 'invalid-command', revision: 12 },
   PlayerEnchantmentsDelta: {
@@ -355,9 +355,11 @@ const MAXIMUM_C4_OWNER_IDS = [
   makeReplicatedOwnerId('codec-owner-3'),
   makeReplicatedOwnerId('codec-owner-4'),
 ] as const
-const MAXIMUM_C4_BLOCK_BEFORE = 65_535
-const MAXIMUM_C4_BLOCK_AFTER = 65_534
-const MAXIMUM_C4_BLOCK_READ = 65_535
+const MAXIMUM_C4_BLOCK_BEFORE = 106
+const MAXIMUM_C4_BLOCK_AFTER = 106
+const MAXIMUM_C4_BLOCK_BEFORE_STATE = 0
+const MAXIMUM_C4_BLOCK_AFTER_STATE = 16
+const MAXIMUM_C4_BLOCK_READ = 106
 const MAXIMUM_C4_AXIS = Number.MIN_SAFE_INTEGER
 const maximumC4BlockPosition = (index: number) => Schema.decodeUnknownSync(BlockPositionSchema)({
   x: MAXIMUM_C4_AXIS + index,
@@ -411,9 +413,11 @@ const MAXIMUM_C4_DELTA = Result.getOrThrow(Schema.decodeUnknownResult(Replicated
   changes: maximumOwnerChanges,
   blockChanges: Array.from({ length: MAXIMUM_C4_PROFILE_DELTA_BLOCK_COUNT }, (_, index) => ({
     before: MAXIMUM_C4_BLOCK_BEFORE,
+    beforeState: MAXIMUM_C4_BLOCK_BEFORE_STATE,
     dimension: 'overworld',
     position: maximumC4BlockPosition(index),
     after: MAXIMUM_C4_BLOCK_AFTER,
+    afterState: MAXIMUM_C4_BLOCK_AFTER_STATE,
   })),
 }))
 const MAXIMUM_C4_DELTA_AT_COUNT_LIMIT = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
@@ -421,9 +425,11 @@ const MAXIMUM_C4_DELTA_AT_COUNT_LIMIT = Result.getOrThrow(Schema.decodeUnknownRe
   changes: MAXIMUM_C4_OWNER_CHANGES_AT_LIMIT,
   blockChanges: Array.from({ length: MAXIMUM_C4_DELTA_BLOCK_LIMIT }, (_, index) => ({
     before: MAXIMUM_C4_BLOCK_BEFORE,
+    beforeState: MAXIMUM_C4_BLOCK_BEFORE_STATE,
     dimension: 'overworld',
     position: maximumC4BlockPosition(index),
     after: MAXIMUM_C4_BLOCK_AFTER,
+    afterState: MAXIMUM_C4_BLOCK_AFTER_STATE,
   })),
 }))
 const MAXIMUM_C4_SNAPSHOT = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshot)({
@@ -435,6 +441,7 @@ const MAXIMUM_C4_SNAPSHOT = Result.getOrThrow(Schema.decodeUnknownResult(Replica
     dimension: 'overworld',
     position: maximumC4BlockPosition(index),
     reading: { _tag: 'Block' as const, block: MAXIMUM_C4_BLOCK_READ },
+    state: 0,
   })),
 }))
 const MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldSnapshot)({
@@ -444,6 +451,7 @@ const MAXIMUM_C4_SNAPSHOT_AT_COUNT_LIMIT = Result.getOrThrow(Schema.decodeUnknow
     dimension: 'overworld',
     position: maximumC4BlockPosition(index),
     reading: { _tag: 'Block' as const, block: MAXIMUM_C4_BLOCK_READ },
+    state: 0,
   })),
 }))
 const MAXIMUM_C4_DELTA_FRAME_BYTES = wireFrameByteLength(
@@ -793,7 +801,7 @@ const maximumDomainMessage = (sample: NetworkMessage): NetworkMessage => {
     case 'CraftingCommand':
       return { ...sample, grid: { cells: Array.from({ length: 9 }, () => 'stone'), height: 3, width: 3 } }
     case 'PlayerDamageCommand':
-      return { ...sample, amount: 20, minimumHealthPoints: 1 }
+      return sample
     case 'BrewingCommand':
       return { ...sample, action: { _tag: 'insert', slot: 35 } }
     case 'EnchantingCommand':
@@ -1257,7 +1265,7 @@ describe('frame round trip', () => {
         "PlayerJoin | 119 UTF-8 bytes | depth 3 | max collection 4
         PlayerLeave | 72 UTF-8 bytes | depth 2 | max collection 2
         PlayerMove | 159 UTF-8 bytes | depth 3 | max collection 4
-        BlockPlace | 112 UTF-8 bytes | depth 3 | max collection 4
+        BlockPlace | 122 UTF-8 bytes | depth 3 | max collection 5
         BlockBreak | 98 UTF-8 bytes | depth 3 | max collection 3
         Chat | 87 UTF-8 bytes | depth 2 | max collection 3
         WorldInfo | 89 UTF-8 bytes | depth 2 | max collection 3
@@ -1283,7 +1291,7 @@ describe('frame round trip', () => {
         ContainerCommand | 192 UTF-8 bytes | depth 3 | max collection 7
         FurnaceCommand | 302 UTF-8 bytes | depth 4 | max collection 7
         VillagerTradeCommand | 218 UTF-8 bytes | depth 2 | max collection 8
-        EntityAttackCommand | 168 UTF-8 bytes | depth 2 | max collection 6
+        EntityAttackCommand | 181 UTF-8 bytes | depth 2 | max collection 7
         EntityPickupCommand | 168 UTF-8 bytes | depth 2 | max collection 6
         BowUseCommand | 159 UTF-8 bytes | depth 2 | max collection 6
         IgniteTntCommand | 169 UTF-8 bytes | depth 3 | max collection 6
@@ -1309,7 +1317,7 @@ describe('frame round trip', () => {
         CraftingCommand | 205 UTF-8 bytes | depth 4 | max collection 6
         CraftingCommandAccepted | 105 UTF-8 bytes | depth 2 | max collection 3
         CraftingCommandRejected | 125 UTF-8 bytes | depth 2 | max collection 4
-        PlayerDamageCommand | 157 UTF-8 bytes | depth 2 | max collection 6
+        PlayerDamageCommand | 146 UTF-8 bytes | depth 2 | max collection 5
         PlayerDamageCommandAccepted | 109 UTF-8 bytes | depth 2 | max collection 3
         PlayerDamageCommandRejected | 136 UTF-8 bytes | depth 2 | max collection 4
         BrewingCommand | 203 UTF-8 bytes | depth 3 | max collection 7
@@ -1326,7 +1334,7 @@ describe('frame round trip', () => {
         DamageEnderDragonCommandRejected | 140 UTF-8 bytes | depth 2 | max collection 4
         EnderDragonSnapshotDelta | 168 UTF-8 bytes | depth 3 | max collection 4
         SummonWitherCommand | 176 UTF-8 bytes | depth 3 | max collection 6
-        DamageWitherCommand | 174 UTF-8 bytes | depth 2 | max collection 7
+        DamageWitherCommand | 163 UTF-8 bytes | depth 2 | max collection 6
         WitherCommandAccepted | 103 UTF-8 bytes | depth 2 | max collection 3
         WitherCommandRejected | 130 UTF-8 bytes | depth 2 | max collection 4
         WitherSnapshotDelta | 382 UTF-8 bytes | depth 7 | max collection 6
@@ -1428,7 +1436,7 @@ describe('frame round trip', () => {
         "PlayerJoin | observed 3145384 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         PlayerLeave | observed 3145594 UTF-8 bytes/1048576 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         PlayerMove | observed 3145210 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BlockPlace | observed 3145384 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        BlockPlace | observed 3145364 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         BlockBreak | observed 3145416 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         Chat | observed 3145076 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         WorldInfo | observed 3145552 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
@@ -1454,7 +1462,7 @@ describe('frame round trip', () => {
         ContainerCommand | observed 3145034 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         FurnaceCommand | observed 3145060 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         VillagerTradeCommand | observed 3145282 UTF-8 bytes/1048576 code units, depth 2, collection 8 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EntityAttackCommand | observed 3145382 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
+        EntityAttackCommand | observed 3145356 UTF-8 bytes/1048576 code units, depth 2, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         EntityPickupCommand | observed 3145382 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         BowUseCommand | observed 3145400 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         IgniteTntCommand | observed 3145292 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
@@ -1480,7 +1488,7 @@ describe('frame round trip', () => {
         CraftingCommand | observed 2554 UTF-8 bytes/1024 code units, depth 4, collection 9 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays grid.cells: 9 items | 268 UTF-8 bytes | depth 4
         CraftingCommandAccepted | observed 3145508 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         CraftingCommandRejected | observed 3145446 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerDamageCommand | observed 2698 UTF-8 bytes/1024 code units, depth 2, collection 7 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        PlayerDamageCommand | observed 2770 UTF-8 bytes/1024 code units, depth 2, collection 5 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
         PlayerDamageCommandAccepted | observed 3145500 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         PlayerDamageCommandRejected | observed 3145438 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         BrewingCommand | observed 24070 UTF-8 bytes/8192 code units, depth 3, collection 7 | cap 32768 UTF-8 bytes/8192 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
@@ -1497,12 +1505,12 @@ describe('frame round trip', () => {
         DamageEnderDragonCommandRejected | observed 3145436 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         EnderDragonSnapshotDelta | observed 204 UTF-8 bytes/204 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | schema | arrays no array fields in valid domain sample
         SummonWitherCommand | observed 3145236 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        DamageWitherCommand | observed 3145318 UTF-8 bytes/1048576 code units, depth 2, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
+        DamageWitherCommand | observed 3145384 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
         WitherCommandAccepted | observed 3145512 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         WitherCommandRejected | observed 3145458 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         WitherSnapshotDelta | observed 3144458 UTF-8 bytes/1048576 code units, depth 7, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays snapshot.skulls: 4077 items | 1048426 UTF-8 bytes | depth 7; snapshot.withers: 2344 items | 1048215 UTF-8 bytes | depth 7
-        ReplicatedWorldDelta | observed 54489 UTF-8 bytes/54489 code units, depth 6, collection 320 | cap 54489 UTF-8 bytes/1048576 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/256 unique blocks 34872 bytes; count-limit 4 owners/320 blocks 43591 bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blockChanges: 320 typed-max items | 43591 UTF-8 bytes | depth 6 | unique members; changes: 4 typed-max items | 43591 UTF-8 bytes | depth 6 | unique members; changes[].state.labels: 3 typed-max items | 43591 UTF-8 bytes | depth 6 | unique members
-        ReplicatedWorldSnapshot | observed 3422759 UTF-8 bytes/3422759 code units, depth 6, collection 18750 | cap 3422759 UTF-8 bytes/3422759 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/15000 logical reads 2190564 transferred bytes; count-limit 4 owners/18750 reads 2738207 transferred bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blocks: 18750 typed-max items | 2738207 UTF-8 bytes | depth 6 | unique members; owners: 4 typed-max items | 2738207 UTF-8 bytes | depth 6 | unique members; owners[].state.labels: 3 typed-max items | 2738207 UTF-8 bytes | depth 6 | unique members
+        ReplicatedWorldDelta | observed 65689 UTF-8 bytes/65689 code units, depth 6, collection 320 | cap 65689 UTF-8 bytes/1048576 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/256 unique blocks 42040 bytes; count-limit 4 owners/320 blocks 52551 bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blockChanges: 320 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members; changes: 4 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members; changes[].state.labels: 3 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members
+        ReplicatedWorldSnapshot | observed 3610259 UTF-8 bytes/3610259 code units, depth 6, collection 18750 | cap 3610259 UTF-8 bytes/3610259 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/15000 logical reads 2310564 transferred bytes; count-limit 4 owners/18750 reads 2888207 transferred bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blocks: 18750 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members; owners: 4 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members; owners[].state.labels: 3 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members
         ReplicatedWorldSnapshotStart | observed 3145184 UTF-8 bytes/1048576 code units, depth 2, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         ReplicatedWorldSnapshotChunk | observed 3145474 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
         ReplicatedWorldSnapshotEnd | observed 3145556 UTF-8 bytes/1048576 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample"
@@ -1543,9 +1551,9 @@ describe('frame round trip', () => {
         {
           "burstFrameCount": 64,
           "burstFrameLimit": 80,
-          "frameBytesPerSecondLimit": 1089775,
+          "frameBytesPerSecondLimit": 1313775,
           "frameRateLimit": 25,
-          "measuredBytesPerSecond": 871820,
+          "measuredBytesPerSecond": 1051020,
           "measuredFramesPerSecond": 20,
         }
       `)
@@ -1654,6 +1662,50 @@ describe('registered C4 owner messages', () => {
     }),
   )
 
+  it.effect('preserves state-only block changes and rejects state codes invalid for their block IDs', () =>
+    Effect.sync(() => {
+      const stateOnlyBlockChange = {
+        before: 106,
+        beforeState: 0,
+        dimension: 'overworld',
+        position: { x: 1, y: 64, z: 1 },
+        after: 106,
+        afterState: 16,
+      }
+      const stateOnlyDelta = Result.getOrThrow(Schema.decodeUnknownResult(ReplicatedWorldDeltaMessage)({
+        ...emptyWorldDelta,
+        blockChanges: [stateOnlyBlockChange],
+      }))
+      const stateOnlyFrame = Result.getOrThrow(encodeFrame(stateOnlyDelta, OWNER_REGISTRY))
+      expect(Result.getOrThrow(decodeFrame(stateOnlyFrame, OWNER_REGISTRY))).toStrictEqual(stateOnlyDelta)
+
+      const invalidDelta = {
+        ...stateOnlyDelta,
+        blockChanges: [{ ...stateOnlyBlockChange, afterState: 64 }],
+      }
+      expect(failure(encodeFrame(invalidDelta, OWNER_REGISTRY))?.reason).toBe('unencodable-message')
+
+      const invalidSnapshot = {
+        ...emptyWorldSnapshot,
+        blocks: [{
+          dimension: 'overworld',
+          position: { x: 1, y: 64, z: 1 },
+          reading: { _tag: 'Block' as const, block: 106 },
+          state: 64,
+        }],
+      }
+      expect(failure(encodeFrame(invalidSnapshot, OWNER_REGISTRY))?.reason).toBe('unencodable-message')
+      expect(Result.isFailure(Schema.decodeUnknownResult(ReplicatedWorldSnapshot)({
+        ...emptyWorldSnapshot,
+        blocks: [{
+          dimension: 'overworld',
+          position: { x: 1, y: 64, z: 1 },
+          reading: { _tag: 'Block', block: 106 },
+        }],
+      }))).toBe(true)
+    }),
+  )
+
   it.effect('accepts the configured owner, block, shape, and byte boundaries for C4 delta and snapshot fixtures', () =>
     Effect.sync(() => {
       const deltaFrame = Result.getOrThrow(encodeFrame(MAXIMUM_C4_DELTA_AT_FRAME_LIMIT, MAXIMUM_C4_REGISTRY))
@@ -1695,24 +1747,24 @@ describe('registered C4 owner messages', () => {
           "configuredOwnerStateBytes": 108,
           "delta": {
             "blockCount": 320,
-            "configuredFrameLimitBytes": 54489,
-            "countLimitFixtureUtf8Bytes": 43591,
+            "configuredFrameLimitBytes": 65689,
+            "countLimitFixtureUtf8Bytes": 52551,
             "maxCollectionItems": 320,
             "maxDepth": 6,
             "ownerCount": 4,
-            "profileUtf8Bytes": 34872,
-            "utf8Bytes": 54489,
+            "profileUtf8Bytes": 42040,
+            "utf8Bytes": 65689,
           },
           "ownerStateUtf8Bytes": 86,
           "snapshot": {
             "blockReadCount": 18750,
-            "configuredFrameLimitBytes": 3422759,
-            "countLimitFixtureUtf8Bytes": 2738207,
+            "configuredFrameLimitBytes": 3610259,
+            "countLimitFixtureUtf8Bytes": 2888207,
             "maxCollectionItems": 18750,
             "maxDepth": 6,
             "ownerCount": 4,
-            "profileUtf8Bytes": 2190564,
-            "utf8Bytes": 3422759,
+            "profileUtf8Bytes": 2310564,
+            "utf8Bytes": 3610259,
           },
         }
       `)
@@ -1772,10 +1824,12 @@ describe('registered C4 owner messages', () => {
       const overDeltaBlocks = {
         ...MAXIMUM_C4_DELTA_AT_COUNT_LIMIT,
         blockChanges: [...MAXIMUM_C4_DELTA_AT_COUNT_LIMIT.blockChanges, {
-          before: 0,
+          before: MAXIMUM_C4_BLOCK_BEFORE,
+          beforeState: MAXIMUM_C4_BLOCK_BEFORE_STATE,
           dimension: 'overworld',
           position: { x: MAXIMUM_C4_DELTA_BLOCK_LIMIT, y: 64, z: 0 },
-          after: 65_535,
+          after: MAXIMUM_C4_BLOCK_AFTER,
+          afterState: MAXIMUM_C4_BLOCK_AFTER_STATE,
         }],
       }
       const overOwnerSnapshot = {
@@ -2015,6 +2069,7 @@ describe('registered C4 owner messages', () => {
           dimension: 'overworld',
           position: { x: 0, y: 64, z: 0 },
           reading: { _tag: 'Block' as const, block: 1 },
+          state: 0,
         }],
       }
       const frame = JSON.stringify({ message: snapshot, protocolVersion: PROTOCOL_VERSION })
@@ -2051,7 +2106,7 @@ describe('registered C4 owner messages', () => {
     }),
   )
 
-  it.effect('rejects extra fields in v10 C4 messages and the version envelope', () =>
+  it.effect('rejects extra fields in protocol-11 C4 messages and the version envelope', () =>
     Effect.sync(() => {
       const c4ExtraField = JSON.stringify({
         message: { ...emptyWorldDelta, future: true },
@@ -2417,6 +2472,17 @@ describe('protocol version', () => {
     }),
   )
 
+  it.effect('rejects protocol 10 as an unsupported version', () =>
+    Effect.sync(() => {
+      const protocol10Frame = Result.getOrThrow(encodeFrameAsVersion(10, SAMPLES.Ping))
+      const result = decodeFrame(protocol10Frame)
+
+      expect(Result.isFailure(result)).toBe(true)
+      expect(failure(result)?._tag).toBe('ProtocolError')
+      expect(failure(result)?.reason).toBe('unsupported-protocol-version')
+    }),
+  )
+
   it.effect('reports a version mismatch as a version problem, never as a malformed frame', () =>
     Effect.sync(() => {
       const older = Result.getOrThrow(encodeFrameAsVersion(0, SAMPLES.PlayerLeave))
@@ -2444,6 +2510,23 @@ describe('protocol version', () => {
 
 describe('malformed input', () => {
   const rejected = (text: string) => failure(decodeFrame(text))
+
+  it.effect('rejects client-selected attack and damage effects as unknown command fields', () =>
+    Effect.sync(() => {
+      const invalidMessages: ReadonlyArray<unknown> = [
+        { ...SAMPLES.EntityAttackCommand, damage: 12 },
+        { ...SAMPLES.EntityAttackCommand, critical: true },
+        { ...SAMPLES.EntityAttackCommand, rollSeed: 42 },
+        { ...SAMPLES.PlayerDamageCommand, amount: 4 },
+        { ...SAMPLES.PlayerDamageCommand, minimumHealthPoints: 1 },
+        { ...SAMPLES.DamageWitherCommand, amount: 4 },
+      ]
+
+      for (const message of invalidMessages) {
+        expect(rejected(JSON.stringify({ message, protocolVersion: PROTOCOL_VERSION }))?.reason).toBe('malformed-frame')
+      }
+    }),
+  )
 
   it.effect('rejects an empty player id at the encode boundary', () =>
     Effect.sync(() => {
@@ -2714,9 +2797,9 @@ describe('malformed input', () => {
   // REGRESSION (Wave 1 lowering): anvil, crafting and player-damage each carry
   // a domain-specific invariant `SAMPLES` never violates — an out-of-range
   // slot, a name over the wire limit, a grid whose `cells.length` disagrees
-  // with `width * height`, and a damage amount outside the vanilla range. A
-  // codec that best-effort-coerced any of these would desync the two peers
-  // silently instead of rejecting the frame.
+  // with `width * height`, and client-selected damage fields that must no
+  // longer be representable. A codec that best-effort-coerced any of these
+  // would desync the two peers silently instead of rejecting the frame.
   it.effect('rejects malformed anvil, crafting and player-damage payloads', () =>
     Effect.sync(() => {
       const invalidMessages = [
@@ -2731,8 +2814,8 @@ describe('malformed input', () => {
         { _tag: 'CraftingCommand', ...commandHeader, grid: { cells: ['stone', null, null, null], extra: true, height: 2, width: 2 } },
         { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 0 },
         { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 21 },
-        { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 4, minimumHealthPoints: -1 },
-        { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 4, minimumHealthPoints: 1.5 },
+        { _tag: 'PlayerDamageCommand', ...commandHeader, amount: 4, minimumHealthPoints: 1 },
+        { _tag: 'PlayerDamageCommand', ...commandHeader, minimumHealthPoints: 1 },
       ]
 
       for (const message of invalidMessages) {
@@ -2969,10 +3052,22 @@ describe('malformed input', () => {
   it.effect('accepts a block name this build does not know, because content skew is not frame corruption', () =>
     Effect.sync(() => {
       const text = JSON.stringify({
-        message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium', player: 'alice' },
+        message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'unobtainium', player: 'alice', state: 0xffff_ffff },
         protocolVersion: PROTOCOL_VERSION,
       })
       expect(Result.isSuccess(decodeFrame(text))).toBe(true)
+
+      const missingBlockState = JSON.stringify({
+        message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'stone', player: 'alice' },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      expect(rejected(missingBlockState)?.reason).toBe('malformed-frame')
+
+      const knownBlockWithReservedState = JSON.stringify({
+        message: { _tag: 'BlockPlace', at: { x: 0, y: 0, z: 0 }, block: 'stone', player: 'alice', state: 1 },
+        protocolVersion: PROTOCOL_VERSION,
+      })
+      expect(rejected(knownBlockWithReservedState)?.reason).toBe('malformed-frame')
     }),
   )
 })

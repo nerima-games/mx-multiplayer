@@ -36,12 +36,6 @@
     "text": "string"
   },
   {
-    "count": 14,
-    "file": "src/application/server/reconnect-auth.ts",
-    "ruleId": "no-raw-exported-type-field",
-    "text": "string"
-  },
-  {
     "count": 15,
     "file": "src/application/server/transport-security.ts",
     "ruleId": "no-raw-exported-type-field",
