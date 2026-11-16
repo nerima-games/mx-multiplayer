@@ -57,18 +57,21 @@ from `mc-sim`; `mx-multiplayer` does not duplicate owner state.
 
 ### 醸造台とかまどの変換
 
-`BrewingStandState` は `bottles` の 3 slot、`ingredient`、`fuel`、`fuelCharges`、`brewProgressSecs` を運ぶ。slot は `ItemStack` または `null` である。`insert-bottle` と `collect` は `bottleIndex` で 0–2 を指定し、`drink` は inventory の `slot` で 0–35 を指定する。root barrel の `FurnaceState` は wire の型で、時間の単位は tick である。`station`、`burnTicksRemaining`、`burnTicksTotal`、`cookTicks` と input・fuel・output の stack を運ぶ。
+`BrewingStandState` は `bottles` の 3 slot、`ingredient`、`fuel`、`fuelCharges`、`brewProgressSecs` を運ぶ。root barrel の `BrewingSlotWire` は `ItemStackWire` または `null` である。`insert-bottle` と `collect` は `bottleIndex` で 0–2 を指定し、`drink` は inventory の `slot` で 0–35 を指定する。`FurnaceStateWire` は wire の型で、時間の単位は tick である。`station`、`burnTicksRemaining`、`burnTicksTotal`、`cookTicks` と input・fuel・output の stack を運ぶ。
 
-v11 の公開 schema `BrewingIngredient`、`PotionType`、`BrewingBottle` は削除した。材料と瓶は `ItemStack` の item・個数で表し、薬の種類も item で区別する。
+v11 の公開 schema `BrewingIngredient`、`PotionType`、`BrewingBottle` は削除した。材料と瓶は `ItemStackWire` の item・個数で表し、薬の種類も item で区別する。root の新しい wire schema と型は `ItemStackWire`、`BrewingSlotWire`、`FurnaceStateWire` という名前で公開し、mc-kernel の `ItemStack`、`FurnaceState` と区別する。
 
 | API | 契約 |
 | --- | --- |
-| `brewingStateToWire` | mc-kernel の `BrewingState` を wire の `BrewingStandState` に変換する。空 slot は `null` となり、秒の進行量と stack の item・個数を保つ |
+| `brewingStateToWire` | mc-kernel の `BrewingState` を検査し、`Result<BrewingStandState, BrewingWireConversionFailure>` を返す。成功時は空 slot を `null` にし、秒の進行量と stack の item・個数を保つ。既定でない components と wire の進行量の範囲外は失敗となる |
 | `brewingStateFromWire` | wire を検査し、`Result<BrewingState, BrewingWireConversionFailure>` を返す。mc-sim の `validateBrewingSnapshot` で state の組み合わせも検査する |
-| `furnaceStateFromWire` | wire を検査し、mc-kernel の `FurnaceState` を成功値とする `Result` を返す。時間は tick から秒へ変換し、mc-sim の `FurnaceStateSchema` で検査する。失敗値は `FurnaceWireConversionFailure` |
+| `furnaceStateToWire` | mc-kernel の `FurnaceState`、wire の `furnaceId` の順に受け、`Result<FurnaceStateWire, FurnaceWireConversionFailure>` を返す。`Math.round(seconds * 20)` で最近傍の整数 tick に変換する。既定でない components は失敗となる |
+| `furnaceStateFromWire` | wire を検査し、mc-kernel の `FurnaceState` を成功値とする `Result` を返す。mc-kernel の `secondsForTicks` で秒へ変換し、mc-sim の `FurnaceStateSchema` で検査する。失敗値は `FurnaceWireConversionFailure` |
 | `BrewingWireConversionFailure` / `FurnaceWireConversionFailure` | 変換の失敗を表す tagged schema |
 
-`ItemStack` は components を運ばない。送信側は醸造台の stack が既定の components を持つことを保証する。`brewingStateToWire` はこの前提を検査しない。wire からの両 converter は `durability` を持つ stack を失敗として返し、値を捨てて変換を続けない。wire の変更と移行時の対応は [versioning.md](./versioning.md#9-protocol-v12) を参照する。
+`ItemStackWire` は components を運ばない。両 `ToWire` は各 stack の components を kernel の `itemComponents(item)` が作る既定値と比較し、異なれば `unsupported-components` を返す。両 `FromWire` は `durability` を持つ stack を失敗として返し、値を捨てて変換を続けない。
+
+かまどの秒から tick への変換は、ちょうど半 tick なら大きい整数へ丸める。整数 tick で表せない秒は量子化されるため、任意の秒の state の厳密な往復は保証しない。`cookTicks` とレシピの所要時間との比較は wire schema と converter の検査範囲に含まれない。mc-server は受信・復元時にこの上限を検査してから simulation に渡す。wire の変更と移行時の対応は [versioning.md](./versioning.md#9-protocol-v12) を参照する。
 
 ## 2. コーデック(`domain/codec.ts`)
 

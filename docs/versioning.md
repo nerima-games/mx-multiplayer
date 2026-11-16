@@ -102,6 +102,8 @@ Protocol v12 は醸造台の state と操作を置き換え、かまどの state
 | `drink` | 醸造台の瓶を飲む | `slot` で指定した inventory の薬を飲む |
 | `FurnaceState` | 燃焼時間は残り tick のみ | `station` と `burnTicksTotal` を追加し、残り燃焼 tick が合計以下であることを検査 |
 
-醸造台の空 slot は `null` で表し、stack は共通の `ItemStack` を使う。`fuelCharges` は整数の 0–20、`brewProgressSecs` は有限の秒で 0 以上 20 未満とする。かまどの時間は引き続き tick で運ぶ。
+醸造台の空 slot は `null` で表し、stack は共通の `ItemStackWire` を使う。`fuelCharges` は整数の 0–20、`brewProgressSecs` は有限の秒で 0 以上 20 未満とする。かまどの時間は引き続き tick で運ぶ。root の新しい wire schema と型は `ItemStackWire`、`BrewingSlotWire`、`FurnaceStateWire` として公開する。
 
-全 frame の版を完全一致で検査する仕組みは変わらない。v11 の frame は本文の decode 前に `unsupported-protocol-version` で拒否するため、server と client は同時に更新する。mc-server と mc-host-web は、このパッケージの醸造台の wire 定義と converter を共有する。`ItemStack` に components は載せず、醸造台の stack は既定の components を持つことを前提とする。
+全 frame の版を完全一致で検査する仕組みは変わらない。v11 の frame は本文の decode 前に `unsupported-protocol-version` で拒否するため、server と client は同時に更新する。mc-server と mc-host-web は、このパッケージの醸造台の wire 定義と converter を共有する。`ItemStackWire` に components は載せず、醸造台とかまどの `ToWire` は既定でない components を型付きの失敗として返す。
+
+`brewingStateToWire` は wire の進行量の範囲も検査するため、呼び出し側は `Result` の失敗を扱う。かまどの双方向 converter は秒と整数 tick の変換規則を共有する。秒から tick は `Math.round(seconds * 20)` で最近傍へ丸め、tick から秒は kernel の `secondsForTicks` を使う。mc-server は受信・復元した `cookTicks` がレシピの所要時間の範囲内かを検査してから simulation に渡す。
