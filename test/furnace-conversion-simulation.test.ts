@@ -22,12 +22,13 @@ const stepSeconds = (step: Step): number => step.kind === 'ticks' ? tickSeconds 
 const advance = (state: FurnaceState, step: Step, recipes: ReadonlyArray<SmeltingRecipeInput>) =>
   step.kind === 'ticks' ? advanceFurnaceTicks(state, oneTick, recipes) : advanceFurnace(state, step.seconds, recipes)
 
-const runTwoSmelts = (
+const runSmeltTrace = (
   station: CookingStation,
   recipe: SmeltingRecipe,
   recipeTable: ReadonlyArray<SmeltingRecipeInput>,
   step: Step,
-): Readonly<{ steps: number; smelted: number }> => {
+  smelt: 'first' | 'second',
+): Readonly<{ traceSteps: number; warmupSteps: number; checkedSteps: number; smelted: number }> => {
   let state = Result.getOrThrow(furnaceState({
     station,
     input: Result.getOrThrow(itemStackFromUnknown(recipe.input, 4)),
@@ -36,23 +37,41 @@ const runTwoSmelts = (
   const duration = Result.getOrThrow(smeltingCookTimeForStation(recipe, station))
   const maxSteps = Math.ceil(3 * duration / stepSeconds(step)) + 3
   let smelted = 0
-  let observed = 0
-  for (let index = 0; index < maxSteps && smelted < 2; index += 1) {
-    const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:simulation', recipeTable))
-    const restored = Result.getOrThrow(furnaceStateFromWire(wire))
-    strictEqual(Result.isSuccess(advance(restored, step, recipeTable)), true)
+  let traceSteps = 0
+  let warmupSteps = 0
+  let checkedSteps = 0
+  const targetSmelts = smelt === 'first' ? 1 : 2
+  for (let index = 0; index < maxSteps && smelted < targetSmelts; index += 1) {
+    if (smelt === 'first' || smelted >= 1) {
+      const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:simulation', recipeTable))
+      const restored = Result.getOrThrow(furnaceStateFromWire(wire))
+      strictEqual(Result.isSuccess(advance(restored, step, recipeTable)), true)
+      checkedSteps += 1
+    } else {
+      warmupSteps += 1
+    }
     const outcome = Result.getOrThrow(advance(state, step, recipeTable))
     smelted += outcome.smeltedCount
-    observed += 1
+    traceSteps += 1
     // Collect finished output to leave room for recipes with a single-item stack limit.
     state = outcome.smeltedCount > 0 ? { ...outcome.state, output: undefined } : outcome.state
   }
-  expect(observed).toBeGreaterThan(0)
-  expect(smelted).toBeGreaterThanOrEqual(2)
+  expect(traceSteps).toBeGreaterThan(0)
+  expect(checkedSteps).toBeGreaterThan(0)
+  expect(smelted).toBeGreaterThanOrEqual(targetSmelts)
+  expect(warmupSteps + checkedSteps).toBe(traceSteps)
+  if (smelt === 'first') {
+    expect(warmupSteps).toBe(0)
+    expect(checkedSteps).toBe(traceSteps)
+  } else {
+    expect(warmupSteps).toBeGreaterThan(0)
+  }
   expect(state.fuelTimeRemainingSecs).toBeGreaterThan(0)
-  const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:simulation', recipeTable))
-  expect(Result.isSuccess(advance(Result.getOrThrow(furnaceStateFromWire(wire)), step, recipeTable))).toBe(true)
-  return { steps: observed, smelted }
+  if (smelt === 'second') {
+    const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:simulation', recipeTable))
+    expect(Result.isSuccess(advance(Result.getOrThrow(furnaceStateFromWire(wire)), step, recipeTable))).toBe(true)
+  }
+  return { traceSteps, warmupSteps, checkedSteps, smelted }
 }
 
 const customRecipe = (station: CookingStation, duration: number): SmeltingRecipe => {
@@ -73,11 +92,13 @@ describe('furnace wire states advanced by the real simulation', () => {
       throw new Error(`missing regression recipe for ${station}`)
     }
     for (const step of steps) {
-      it(`keeps ${station} restorable through two smelts with ${step.kind === 'ticks' ? 'one tick' : step.seconds + ' seconds'} steps`, () => {
-        const started = performance.now()
-        const result = runTwoSmelts(station, regressionRecipe, VANILLA_SMELTING_RECIPES, step)
-        console.info('Furnace trace', { station, step, ...result, elapsedMs: performance.now() - started })
-      })
+      for (const smelt of ['first', 'second'] as const) {
+        it(`keeps ${station} restorable through the ${smelt} smelt with ${step.kind === 'ticks' ? 'one tick' : step.seconds + ' seconds'} steps`, () => {
+          const started = performance.now()
+          const result = runSmeltTrace(station, regressionRecipe, VANILLA_SMELTING_RECIPES, step, smelt)
+          console.info('Furnace trace', { station, step, smelt, ...result, elapsedMs: performance.now() - started })
+        })
+      }
     }
 
     it(`uses supplied non-tick cooking durations for ${station}`, () => {
