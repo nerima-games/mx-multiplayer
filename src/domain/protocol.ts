@@ -77,7 +77,9 @@ import {
   PlayerDamageCommandAccepted,
   PlayerDamageCommandRejected,
 } from './protocol/player-damage.js'
+import { ItemStack } from './protocol/item-stack.js'
 import { ReplicatedOwnerChangeSchema } from '@nerima-games/mc-sim'
+export { ItemStack } from './protocol/item-stack.js'
 
 /**
  * The identifier, revision and position primitives, re-exported here so
@@ -97,7 +99,7 @@ export { BlockPos, CommandId, EntityId, PlayerId, PlayerName, Revision, WorldId 
  * `docs/design-notes.md` — the reference implementation had no version field at
  * all, which makes a rolling upgrade indistinguishable from corruption.
  */
-export const PROTOCOL_VERSION = 11
+export const PROTOCOL_VERSION = 12
 
 /** The floor every free-text identifier and content string in this protocol shares: not blank. */
 const MIN_NON_EMPTY_LENGTH = 1
@@ -559,25 +561,7 @@ const ItemDurability: Schema.Struct<{
   max: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
 })
 
-const ItemStack: Schema.Struct<{
-  count: typeof Schema.Number
-  durability: Schema.optionalKey<
-    Schema.Struct<{
-      current: typeof Schema.Number
-      max: typeof Schema.Number
-    }>
-  >
-  item: typeof Schema.String
-}> = Schema.Struct({
-  count: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
-  durability: Schema.optionalKey(
-    Schema.Struct({
-      current: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-      max: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
-    }),
-  ),
-  item: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
-})
+
 
 export const EquipmentSlot: Schema.Literals<readonly ['head', 'chest', 'legs', 'feet', 'offhand']> = Schema.Literals([
   'head',
@@ -652,21 +636,26 @@ const ContainerState: Schema.Struct<{
   slots: Schema.Array(Schema.NullOr(ItemStack)),
 })
 
-const FurnaceState: Schema.Struct<{
+export const FurnaceState: Schema.Struct<{
+  burnTicksTotal: typeof Schema.Number
   burnTicksRemaining: typeof Schema.Number
   cookTicks: typeof Schema.Number
   fuel: Schema.NullOr<typeof ItemStack>
   furnaceId: typeof Schema.String
   input: Schema.NullOr<typeof ItemStack>
   output: Schema.NullOr<typeof ItemStack>
+  station: Schema.Literals<readonly ['furnace', 'blast_furnace', 'smoker']>
 }> = Schema.Struct({
   burnTicksRemaining: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
+  burnTicksTotal: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   cookTicks: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   fuel: Schema.NullOr(ItemStack),
   furnaceId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
   input: Schema.NullOr(ItemStack),
   output: Schema.NullOr(ItemStack),
-})
+  station: Schema.Literals(['furnace', 'blast_furnace', 'smoker']),
+}).check(Schema.makeFilter((state) => state.burnTicksRemaining <= state.burnTicksTotal))
+export type FurnaceState = typeof FurnaceState.Type
 
 const VillagerTradeState: Schema.Struct<{
   offers: Schema.$Array<

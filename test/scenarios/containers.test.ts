@@ -38,13 +38,13 @@ const shapeCases: ReadonlyArray<Readonly<{ readonly tag: string; readonly validM
     validMessage: {
       _tag: 'FurnaceDelta',
       revision: ZERO,
-      state: { burnTicksRemaining: ZERO, cookTicks: ZERO, fuel: null, furnaceId: 'furnace:1', input: null, output: null },
+      state: { burnTicksRemaining: ZERO, burnTicksTotal: ZERO, station: 'furnace', cookTicks: ZERO, fuel: null, furnaceId: 'furnace:1', input: null, output: null },
       world: 'overworld',
     },
     malformedMessage: {
       _tag: 'FurnaceDelta',
       revision: ZERO,
-      state: { burnTicksRemaining: -ONE, cookTicks: ZERO, fuel: null, furnaceId: 'furnace:1', input: null, output: null },
+      state: { burnTicksRemaining: -ONE, burnTicksTotal: ZERO, station: 'furnace', cookTicks: ZERO, fuel: null, furnaceId: 'furnace:1', input: null, output: null },
       world: 'overworld',
     },
   },

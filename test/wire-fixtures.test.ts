@@ -121,7 +121,7 @@ const expectedManifest = (
 
 describe('released wire fixtures', () => {
   // REGRESSION: protocol-10 goldens remain immutable evidence of the compatibility refusal.
-  it.effect('rejects old golden bytes and checks the protocol-11 envelope for each representative family', () =>
+  it.effect('rejects old golden bytes and checks the protocol-12 envelope for each representative family', () =>
     Effect.sync(() => {
       for (const sample of samples) {
         const protocol10Bytes = readFrame(protocol10Source.directory, sample.slug)
@@ -136,6 +136,11 @@ describe('released wire fixtures', () => {
           throw new Error(`protocol 10 ${sample.message._tag} unexpectedly accepted an old frame`)
         }
         expect(protocol10Decoded.failure.reason).toBe('unsupported-protocol-version')
+
+        const protocol11Text = protocol10Text.replace('"protocolVersion":10', '"protocolVersion":11')
+        expect(decodeFrame(protocol11Text)).toMatchObject({
+          _tag: 'Failure', failure: { reason: 'unsupported-protocol-version' },
+        })
 
         const currentText = protocol10Text.replace('"protocolVersion":10', `"protocolVersion":${PROTOCOL_VERSION}`)
         const currentBytes = Buffer.from(currentText, 'utf8')
@@ -167,8 +172,8 @@ describe('released wire fixtures', () => {
     }),
   )
 
-  // REGRESSION: changing one protocol-version byte must flip an accepted protocol-11 frame into a typed rejection.
-  it.effect('changes the verdict after a one-byte mutation of a protocol-11 frame', () =>
+  // REGRESSION: changing one protocol-version byte must flip an accepted protocol-12 frame into a typed rejection.
+  it.effect('changes the verdict after a one-byte mutation of a protocol-12 frame', () =>
     Effect.sync(() => {
       const protocol10Bytes = readFrame(protocol10Source.directory, 'player-move')
       const protocol10Marker = Buffer.from('"protocolVersion":10')
@@ -183,9 +188,9 @@ describe('released wire fixtures', () => {
       }
 
       const originalBytes = Buffer.from(protocol10Bytes)
-      originalBytes.set([0x31], versionByteOffset)
+      originalBytes.set([0x32], versionByteOffset)
       const mutatedBytes = Buffer.from(originalBytes)
-      mutatedBytes.set([0x30], versionByteOffset)
+      mutatedBytes.set([0x31], versionByteOffset)
       let changedByteCount = 0
       for (let index = 0; index < originalBytes.length; index += 1) {
         if (originalBytes.at(index) !== mutatedBytes.at(index)) {
@@ -196,14 +201,14 @@ describe('released wire fixtures', () => {
 
       const originalVerdict = decodeFrame(originalBytes.toString('utf8'))
       if (Result.isFailure(originalVerdict)) {
-        throw new Error(`protocol-11 frame unexpectedly rejected: ${originalVerdict.failure.reason}`)
+        throw new Error(`protocol-12 frame unexpectedly rejected: ${originalVerdict.failure.reason}`)
       }
       expect(originalVerdict.success).toStrictEqual(playerMove)
 
       const mutatedVerdict = decodeFrame(mutatedBytes.toString('utf8'))
       if (Result.isSuccess(mutatedVerdict)) {
         expect(mutatedVerdict.success).toStrictEqual(playerMove)
-        throw new Error('one-byte mutation to protocol 10 was unexpectedly accepted')
+        throw new Error('one-byte mutation to protocol 11 was unexpectedly accepted')
       }
       expect(mutatedVerdict.failure.reason).toBe('unsupported-protocol-version')
     }),

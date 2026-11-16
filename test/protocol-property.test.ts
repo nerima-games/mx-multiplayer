@@ -26,10 +26,10 @@ const MAX_SKIPS_PER_RUN = 100
 
 const EMPTY_OWNER_REGISTRY_LIMITS = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxRegisteredOwners: 0,
-  maxDeltaBlockChanges: 31_149,
-  maxSnapshotBlockReads: 31_149,
+  maxDeltaBlockChanges: 31_148,
+  maxSnapshotBlockReads: 31_148,
   maxDepth: 13,
-  maxCollectionItems: 31_149,
+  maxCollectionItems: 31_148,
   maxDeltaFrameBytes: 1_048_576,
   maxSnapshotFrameBytes: 1_048_576,
   ownerStates: [],
@@ -118,7 +118,8 @@ const schemaDerivedArbitrary = <S extends Schema.Constraint>(schema: S): fc.Arbi
     if (sample === undefined) {
       throw new Error('Effect Schema arbitrary produced no message')
     }
-    return sample
+    // Schema arbitraries may use null prototypes; JSON transports values as ordinary objects.
+    return structuredClone(sample)
   })
 
 const messageTag = (message: unknown): string | undefined => {

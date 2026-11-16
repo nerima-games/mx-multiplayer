@@ -18,7 +18,7 @@ const a1 = (...malformedTests: TestReference[]): MatrixCell => {
 const legacyWireCompatibility = covered(reference(
   'test/wire-fixtures.test.ts',
   124,
-  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 ))
 const noLegacyWireFixture = excluded(
   'X2 freezes representative legacy frames by family, but this tag has no tag-specific v0.11.0 or v0.12.0 frame fixture (test/wire-fixtures.test.ts:124).',

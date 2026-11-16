@@ -10,7 +10,7 @@ const messageRoundTrip = reference(
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 )
 const malformedInventoryAction = reference(
   'test/codec.test.ts',

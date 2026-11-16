@@ -37,7 +37,7 @@ const wireOnlyEnchanting = covered(roundTrip, wireShape, malformedEnchanting)
 const legacyWireFixture: TestReference = {
   file: 'test/wire-fixtures.test.ts',
   line: 124,
-  testName: 'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  testName: 'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 }
 const legacyWireCompatibility = covered(legacyWireFixture)
 const noLegacyWireFixture = excluded(

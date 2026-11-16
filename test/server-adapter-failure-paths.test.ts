@@ -150,7 +150,7 @@ const ownerRegistryLimits: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownS
   maxDeltaBlockChanges: 320,
   maxSnapshotBlockReads: 3_422_759,
   maxDepth: 13,
-  maxCollectionItems: 31_149,
+  maxCollectionItems: 31_148,
   maxDeltaFrameBytes: 54_489,
   maxSnapshotFrameBytes: 3_422_759,
   ownerStates: [],

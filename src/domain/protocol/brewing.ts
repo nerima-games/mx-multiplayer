@@ -1,76 +1,32 @@
 /**
- * Brewing-stand interaction, and the status effects a potion applies.
- *
- * Lowered from the composing app's `multiplayer-shared/brewing-network.ts`.
- *
- * ---------------------------------------------------------------------------
- * `BrewingStandState` and `StatusEffectState` are MIRRORED here, not imported
- * ---------------------------------------------------------------------------
- *
- * The original file imported `BrewingStandState` and `StatusEffectState`
- * straight from `@nerima-games/mx-gameplay`. This package's Tier (§1,
- * DEPENDENCY_POLICY.md) allows only `mc-kernel` and `mc-sim` — the
- * `no-restricted-imports` group in `.oxlintrc.json` enforces exactly that —
- * and `src/index.ts`'s own header already states mx-multiplayer "has no edge
- * to mx-gameplay". A published-package boundary would fail this build even
- * before the tier check did.
- *
- * But the deeper reason is the one `protocol.ts`'s header gives for `Vec3` and
- * `BlockPos`: a wire format and a domain type have different change budgets.
- * If the wire schema imported `mx-gameplay`'s `BrewingStandState` directly,
- * an unrelated refactor of that type (renaming a field, tightening a range)
- * would silently change what this build can decode, and two peers running
- * different `mx-gameplay` versions could disagree about a frame's validity
- * without anything failing to compile — the exact failure mode a protocol
- * version exists to make loud. Declaring the wire shape independently, here,
- * is what lets it be versioned independently, the same rule `ItemStack` and
- * `MobState` already follow inside `protocol.ts` itself.
+ * The mc-kernel BrewingState wire shape, versioned independently of the domain.
+ * Stack components are omitted; senders must use default-component stacks.
+ * Status effects retain the mx-gameplay wire shape.
  */
 import { BlockPos, CommandId, PlayerId, Revision, WireNumber, WorldId } from '../protocol/identifiers.js'
+import { ItemStack } from './item-stack.js'
 import { Schema } from 'effect'
 
-/** Mirrors `@nerima-games/mx-gameplay`'s `BREWING_INGREDIENTS`. Not imported — see the file header. */
-export const BrewingIngredient: Schema.Literals<readonly ['nether_wart', 'sugar', 'spider_eye', 'ghast_tear']> = Schema.Literals([
-  'nether_wart',
-  'sugar',
-  'spider_eye',
-  'ghast_tear',
-])
-export type BrewingIngredient = typeof BrewingIngredient.Type
-
-/** Mirrors `@nerima-games/mx-gameplay`'s `POTION_TYPES`. Not imported — see the file header. */
-export const PotionType: Schema.Literals<readonly ['awkward', 'speed', 'poison', 'regeneration']> = Schema.Literals([
-  'awkward',
-  'speed',
-  'poison',
-  'regeneration',
-])
-export type PotionType = typeof PotionType.Type
-
 const ZERO = 0
+const MAX_FUEL_CHARGES = 20
+const BREW_DURATION_SECS = 20
+const BOTTLE_SLOT_COUNT = 3
 
-/** Mirrors `@nerima-games/mx-gameplay`'s `BrewingBottle`. Not imported — see the file header. */
-export const BrewingBottle: Schema.Union<readonly [Schema.Literal<'water_bottle'>, Schema.Struct<{ potion: typeof PotionType }>]> =
-  Schema.Union([Schema.Literal('water_bottle'), Schema.Struct({ potion: PotionType })])
-export type BrewingBottle = typeof BrewingBottle.Type
+export const BrewingSlot: Schema.NullOr<typeof ItemStack> = Schema.NullOr(ItemStack)
+export type BrewingSlot = typeof BrewingSlot.Type
 
-const BrewingProgress: Schema.Struct<{ output: typeof PotionType; remainingSecs: typeof Schema.Number }> =
-  Schema.Struct({
-    output: PotionType,
-    remainingSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  })
-
-/** Mirrors `@nerima-games/mx-gameplay`'s `BrewingStandState`. Not imported — see the file header. */
 export const BrewingStandState: Schema.Struct<{
-  bottle: Schema.optionalKey<typeof BrewingBottle>
-  brewing: Schema.optionalKey<typeof BrewingProgress>
-  fuelUnits: typeof Schema.Number
-  ingredient: Schema.optionalKey<typeof BrewingIngredient>
+  bottles: Schema.Tuple<readonly [typeof BrewingSlot, typeof BrewingSlot, typeof BrewingSlot]>
+  ingredient: typeof BrewingSlot
+  fuel: typeof BrewingSlot
+  fuelCharges: typeof Schema.Number
+  brewProgressSecs: typeof Schema.Number
 }> = Schema.Struct({
-  bottle: Schema.optionalKey(BrewingBottle),
-  brewing: Schema.optionalKey(BrewingProgress),
-  fuelUnits: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  ingredient: Schema.optionalKey(BrewingIngredient),
+  bottles: Schema.Tuple([BrewingSlot, BrewingSlot, BrewingSlot]),
+  brewProgressSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThan(BREW_DURATION_SECS))),
+  fuel: BrewingSlot,
+  fuelCharges: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isBetween({ maximum: MAX_FUEL_CHARGES, minimum: ZERO }))),
+  ingredient: BrewingSlot,
 })
 export type BrewingStandState = typeof BrewingStandState.Type
 
@@ -113,18 +69,28 @@ export const BrewingSlotIndex: typeof Schema.Number = WireNumber.pipe(
 )
 export type BrewingSlotIndex = typeof BrewingSlotIndex.Type
 
+const BrewingBottleIndex: typeof Schema.Number = WireNumber.pipe(
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)),
+  Schema.check(Schema.isLessThan(BOTTLE_SLOT_COUNT)),
+)
+
 export const BrewingAction: Schema.Union<
   readonly [
     Schema.TaggedStruct<'open', {}>,
-    Schema.TaggedStruct<'insert', { slot: typeof BrewingSlotIndex }>,
-    Schema.TaggedStruct<'collect', {}>,
-    Schema.TaggedStruct<'drink', {}>,
+    Schema.TaggedStruct<'insert-fuel', { slot: typeof BrewingSlotIndex }>,
+    Schema.TaggedStruct<'insert-ingredient', { slot: typeof BrewingSlotIndex }>,
+    Schema.TaggedStruct<'insert-bottle', { slot: typeof BrewingSlotIndex; bottleIndex: typeof BrewingBottleIndex }>,
+    Schema.TaggedStruct<'collect', { bottleIndex: typeof BrewingBottleIndex }>,
+    Schema.TaggedStruct<'drink', { slot: typeof BrewingSlotIndex }>,
   ]
 > = Schema.Union([
   Schema.TaggedStruct('open', {}),
-  Schema.TaggedStruct('insert', { slot: BrewingSlotIndex }),
-  Schema.TaggedStruct('collect', {}),
-  Schema.TaggedStruct('drink', {}),
+  Schema.TaggedStruct('insert-fuel', { slot: BrewingSlotIndex }),
+  Schema.TaggedStruct('insert-ingredient', { slot: BrewingSlotIndex }),
+  Schema.TaggedStruct('insert-bottle', { bottleIndex: BrewingBottleIndex, slot: BrewingSlotIndex }),
+  Schema.TaggedStruct('collect', { bottleIndex: BrewingBottleIndex }),
+  Schema.TaggedStruct('drink', { slot: BrewingSlotIndex }),
 ])
 export type BrewingAction = typeof BrewingAction.Type
 

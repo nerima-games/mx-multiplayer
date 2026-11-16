@@ -162,6 +162,11 @@ describe('public API surface', () => {
         'inspectInboundFrame',
         // Protocol
         'PROTOCOL_VERSION',
+        'brewingStateToWire',
+        'brewingStateFromWire',
+        'furnaceStateFromWire',
+        'BrewingWireConversionFailure',
+        'FurnaceWireConversionFailure',
         'PlayerId',
         'PlayerName',
         'WorldId',
@@ -293,7 +298,7 @@ describe('public API surface', () => {
   // Docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(11)
+      expect(PROTOCOL_VERSION).toBe(12)
     }),
   )
 
