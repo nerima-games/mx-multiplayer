@@ -106,4 +106,6 @@ Protocol v12 は醸造台の state と操作を置き換え、かまどの state
 
 全 frame の版を完全一致で検査する仕組みは変わらない。v11 の frame は本文の decode 前に `unsupported-protocol-version` で拒否するため、server と client は同時に更新する。mc-server と mc-host-web は、このパッケージの醸造台の wire 定義と converter を共有する。`ItemStackWire` に components は載せず、醸造台とかまどの `ToWire` は既定でない components を型付きの失敗として返す。
 
-`brewingStateToWire` は wire の進行量の範囲も検査するため、呼び出し側は `Result` の失敗を扱う。かまどの双方向 converter は秒と整数 tick の変換規則を共有する。秒から tick は `Math.round(seconds * 20)` で最近傍へ丸め、tick から秒は kernel の `secondsForTicks` を使う。mc-server は受信・復元した `cookTicks` がレシピの所要時間の範囲内かを検査してから simulation に渡す。
+`brewingStateToWire` は wire の進行量の範囲も検査するため、呼び出し側は `Result` の失敗を扱う。かまどの双方向 converter は秒と整数 tick の変換規則を共有する。秒から tick は `Math.round(seconds * 20)` で最近傍へ丸める。ただし、input が station のレシピに一致し、進行量が所要時間より短い場合は、`cookTicks` を所要時間未満に復元できる最大整数 tick 以下に抑える。所要時間が整数 tick なら、その上限は「所要時間の tick 数 − 1」となる。所要時間以上の進行量は `invalid-state` として拒否する。converter には simulation と同じレシピ表を渡す。省略時は `VANILLA_SMELTING_RECIPES` を使う。
+
+tick から秒は kernel の `secondsForTicks` を使う。simulation が積み上げた秒との厳密な一致は保証しないため、mc-server と mc-host-web の state 比較は同じレシピ表を使った `furnaceStateToWire` の tick で行う。mc-server は受信・復元した `cookTicks` がレシピの所要時間の範囲内かを検査してから simulation に渡す。
