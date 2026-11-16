@@ -10,11 +10,11 @@ const roundTrip = reference(
 )
 const malformedPortal = reference(
   'test/codec.test.ts',
-  3028,
+  3047,
   'rejects client-selected portal transfer state with strict parse options',
 )
-const malformedDragon = reference('test/codec.test.ts', 2953, 'rejects malformed ender-dragon payloads')
-const malformedWither = reference('test/codec.test.ts', 2976, 'rejects malformed wither payloads')
+const malformedDragon = reference('test/codec.test.ts', 2972, 'rejects malformed ender-dragon payloads')
+const malformedWither = reference('test/codec.test.ts', 2995, 'rejects malformed wither payloads')
 const typedUnsupportedCommand = reference(
   'test/command-application.test.ts',
   192,

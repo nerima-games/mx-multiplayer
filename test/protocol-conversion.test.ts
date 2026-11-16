@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
 import { ITEM_TYPES, itemStackFromUnknown, maxStackCountForItem, type ItemSlot } from '@nerima-games/mc-kernel'
-import { brewingState, BrewingStateSchema, FurnaceStateSchema } from '@nerima-games/mc-sim'
+import { brewingState, BrewingStateSchema, FurnaceStateSchema, validateBrewingSnapshot } from '@nerima-games/mc-sim'
 import { Result, Schema } from 'effect'
 import {
   brewingStateFromWire,
@@ -97,6 +97,14 @@ describe('protocol state conversion', () => {
 
   it('rejects combinations whose item stack exceeds its native stack limit', () => {
     const stack = { item: 'water_bottle', count: 2 }
+    const validStack = Result.getOrThrow(itemStackFromUnknown('water_bottle', 1))
+    expect(validateBrewingSnapshot({
+      bottles: [{ ...validStack, count: 2 }, undefined, undefined],
+      ingredient: undefined,
+      fuel: undefined,
+      fuelCharges: 0,
+      brewProgressSecs: 0,
+    })).toMatchObject({ _tag: 'Failure' })
     expect(brewingStateFromWire({ ...emptyBrewingWire, bottles: [stack, null, null] })).toMatchObject({
       _tag: 'Failure', failure: { _tag: 'BrewingWireConversionFailure', reason: 'invalid-stack' },
     })

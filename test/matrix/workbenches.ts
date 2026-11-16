@@ -13,17 +13,17 @@ const wireShape: TestReference = {
 
 const malformedAnvilCrafting: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2803,
+  line: 2821,
   testName: 'rejects malformed anvil, crafting and player-damage payloads',
 }
 const malformedBrewing: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2832,
+  line: 2850,
   testName: 'rejects malformed brewing and status-effect payloads',
 }
 const malformedEnchanting: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2901,
+  line: 2920,
   testName: 'rejects malformed enchanting payloads',
 }
 
