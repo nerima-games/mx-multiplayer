@@ -64,10 +64,12 @@ v11 の公開 schema `BrewingIngredient`、`PotionType`、`BrewingBottle` は削
 | API | 契約 |
 | --- | --- |
 | `brewingStateToWire` | mc-kernel の `BrewingState` を検査し、`Result<BrewingStandState, BrewingWireConversionFailure>` を返す。成功時は空 slot を `null` にし、秒の進行量と stack の item・個数を保つ。既定でない components と wire の進行量の範囲外は失敗となる |
-| `brewingStateFromWire` | wire を検査し、`Result<BrewingState, BrewingWireConversionFailure>` を返す。mc-sim の `validateBrewingSnapshot` で state の組み合わせも検査する |
+| `brewingStateFromWire` | wire を検査し、`Result<BrewingState, BrewingWireConversionFailure>` を返す。最後に mc-sim の `validateBrewingSnapshot` で schema 検査を行う |
 | `furnaceStateToWire` | mc-kernel の `FurnaceState`、wire の `furnaceId` の順に受け、`Result<FurnaceStateWire, FurnaceWireConversionFailure>` を返す。`Math.round(seconds * 20)` で最近傍の整数 tick に変換する。既定でない components は失敗となる |
 | `furnaceStateFromWire` | wire を検査し、mc-kernel の `FurnaceState` を成功値とする `Result` を返す。mc-kernel の `secondsForTicks` で秒へ変換し、mc-sim の `FurnaceStateSchema` で検査する。失敗値は `FurnaceWireConversionFailure` |
 | `BrewingWireConversionFailure` / `FurnaceWireConversionFailure` | 変換の失敗を表す tagged schema |
+
+両 `FromWire` の最終 schema 検査は、mc-sim 0.11.1 では前段の wire・stack 検査を通った入力を追加で拒否しない。この最終検査の `invalid-state` 分岐に対する mock test は失敗の伝播を確認する。`ToWire` の検査には、既定でない components や wire の進行量の範囲外を拒否する役割がある。
 
 `ItemStackWire` は components を運ばない。両 `ToWire` は各 stack の components を kernel の `itemComponents(item)` が作る既定値と比較し、異なれば `unsupported-components` を返す。両 `FromWire` は `durability` を持つ stack を失敗として返し、値を捨てて変換を続けない。
 
