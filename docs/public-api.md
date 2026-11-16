@@ -14,7 +14,7 @@ Source paths in section headings are relative to the repository root; `domain/*`
 
 | 名前 | 種別 | 契約 |
 | --- | --- | --- |
-| `PROTOCOL_VERSION` | `number` | `src/domain/protocol.ts` が export する wire protocol 版数。現在は 11。値の正本は実装と互換性テスト |
+| `PROTOCOL_VERSION` | `number` | `src/domain/protocol.ts` が export する wire protocol 版数。現在は 12。値の正本は実装と互換性テスト |
 | `PlayerId` / `PlayerName` / `WorldId` | branded Schema | 非空文字列。`.make(...)` でコンストラクト |
 | `Vec3` | Schema | `{ x, y, z }` すべて `finite()` |
 | `BlockPos` | Schema | `{ x, y, z }` すべて `int()` |
@@ -54,6 +54,21 @@ receiver validates and applies owner and block changes as one group; revisions w
 advance as empty groups. A C4 snapshot represents a consistent view of owners and blocks. Oversized snapshots
 use start/chunk/end frames. The protocol transports the WCC owner-state projection and sparse block changes
 from `mc-sim`; `mx-multiplayer` does not duplicate owner state.
+
+### 醸造台とかまどの変換
+
+`BrewingStandState` は `bottles` の 3 slot、`ingredient`、`fuel`、`fuelCharges`、`brewProgressSecs` を運ぶ。slot は `ItemStack` または `null` である。`insert-bottle` と `collect` は `bottleIndex` で 0–2 を指定し、`drink` は inventory の `slot` で 0–35 を指定する。root barrel の `FurnaceState` は wire の型で、時間の単位は tick である。`station`、`burnTicksRemaining`、`burnTicksTotal`、`cookTicks` と input・fuel・output の stack を運ぶ。
+
+v11 の公開 schema `BrewingIngredient`、`PotionType`、`BrewingBottle` は削除した。材料と瓶は `ItemStack` の item・個数で表し、薬の種類も item で区別する。
+
+| API | 契約 |
+| --- | --- |
+| `brewingStateToWire` | mc-kernel の `BrewingState` を wire の `BrewingStandState` に変換する。空 slot は `null` となり、秒の進行量と stack の item・個数を保つ |
+| `brewingStateFromWire` | wire を検査し、`Result<BrewingState, BrewingWireConversionFailure>` を返す。mc-sim の `validateBrewingSnapshot` で state の組み合わせも検査する |
+| `furnaceStateFromWire` | wire を検査し、mc-kernel の `FurnaceState` を成功値とする `Result` を返す。時間は tick から秒へ変換し、mc-sim の `FurnaceStateSchema` で検査する。失敗値は `FurnaceWireConversionFailure` |
+| `BrewingWireConversionFailure` / `FurnaceWireConversionFailure` | 変換の失敗を表す tagged schema |
+
+`ItemStack` は components を運ばない。送信側は醸造台の stack が既定の components を持つことを保証する。`brewingStateToWire` はこの前提を検査しない。wire からの両 converter は `durability` を持つ stack を失敗として返し、値を捨てて変換を続けない。wire の変更と移行時の対応は [versioning.md](./versioning.md#9-protocol-v12) を参照する。
 
 ## 2. コーデック(`domain/codec.ts`)
 
@@ -440,8 +455,8 @@ rules, builds a `WorldWriteBatch`, and calls `WorldWritePort.applyBatch` through
 world write reject the edit, the host sends `BlockMutationRejected` to the sender. `MultiplayerWorldWriter`
 is the public type alias for `WorldWritePort['Service']` required by mc-compose's
 [C7 generic world-write contract](https://github.com/nerima-games/mc-compose/blob/main/docs/execution/contracts.md#L961);
-it adds no runtime writer implementation. The wire schema and `PROTOCOL_VERSION`
-remain unchanged at version 11.
+it adds no runtime writer implementation. This writer alias does not change the wire schema or
+`PROTOCOL_VERSION`.
 
 `EntityAttackCommand` becomes an ID-only `MeleeAttack` intent. `applyAcceptedInbound` receives both that intent
 and the validated original command, including the requested entity and held slot. A host can call

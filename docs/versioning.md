@@ -90,3 +90,18 @@ bump は必ず明示的な編集になる。
 ## 8. Protocol v10
 
 Protocol v10 adds C4 replication messages. A delta carries owner changes and sparse block changes for one world revision; a snapshot carries a consistent owner/block view. Oversized snapshots use start, chunk, and end frames. The client validates and applies each revision group atomically. The replicated owner state remains owned by mc-sim's `WorldCommitCoordinator`; mx-multiplayer transports the projection and does not keep a second authoritative copy.
+
+## 9. Protocol v12
+
+Protocol v12 は醸造台の state と操作を置き換え、かまどの state に必須フィールドを追加する。既存メッセージの形と制約が変わるため、§7 の規則に従って版を上げる。
+
+| 対象 | v11 | v12 |
+| --- | --- | --- |
+| `BrewingStandState` | `bottle?`、`ingredient?`、`fuelUnits`、`brewing?` | `bottles` の 3 slot、`ingredient`、`fuel`、`fuelCharges`、`brewProgressSecs` |
+| 瓶の挿入・回収 | 瓶の指定なし | `bottleIndex` で 0–2 を指定 |
+| `drink` | 醸造台の瓶を飲む | `slot` で指定した inventory の薬を飲む |
+| `FurnaceState` | 燃焼時間は残り tick のみ | `station` と `burnTicksTotal` を追加し、残り燃焼 tick が合計以下であることを検査 |
+
+醸造台の空 slot は `null` で表し、stack は共通の `ItemStack` を使う。`fuelCharges` は整数の 0–20、`brewProgressSecs` は有限の秒で 0 以上 20 未満とする。かまどの時間は引き続き tick で運ぶ。
+
+全 frame の版を完全一致で検査する仕組みは変わらない。v11 の frame は本文の decode 前に `unsupported-protocol-version` で拒否するため、server と client は同時に更新する。mc-server と mc-host-web は、このパッケージの醸造台の wire 定義と converter を共有する。`ItemStack` に components は載せず、醸造台の stack は既定の components を持つことを前提とする。
