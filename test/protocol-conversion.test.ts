@@ -125,4 +125,18 @@ describe('protocol state conversion', () => {
         : Schema.is(FurnaceWireConversionFailure)(furnace.failure)).toBe(true)
     }), { seed: 0x51c0ffee, numRuns: 100 })
   })
+
+  it('refuses unknown item names and counts outside the native StackCount domain', () => {
+    for (const stack of [
+      { item: 'not-an-item', count: 1 },
+      { item: 'stone', count: 100 },
+    ]) {
+      expect(brewingStateFromWire({ ...emptyBrewingWire, bottles: [stack, null, null] })).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'BrewingWireConversionFailure', path: 'bottles[0]', reason: 'invalid-stack' },
+      })
+      expect(furnaceStateFromWire({ ...emptyFurnaceWire, input: stack })).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'FurnaceWireConversionFailure', path: 'input', reason: 'invalid-stack' },
+      })
+    }
+  })
 })
