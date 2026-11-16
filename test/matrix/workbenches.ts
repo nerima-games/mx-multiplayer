@@ -18,12 +18,12 @@ const malformedAnvilCrafting: TestReference = {
 }
 const malformedBrewing: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2850,
+  line: 2847,
   testName: 'rejects malformed brewing and status-effect payloads',
 }
 const malformedEnchanting: TestReference = {
   file: 'test/codec.test.ts',
-  line: 2920,
+  line: 2917,
   testName: 'rejects malformed enchanting payloads',
 }
 

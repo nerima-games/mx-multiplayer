@@ -29,7 +29,7 @@ const malformedDamage = reference(
 )
 const malformedStatusEffects = reference(
   'test/codec.test.ts',
-  2850,
+  2847,
   'rejects malformed brewing and status-effect payloads',
 )
 const malformedVitalsAndDamageResults = reference(

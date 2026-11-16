@@ -77,9 +77,9 @@ import {
   PlayerDamageCommandAccepted,
   PlayerDamageCommandRejected,
 } from './protocol/player-damage.js'
-import { ItemStack } from './protocol/item-stack.js'
+import { ItemStackWire } from './protocol/item-stack.js'
 import { ReplicatedOwnerChangeSchema } from '@nerima-games/mc-sim'
-export { ItemStack } from './protocol/item-stack.js'
+export { ItemStackWire } from './protocol/item-stack.js'
 
 /**
  * The identifier, revision and position primitives, re-exported here so
@@ -573,30 +573,30 @@ export const EquipmentSlot: Schema.Literals<readonly ['head', 'chest', 'legs', '
 export type EquipmentSlot = typeof EquipmentSlot.Type
 
 const EquipmentState: Schema.Struct<{
-  chest: Schema.NullOr<typeof ItemStack>
-  feet: Schema.NullOr<typeof ItemStack>
-  head: Schema.NullOr<typeof ItemStack>
-  legs: Schema.NullOr<typeof ItemStack>
-  offhand: Schema.NullOr<typeof ItemStack>
+  chest: Schema.NullOr<typeof ItemStackWire>
+  feet: Schema.NullOr<typeof ItemStackWire>
+  head: Schema.NullOr<typeof ItemStackWire>
+  legs: Schema.NullOr<typeof ItemStackWire>
+  offhand: Schema.NullOr<typeof ItemStackWire>
 }> = Schema.Struct({
-  chest: Schema.NullOr(ItemStack),
-  feet: Schema.NullOr(ItemStack),
-  head: Schema.NullOr(ItemStack),
-  legs: Schema.NullOr(ItemStack),
-  offhand: Schema.NullOr(ItemStack),
+  chest: Schema.NullOr(ItemStackWire),
+  feet: Schema.NullOr(ItemStackWire),
+  head: Schema.NullOr(ItemStackWire),
+  legs: Schema.NullOr(ItemStackWire),
+  offhand: Schema.NullOr(ItemStackWire),
 })
 
 const InventoryState: Schema.Struct<{
   durability: Schema.optionalKey<Schema.$Array<Schema.NullOr<typeof ItemDurability>>>
   equipment: Schema.optionalKey<typeof EquipmentState>
   selectedSlot: typeof Schema.Number
-  slots: Schema.$Array<Schema.NullOr<typeof ItemStack>>
+  slots: Schema.$Array<Schema.NullOr<typeof ItemStackWire>>
 }> = Schema.Struct({
   // Accepted for protocol-v1 peers that sent durability out-of-band.
   durability: Schema.optionalKey(Schema.Array(Schema.NullOr(ItemDurability))),
   equipment: Schema.optionalKey(EquipmentState),
   selectedSlot: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  slots: Schema.Array(Schema.NullOr(ItemStack)),
+  slots: Schema.Array(Schema.NullOr(ItemStackWire)),
 })
 
 const VitalsState: Schema.Struct<{
@@ -629,41 +629,41 @@ export type ContainerKind = typeof ContainerKind.Type
 const ContainerState: Schema.Struct<{
   containerId: typeof Schema.String
   kind: typeof ContainerKind
-  slots: Schema.$Array<Schema.NullOr<typeof ItemStack>>
+  slots: Schema.$Array<Schema.NullOr<typeof ItemStackWire>>
 }> = Schema.Struct({
   containerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
   kind: ContainerKind,
-  slots: Schema.Array(Schema.NullOr(ItemStack)),
+  slots: Schema.Array(Schema.NullOr(ItemStackWire)),
 })
 
-export const FurnaceState: Schema.Struct<{
+export const FurnaceStateWire: Schema.Struct<{
   burnTicksTotal: typeof Schema.Number
   burnTicksRemaining: typeof Schema.Number
   cookTicks: typeof Schema.Number
-  fuel: Schema.NullOr<typeof ItemStack>
+  fuel: Schema.NullOr<typeof ItemStackWire>
   furnaceId: typeof Schema.String
-  input: Schema.NullOr<typeof ItemStack>
-  output: Schema.NullOr<typeof ItemStack>
+  input: Schema.NullOr<typeof ItemStackWire>
+  output: Schema.NullOr<typeof ItemStackWire>
   station: Schema.Literals<readonly ['furnace', 'blast_furnace', 'smoker']>
 }> = Schema.Struct({
   burnTicksRemaining: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   burnTicksTotal: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
   cookTicks: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
-  fuel: Schema.NullOr(ItemStack),
+  fuel: Schema.NullOr(ItemStackWire),
   furnaceId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
-  input: Schema.NullOr(ItemStack),
-  output: Schema.NullOr(ItemStack),
+  input: Schema.NullOr(ItemStackWire),
+  output: Schema.NullOr(ItemStackWire),
   station: Schema.Literals(['furnace', 'blast_furnace', 'smoker']),
 }).check(Schema.makeFilter((state) => state.burnTicksRemaining <= state.burnTicksTotal))
-export type FurnaceState = typeof FurnaceState.Type
+export type FurnaceStateWire = typeof FurnaceStateWire.Type
 
 const VillagerTradeState: Schema.Struct<{
   offers: Schema.$Array<
     Schema.Struct<{
-      input: Schema.$Array<typeof ItemStack>
+      input: Schema.$Array<typeof ItemStackWire>
       maxUses: typeof Schema.Number
       offerId: typeof Schema.String
-      output: typeof ItemStack
+      output: typeof ItemStackWire
       uses: typeof Schema.Number
     }>
   >
@@ -671,10 +671,10 @@ const VillagerTradeState: Schema.Struct<{
 }> = Schema.Struct({
   offers: Schema.Array(
     Schema.Struct({
-      input: Schema.Array(ItemStack),
+      input: Schema.Array(ItemStackWire),
       maxUses: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThan(ZERO))),
       offerId: Schema.String.pipe(Schema.check(Schema.isMinLength(MIN_NON_EMPTY_LENGTH))),
-      output: ItemStack,
+      output: ItemStackWire,
       uses: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO))),
     }),
   ),
@@ -726,13 +726,13 @@ export const ItemDropEntityState: Schema.TaggedStruct<
     ageTicks: Schema.optionalKey<typeof Schema.Number>
     at: typeof Vec3
     entityId: typeof EntityId
-    stack: typeof ItemStack
+    stack: typeof ItemStackWire
   }
 > = Schema.TaggedStruct('item-drop', {
   ageTicks: Schema.optionalKey(WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)))),
   at: Vec3,
   entityId: EntityId,
-  stack: ItemStack,
+  stack: ItemStackWire,
 })
 /**
  * `isolatedDeclarations` (TS 7) cannot re-derive the type of `Schema.NullOr(PlayerId)`
@@ -807,7 +807,7 @@ export const AuthoritativeSnapshot: Schema.TaggedStruct<
   {
     containers: Schema.$Array<typeof ContainerState>
     entities: Schema.optionalKey<Schema.$Array<typeof AuthoritativeEntityState>>
-    furnaces: Schema.$Array<typeof FurnaceState>
+    furnaces: Schema.$Array<typeof FurnaceStateWire>
     inventories: Schema.$Array<Schema.Struct<{ player: typeof PlayerId; state: typeof InventoryState }>>
     revision: typeof Revision
     timeWeather: typeof TimeWeatherState
@@ -818,7 +818,7 @@ export const AuthoritativeSnapshot: Schema.TaggedStruct<
 > = Schema.TaggedStruct('AuthoritativeSnapshot', {
   containers: Schema.Array(ContainerState),
   entities: Schema.optionalKey(Schema.Array(AuthoritativeEntityState)),
-  furnaces: Schema.Array(FurnaceState),
+  furnaces: Schema.Array(FurnaceStateWire),
   inventories: Schema.Array(Schema.Struct({ player: PlayerId, state: InventoryState })),
   revision: Revision,
   timeWeather: TimeWeatherState,
@@ -909,10 +909,10 @@ export const ContainerDelta: Schema.TaggedStruct<
 })
 export const FurnaceDelta: Schema.TaggedStruct<
   'FurnaceDelta',
-  typeof DeltaHeader & { state: typeof FurnaceState }
+  typeof DeltaHeader & { state: typeof FurnaceStateWire }
 > = Schema.TaggedStruct('FurnaceDelta', {
   ...DeltaHeader,
-  state: FurnaceState,
+  state: FurnaceStateWire,
 })
 export const VillagerTradeDelta: Schema.TaggedStruct<
   'VillagerTradeDelta',

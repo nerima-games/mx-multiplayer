@@ -31,6 +31,9 @@ import type {
   DeltaProjectionOutcome,
   DeltaProjectionRecipient,
   FrameTag,
+  FurnaceStateWire,
+  ItemStackWire,
+  BrewingSlotWire,
   HungerRejectionReason,
   HungerResult,
   InboundFrameInspection,
@@ -87,6 +90,9 @@ type NewPublicTypes = {
   hungerRejectionReason: HungerRejectionReason
   hungerResult: HungerResult
   frameTag: FrameTag
+  furnaceStateWire: FurnaceStateWire
+  itemStackWire: ItemStackWire
+  brewingSlotWire: BrewingSlotWire
   inboundFrameInspection: InboundFrameInspection
   limitConfig: ConnectionRateLimitConfig
   limitConfigField: ConnectionRateLimitConfigField
@@ -165,6 +171,10 @@ describe('public API surface', () => {
         'brewingStateToWire',
         'brewingStateFromWire',
         'furnaceStateFromWire',
+        'furnaceStateToWire',
+        'FurnaceStateWire',
+        'ItemStackWire',
+        'BrewingSlotWire',
         'BrewingWireConversionFailure',
         'FurnaceWireConversionFailure',
         'PlayerId',
@@ -255,6 +265,9 @@ describe('public API surface', () => {
 
       for (const name of expected) {
         expect(Object.keys(multiplayer)).toContain(name)
+      }
+      for (const name of ['FurnaceState', 'ItemStack', 'BrewingSlot']) {
+        expect(Object.keys(multiplayer)).not.toContain(name)
       }
     }),
   )

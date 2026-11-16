@@ -4,7 +4,7 @@
  * Status effects retain the mx-gameplay wire shape.
  */
 import { BlockPos, CommandId, PlayerId, Revision, WireNumber, WorldId } from '../protocol/identifiers.js'
-import { ItemStack } from './item-stack.js'
+import { ItemStackWire } from './item-stack.js'
 import { Schema } from 'effect'
 
 const ZERO = 0
@@ -12,21 +12,21 @@ const MAX_FUEL_CHARGES = 20
 const BREW_DURATION_SECS = 20
 const BOTTLE_SLOT_COUNT = 3
 
-export const BrewingSlot: Schema.NullOr<typeof ItemStack> = Schema.NullOr(ItemStack)
-export type BrewingSlot = typeof BrewingSlot.Type
+export const BrewingSlotWire: Schema.NullOr<typeof ItemStackWire> = Schema.NullOr(ItemStackWire)
+export type BrewingSlotWire = typeof BrewingSlotWire.Type
 
 export const BrewingStandState: Schema.Struct<{
-  bottles: Schema.Tuple<readonly [typeof BrewingSlot, typeof BrewingSlot, typeof BrewingSlot]>
-  ingredient: typeof BrewingSlot
-  fuel: typeof BrewingSlot
+  bottles: Schema.Tuple<readonly [typeof BrewingSlotWire, typeof BrewingSlotWire, typeof BrewingSlotWire]>
+  ingredient: typeof BrewingSlotWire
+  fuel: typeof BrewingSlotWire
   fuelCharges: typeof Schema.Number
   brewProgressSecs: typeof Schema.Number
 }> = Schema.Struct({
-  bottles: Schema.Tuple([BrewingSlot, BrewingSlot, BrewingSlot]),
+  bottles: Schema.Tuple([BrewingSlotWire, BrewingSlotWire, BrewingSlotWire]),
   brewProgressSecs: WireNumber.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(ZERO)), Schema.check(Schema.isLessThan(BREW_DURATION_SECS))),
-  fuel: BrewingSlot,
+  fuel: BrewingSlotWire,
   fuelCharges: WireNumber.pipe(Schema.check(Schema.isInt()), Schema.check(Schema.isBetween({ maximum: MAX_FUEL_CHARGES, minimum: ZERO }))),
-  ingredient: BrewingSlot,
+  ingredient: BrewingSlotWire,
 })
 export type BrewingStandState = typeof BrewingStandState.Type
 

@@ -2843,10 +2843,7 @@ describe('malformed input', () => {
     }),
   )
 
-  // REGRESSION (Wave 1 lowering): `BrewingStandState` and `StatusEffectState`
-  // are mirrored locally (see `protocol/brewing.ts`'s file header), and a
-  // mirror that drifted from what it mirrors would show up exactly here — as
-  // a shape this build's own schema silently accepted or wrongly rejected.
+  // Brewing and status-effect payloads use strict wire schemas, including nested stacks.
   it.effect('rejects malformed brewing and status-effect payloads', () =>
     Effect.sync(() => {
       const invalidMessages = [

@@ -1,37 +1,65 @@
-import { type BrewingState, type Slot, StackCount, isItemType, itemStack } from '@nerima-games/mc-kernel'
+import { type BrewingState, type Slot, StackCount, isItemType, itemComponents, itemStack, itemStackEqualsIgnoringCount } from '@nerima-games/mc-kernel'
 import { Result, Schema } from 'effect'
 import { BrewingStandState } from './brewing.js'
-import type { ItemStack } from './item-stack.js'
+import type { ItemStackWire } from './item-stack.js'
 import { validateBrewingSnapshot } from '@nerima-games/mc-sim'
 
 export const BrewingWireConversionFailure: Schema.TaggedStruct<'BrewingWireConversionFailure', {
   path: typeof Schema.String
-  reason: Schema.Literals<readonly ['invalid-wire', 'unsupported-durability', 'invalid-stack', 'invalid-state']>
+  reason: Schema.Literals<readonly ['invalid-wire', 'unsupported-durability', 'invalid-stack', 'invalid-state', 'unsupported-components']>
 }> = Schema.TaggedStruct('BrewingWireConversionFailure', {
   path: Schema.String,
-  reason: Schema.Literals(['invalid-wire', 'unsupported-durability', 'invalid-stack', 'invalid-state']),
+  reason: Schema.Literals(['invalid-wire', 'unsupported-durability', 'invalid-stack', 'invalid-state', 'unsupported-components']),
 })
 export type BrewingWireConversionFailure = typeof BrewingWireConversionFailure.Type
 
-const slotToWire = (slot: Slot): ItemStack | null => {
-  if (slot === undefined) {
-    return null
-  }
-  return { count: slot.count, item: slot.item }
-}
+const slotToWire = (slot: Slot, path: string): Result.Result<ItemStackWire | null, BrewingWireConversionFailure> =>
+  Result.gen(function* () {
+    if (slot === undefined) {
+      return null
+    }
+    const defaults = yield* Result.mapError(itemComponents(slot.item), (): BrewingWireConversionFailure => ({
+      _tag: 'BrewingWireConversionFailure', path, reason: 'invalid-stack',
+    }))
+    if (!itemStackEqualsIgnoringCount(slot, { ...slot, components: defaults })) {
+      return yield* Result.fail<BrewingWireConversionFailure>({
+        _tag: 'BrewingWireConversionFailure', path, reason: 'unsupported-components',
+      })
+    }
+    const stack = yield* Result.mapError(itemStack(slot.item, slot.count), (): BrewingWireConversionFailure => ({
+      _tag: 'BrewingWireConversionFailure', path, reason: 'invalid-stack',
+    }))
+    return { count: stack.count, item: stack.item }
+  })
 
-export const brewingStateToWire = (state: BrewingState): BrewingStandState => {
-  const [first, second, third] = state.bottles
-  return {
-    bottles: [slotToWire(first), slotToWire(second), slotToWire(third)],
-    brewProgressSecs: state.brewProgressSecs,
-    fuel: slotToWire(state.fuel),
-    fuelCharges: state.fuelCharges,
-    ingredient: slotToWire(state.ingredient),
-  }
-}
+export const brewingStateToWire = (state: BrewingState): Result.Result<BrewingStandState, BrewingWireConversionFailure> =>
+  Result.gen(function* () {
+    const validated = validateBrewingSnapshot(state)
+    if (validated._tag !== 'Valid') {
+      return yield* Result.fail<BrewingWireConversionFailure>({
+        _tag: 'BrewingWireConversionFailure', path: 'state', reason: 'invalid-state',
+      })
+    }
+    const [first, second, third] = validated.state.bottles
+    const [firstWire, secondWire, thirdWire, ingredient, fuel] = yield* Result.all([
+      slotToWire(first, 'bottles[0]'),
+      slotToWire(second, 'bottles[1]'),
+      slotToWire(third, 'bottles[2]'),
+      slotToWire(validated.state.ingredient, 'ingredient'),
+      slotToWire(validated.state.fuel, 'fuel'),
+    ])
+    return yield* Result.mapError(Schema.decodeUnknownResult(BrewingStandState)({
+      bottles: [firstWire, secondWire, thirdWire],
+      brewProgressSecs: validated.state.brewProgressSecs,
+      fuel,
+      fuelCharges: validated.state.fuelCharges,
+      ingredient,
+    }, { onExcessProperty: 'error' }), (): BrewingWireConversionFailure => ({
+      _tag: 'BrewingWireConversionFailure', path: 'state', reason: 'invalid-state',
+    }))
+  })
 
-const slotFromWire = (slot: ItemStack | null, path: string): Result.Result<Slot, BrewingWireConversionFailure> => {
+const slotFromWire = (slot: ItemStackWire | null, path: string): Result.Result<Slot, BrewingWireConversionFailure> => {
   if (slot === null) {
     return Result.succeed(undefined)
   }
