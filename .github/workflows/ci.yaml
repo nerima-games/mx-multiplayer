@@ -69,7 +69,7 @@ jobs:
           fi
 
       - name: Coverage
-        run: nix develop --command pnpm test:coverage
+        run: nix develop --command pnpm test:coverage --maxWorkers=1
 
       - name: Verify package boundary
         env:

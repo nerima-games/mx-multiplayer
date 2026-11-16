@@ -8,7 +8,7 @@ const roundTrip: TestReference = {
 const legacyWireFixture: TestReference = {
   file: 'test/wire-fixtures.test.ts',
   line: 124,
-  testName: 'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  testName: 'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 }
 const containerShapes: TestReference = {
   file: 'test/scenarios/containers.test.ts',

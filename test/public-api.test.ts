@@ -31,6 +31,9 @@ import type {
   DeltaProjectionOutcome,
   DeltaProjectionRecipient,
   FrameTag,
+  FurnaceStateWire,
+  ItemStackWire,
+  BrewingSlotWire,
   HungerRejectionReason,
   HungerResult,
   InboundFrameInspection,
@@ -87,6 +90,9 @@ type NewPublicTypes = {
   hungerRejectionReason: HungerRejectionReason
   hungerResult: HungerResult
   frameTag: FrameTag
+  furnaceStateWire: FurnaceStateWire
+  itemStackWire: ItemStackWire
+  brewingSlotWire: BrewingSlotWire
   inboundFrameInspection: InboundFrameInspection
   limitConfig: ConnectionRateLimitConfig
   limitConfigField: ConnectionRateLimitConfigField
@@ -162,6 +168,15 @@ describe('public API surface', () => {
         'inspectInboundFrame',
         // Protocol
         'PROTOCOL_VERSION',
+        'brewingStateToWire',
+        'brewingStateFromWire',
+        'furnaceStateFromWire',
+        'furnaceStateToWire',
+        'FurnaceStateWire',
+        'ItemStackWire',
+        'BrewingSlotWire',
+        'BrewingWireConversionFailure',
+        'FurnaceWireConversionFailure',
         'PlayerId',
         'PlayerName',
         'WorldId',
@@ -251,6 +266,9 @@ describe('public API surface', () => {
       for (const name of expected) {
         expect(Object.keys(multiplayer)).toContain(name)
       }
+      for (const name of ['FurnaceState', 'ItemStack', 'BrewingSlot']) {
+        expect(Object.keys(multiplayer)).not.toContain(name)
+      }
     }),
   )
 
@@ -293,7 +311,7 @@ describe('public API surface', () => {
   // Docs/versioning.md, not something that happens by accident.
   it.effect('pins the protocol version, so a bump is always an explicit edit', () =>
     Effect.sync(() => {
-      expect(PROTOCOL_VERSION).toBe(11)
+      expect(PROTOCOL_VERSION).toBe(12)
     }),
   )
 

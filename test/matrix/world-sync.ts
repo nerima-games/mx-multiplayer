@@ -18,7 +18,7 @@ const a1 = (...malformedTests: TestReference[]): MatrixCell => {
 const legacyWireCompatibility = covered(reference(
   'test/wire-fixtures.test.ts',
   124,
-  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 ))
 const noLegacyWireFixture = excluded(
   'X2 freezes representative legacy frames by family, but this tag has no tag-specific v0.11.0 or v0.12.0 frame fixture (test/wire-fixtures.test.ts:124).',
@@ -149,7 +149,7 @@ export const worldSync: Record<
   PlayerLeave: row(
     a1(reference(
       'test/codec.test.ts',
-      2694,
+      2703,
       'rejects an empty player id, so an unidentified peer cannot be addressed',
     )),
     a2NotCommand,
@@ -185,10 +185,10 @@ export const worldSync: Record<
     a1(
       reference(
         'test/codec.test.ts',
-        2581,
+        2590,
         'rejects a coordinate that arrived as null, which is what a NaN turns into over JSON',
       ),
-      reference('test/codec.test.ts', 2679, 'rejects a pitch outside the range a head can actually turn'),
+      reference('test/codec.test.ts', 2688, 'rejects a pitch outside the range a head can actually turn'),
     ),
     gap(
       'Movement carries a client-claimed player and position, but no server path applies it through authoritative command handling or rejects it there.',
@@ -223,7 +223,7 @@ export const worldSync: Record<
   ),
   BlockPlace: row(
     a1(),
-    covered(reference('test/server-adapter.test.ts', 1468, 'delivers authenticated block edits to the host once and distributes their delta')),
+    covered(reference('test/server-adapter.test.ts', 1469, 'delivers authenticated block edits to the host once and distributes their delta')),
     gap(
       'Placement changes shared block state, but no multi-client projection test applies BlockPlace and compares the resulting views.',
       'src/domain/protocol.ts:179-203',
@@ -241,11 +241,11 @@ export const worldSync: Record<
       'src/domain/chunk-delta.ts:368-388',
       'src/stages/registration.ts:450-452',
     ),
-    covered(reference('test/server-adapter.test.ts', 1577, 'property-checks block edit sender and world authentication before host application')),
+    covered(reference('test/server-adapter.test.ts', 1578, 'property-checks block edit sender and world authentication before host application')),
   ),
   BlockBreak: row(
-    a1(reference('test/codec.test.ts', 2591, 'rejects a non-integral block coordinate')),
-    covered(reference('test/server-adapter.test.ts', 1468, 'delivers authenticated block edits to the host once and distributes their delta')),
+    a1(reference('test/codec.test.ts', 2600, 'rejects a non-integral block coordinate')),
+    covered(reference('test/server-adapter.test.ts', 1469, 'delivers authenticated block edits to the host once and distributes their delta')),
     gap(
       'Breaking changes shared block state, but no multi-client projection test applies BlockBreak and compares the resulting views.',
       'src/domain/protocol.ts:205-214',
@@ -263,7 +263,7 @@ export const worldSync: Record<
       'src/domain/chunk-delta.ts:368-388',
       'src/stages/registration.ts:450-452',
     ),
-    covered(reference('test/server-adapter.test.ts', 1577, 'property-checks block edit sender and world authentication before host application')),
+    covered(reference('test/server-adapter.test.ts', 1578, 'property-checks block edit sender and world authentication before host application')),
   ),
   Chat: row(
     a1(),
@@ -301,7 +301,7 @@ export const worldSync: Record<
     excluded('WorldInfo is server world metadata and has no client operation or claimed player identity for A7 to validate.'),
   ),
   WorldSnapshot: row(
-    a1(reference('test/codec.test.ts', 2621, 'rejects malformed snapshot members and unknown rejection reasons')),
+    a1(reference('test/codec.test.ts', 2630, 'rejects malformed snapshot members and unknown rejection reasons')),
     excluded('A complete world snapshot establishes state; it is not a client gameplay command to apply or reject.'),
     gap(
       'WorldSnapshot supplies shared blocks and players, but no test compares its resulting state across multiple clients.',
@@ -323,7 +323,7 @@ export const worldSync: Record<
     a7NotClientOperation,
   ),
   BlockMutationRejected: row(
-    a1(reference('test/codec.test.ts', 2621, 'rejects malformed snapshot members and unknown rejection reasons')),
+    a1(reference('test/codec.test.ts', 2630, 'rejects malformed snapshot members and unknown rejection reasons')),
     excluded('BlockMutationRejected reports an already rejected mutation; it is not the command being applied.'),
     a3NotState,
     gap(
@@ -453,7 +453,7 @@ export const worldSync: Record<
   ReplicatedWorldDelta: row(
     a1(reference(
       'test/codec.test.ts',
-      1939,
+      1948,
       'rejects duplicate registrations, unknown owners, duplicate changes, and invalid owner state',
     )),
     excluded('ReplicatedWorldDelta is authoritative state replication, not a client gameplay command.'),
@@ -470,7 +470,7 @@ export const worldSync: Record<
   ReplicatedWorldSnapshot: row(
     a1(reference(
       'test/codec.test.ts',
-      2064,
+      2073,
       'requires a registry and its block-read allowance for C4 snapshots',
     )),
     excluded('ReplicatedWorldSnapshot is authoritative state replication, not a client gameplay command.'),

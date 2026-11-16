@@ -14,7 +14,7 @@ Source paths in section headings are relative to the repository root; `domain/*`
 
 | 名前 | 種別 | 契約 |
 | --- | --- | --- |
-| `PROTOCOL_VERSION` | `number` | `src/domain/protocol.ts` が export する wire protocol 版数。現在は 11。値の正本は実装と互換性テスト |
+| `PROTOCOL_VERSION` | `number` | `src/domain/protocol.ts` が export する wire protocol 版数。現在は 12。値の正本は実装と互換性テスト |
 | `PlayerId` / `PlayerName` / `WorldId` | branded Schema | 非空文字列。`.make(...)` でコンストラクト |
 | `Vec3` | Schema | `{ x, y, z }` すべて `finite()` |
 | `BlockPos` | Schema | `{ x, y, z }` すべて `int()` |
@@ -54,6 +54,30 @@ receiver validates and applies owner and block changes as one group; revisions w
 advance as empty groups. A C4 snapshot represents a consistent view of owners and blocks. Oversized snapshots
 use start/chunk/end frames. The protocol transports the WCC owner-state projection and sparse block changes
 from `mc-sim`; `mx-multiplayer` does not duplicate owner state.
+
+### 醸造台とかまどの変換
+
+`BrewingStandState` は `bottles` の 3 slot、`ingredient`、`fuel`、`fuelCharges`、`brewProgressSecs` を運ぶ。root barrel の `BrewingSlotWire` は `ItemStackWire` または `null` である。`insert-bottle` と `collect` は `bottleIndex` で 0–2 を指定し、`drink` は inventory の `slot` で 0–35 を指定する。`FurnaceStateWire` は wire の型で、時間の単位は tick である。`station`、`burnTicksRemaining`、`burnTicksTotal`、`cookTicks` と input・fuel・output の stack を運ぶ。
+
+v11 の公開 schema `BrewingIngredient`、`PotionType`、`BrewingBottle` は削除した。材料と瓶は `ItemStackWire` の item・個数で表し、薬の種類も item で区別する。root の新しい wire schema と型は `ItemStackWire`、`BrewingSlotWire`、`FurnaceStateWire` という名前で公開し、mc-kernel の `ItemStack`、`FurnaceState` と区別する。
+
+| API | 契約 |
+| --- | --- |
+| `brewingStateToWire` | mc-kernel の `BrewingState` を検査し、`Result<BrewingStandState, BrewingWireConversionFailure>` を返す。成功時は空 slot を `null` にし、秒の進行量と stack の item・個数を保つ。既定でない components と wire の進行量の範囲外は失敗となる |
+| `brewingStateFromWire` | wire を検査し、`Result<BrewingState, BrewingWireConversionFailure>` を返す。最後に mc-sim の `validateBrewingSnapshot` で schema 検査を行う |
+| `furnaceStateToWire` | mc-kernel の `FurnaceState`、wire の `furnaceId`、任意の `ReadonlyArray<SmeltingRecipeInput>` の順に受け、`Result<FurnaceStateWire, FurnaceWireConversionFailure>` を返す。レシピ表の省略時は `VANILLA_SMELTING_RECIPES` を使う。秒を整数 tick へ変換し、既定でない components は失敗となる |
+| `furnaceStateFromWire` | wire を検査し、mc-kernel の `FurnaceState` を成功値とする `Result` を返す。mc-kernel の `secondsForTicks` で秒へ変換し、mc-sim の `FurnaceStateSchema` で検査する。失敗値は `FurnaceWireConversionFailure` |
+| `BrewingWireConversionFailure` / `FurnaceWireConversionFailure` | 変換の失敗を表す tagged schema |
+
+両 `FromWire` の最終 schema 検査は、mc-sim 0.11.1 では前段の wire・stack 検査を通った入力を追加で拒否しない。この最終検査の `invalid-state` 分岐に対する mock test は失敗の伝播を確認する。`ToWire` の検査には、既定でない components や wire の進行量の範囲外を拒否する役割がある。
+
+`ItemStackWire` は components を運ばない。両 `ToWire` は各 stack の components を kernel の `itemComponents(item)` が作る既定値と比較し、異なれば `unsupported-components` を返す。両 `FromWire` は `durability` を持つ stack を失敗として返し、値を捨てて変換を続けない。
+
+かまどの秒から tick への変換は `Math.round(seconds * 20)` を基本とし、ちょうど半 tick なら大きい整数へ丸める。input が station のレシピに一致し、`cookProgressSecs` が所要時間より短い場合は、丸め後の `cookTicks` を、`secondsForTicks` で復元した秒が所要時間未満となる最大整数 tick 以下に抑える。所要時間が整数 tick なら、その上限は「所要時間の tick 数 − 1」となる。これにより、所要時間の直前にある有効な進行量が、復元時に所要時間ちょうどになることを防ぐ。所要時間以上の進行量は `invalid-state` として拒否する。
+
+`secondsForTicks` は tick から秒を復元する規則を統一する。simulation が秒を足し引きした結果との厳密な一致は保証しない。mc-server と mc-host-web が state を比較するときは、同じレシピ表を使って両方を `furnaceStateToWire` に通し、秒の厳密な等値ではなく tick を比較する。
+
+受信した wire の `cookTicks` とレシピの所要時間との比較は、wire schema と `furnaceStateFromWire` の検査範囲に含まれない。mc-server は受信・復元時にこの上限を検査してから simulation に渡す。wire の変更と移行時の対応は [versioning.md](./versioning.md#9-protocol-v12) を参照する。
 
 ## 2. コーデック(`domain/codec.ts`)
 
@@ -440,8 +464,8 @@ rules, builds a `WorldWriteBatch`, and calls `WorldWritePort.applyBatch` through
 world write reject the edit, the host sends `BlockMutationRejected` to the sender. `MultiplayerWorldWriter`
 is the public type alias for `WorldWritePort['Service']` required by mc-compose's
 [C7 generic world-write contract](https://github.com/nerima-games/mc-compose/blob/main/docs/execution/contracts.md#L961);
-it adds no runtime writer implementation. The wire schema and `PROTOCOL_VERSION`
-remain unchanged at version 11.
+it adds no runtime writer implementation. This writer alias does not change the wire schema or
+`PROTOCOL_VERSION`.
 
 `EntityAttackCommand` becomes an ID-only `MeleeAttack` intent. `applyAcceptedInbound` receives both that intent
 and the validated original command, including the requested entity and held slot. A host can call

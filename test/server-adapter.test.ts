@@ -24,6 +24,7 @@ import {
   EntityId,
   PlayerId,
   PlayerName,
+  PROTOCOL_VERSION,
   createReplicatedOwnerRegistry,
   ReplicatedOwnerRegistryLimitsSchema,
   WorldId,
@@ -68,7 +69,7 @@ const emptyOwnerRegistryLimits: ReplicatedOwnerRegistryLimits = Schema.decodeUnk
   maxDeltaBlockChanges: 320,
   maxSnapshotBlockReads: 3_422_759,
   maxDepth: 13,
-  maxCollectionItems: 31_149,
+  maxCollectionItems: 31_148,
   maxDeltaFrameBytes: 54_489,
   maxSnapshotFrameBytes: 3_422_759,
   ownerStates: [],
@@ -464,7 +465,7 @@ describe('createServerAdapter', () => {
       entities: [
         { _tag: 'living' as const, at: { x: 0, y: 64, z: 0 }, entityId: EntityId.make('owner:alice'), entityType: 'zombie', health: 20, maxHealth: 20 },
       ],
-      furnaces: [{ burnTicksRemaining: 0, cookTicks: 0, fuel: null, furnaceId: OWNER_FURNACE, input: null, output: null }],
+      furnaces: [{ burnTicksRemaining: 0, burnTicksTotal: 0, station: 'furnace' as const, cookTicks: 0, fuel: null, furnaceId: OWNER_FURNACE, input: null, output: null }],
       villagerTrades: [{
         offers: [{ input: [], maxUses: 1, offerId: 'trade:one', output: { item: 'emerald', count: 1 }, uses: 0 }],
         villagerId: OWNER_VILLAGER,
@@ -515,7 +516,7 @@ describe('createServerAdapter', () => {
         },
       },
       { owner: OWNER_CONTAINER, snapshot: { ...authoritativeSnapshot(), containers: [{ containerId: OWNER_CONTAINER, kind: 'chest', slots: [] }] } },
-      { owner: OWNER_FURNACE, snapshot: { ...authoritativeSnapshot(), furnaces: [{ burnTicksRemaining: 0, cookTicks: 0, fuel: null, furnaceId: OWNER_FURNACE, input: null, output: null }] } },
+      { owner: OWNER_FURNACE, snapshot: { ...authoritativeSnapshot(), furnaces: [{ burnTicksRemaining: 0, burnTicksTotal: 0, station: 'furnace', cookTicks: 0, fuel: null, furnaceId: OWNER_FURNACE, input: null, output: null }] } },
       {
         owner: OWNER_VILLAGER,
         snapshot: {
@@ -1614,7 +1615,7 @@ describe('createServerAdapter', () => {
     })
     const connection = connected(adapter, PLAYER_A)
     const frame = JSON.stringify({
-      protocolVersion: 11,
+      protocolVersion: PROTOCOL_VERSION,
       message: { _tag: 'BlockPlace', at: { x: 0, y: 64, z: 0 }, block: 'stone', state: 1, player: PLAYER_A, world: WORLD },
     })
     expect(Result.isFailure(decodeFrame(frame, ownerRegistry))).toBe(true)

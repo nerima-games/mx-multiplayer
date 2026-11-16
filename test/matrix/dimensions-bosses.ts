@@ -10,11 +10,11 @@ const roundTrip = reference(
 )
 const malformedPortal = reference(
   'test/codec.test.ts',
-  3028,
+  3044,
   'rejects client-selected portal transfer state with strict parse options',
 )
-const malformedDragon = reference('test/codec.test.ts', 2953, 'rejects malformed ender-dragon payloads')
-const malformedWither = reference('test/codec.test.ts', 2976, 'rejects malformed wither payloads')
+const malformedDragon = reference('test/codec.test.ts', 2969, 'rejects malformed ender-dragon payloads')
+const malformedWither = reference('test/codec.test.ts', 2992, 'rejects malformed wither payloads')
 const typedUnsupportedCommand = reference(
   'test/command-application.test.ts',
   192,
@@ -33,7 +33,7 @@ const unauthorizedScenario = reference(
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 )
 
 const covered = (...tests: [TestReference, ...TestReference[]]): MatrixCell => ({ status: 'covered', tests })

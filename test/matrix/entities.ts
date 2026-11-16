@@ -20,7 +20,7 @@ const entitiesAuthority = reference(
 )
 const meleeThroughU6b = reference(
   'test/server-adapter.test.ts',
-  1003,
+  1004,
   'handles a command through recipient delivery while enforcing privacy, AOI, capacity, and resume tokens',
 )
 const entitiesUnauthorized = reference(
@@ -31,7 +31,7 @@ const entitiesUnauthorized = reference(
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 )
 
 const covered = (...tests: [TestReference, ...TestReference[]]): MatrixCell => ({ status: 'covered', tests })

@@ -90,3 +90,22 @@ bump は必ず明示的な編集になる。
 ## 8. Protocol v10
 
 Protocol v10 adds C4 replication messages. A delta carries owner changes and sparse block changes for one world revision; a snapshot carries a consistent owner/block view. Oversized snapshots use start, chunk, and end frames. The client validates and applies each revision group atomically. The replicated owner state remains owned by mc-sim's `WorldCommitCoordinator`; mx-multiplayer transports the projection and does not keep a second authoritative copy.
+
+## 9. Protocol v12
+
+Protocol v12 は醸造台の state と操作を置き換え、かまどの state に必須フィールドを追加する。既存メッセージの形と制約が変わるため、§7 の規則に従って版を上げる。
+
+| 対象 | v11 | v12 |
+| --- | --- | --- |
+| `BrewingStandState` | `bottle?`、`ingredient?`、`fuelUnits`、`brewing?` | `bottles` の 3 slot、`ingredient`、`fuel`、`fuelCharges`、`brewProgressSecs` |
+| 瓶の挿入・回収 | 瓶の指定なし | `bottleIndex` で 0–2 を指定 |
+| `drink` | 醸造台の瓶を飲む | `slot` で指定した inventory の薬を飲む |
+| `FurnaceState` | 燃焼時間は残り tick のみ | `station` と `burnTicksTotal` を追加し、残り燃焼 tick が合計以下であることを検査 |
+
+醸造台の空 slot は `null` で表し、stack は共通の `ItemStackWire` を使う。`fuelCharges` は整数の 0–20、`brewProgressSecs` は有限の秒で 0 以上 20 未満とする。かまどの時間は引き続き tick で運ぶ。root の新しい wire schema と型は `ItemStackWire`、`BrewingSlotWire`、`FurnaceStateWire` として公開する。
+
+全 frame の版を完全一致で検査する仕組みは変わらない。v11 の frame は本文の decode 前に `unsupported-protocol-version` で拒否するため、server と client は同時に更新する。mc-server と mc-host-web は、このパッケージの醸造台の wire 定義と converter を共有する。`ItemStackWire` に components は載せず、醸造台とかまどの `ToWire` は既定でない components を型付きの失敗として返す。
+
+`brewingStateToWire` は wire の進行量の範囲も検査するため、呼び出し側は `Result` の失敗を扱う。かまどの双方向 converter は秒と整数 tick の変換規則を共有する。秒から tick は `Math.round(seconds * 20)` で最近傍へ丸める。ただし、input が station のレシピに一致し、進行量が所要時間より短い場合は、`cookTicks` を所要時間未満に復元できる最大整数 tick 以下に抑える。所要時間が整数 tick なら、その上限は「所要時間の tick 数 − 1」となる。所要時間以上の進行量は `invalid-state` として拒否する。converter には simulation と同じレシピ表を渡す。省略時は `VANILLA_SMELTING_RECIPES` を使う。
+
+tick から秒は kernel の `secondsForTicks` を使う。simulation が積み上げた秒との厳密な一致は保証しないため、mc-server と mc-host-web の state 比較は同じレシピ表を使った `furnaceStateToWire` の tick で行う。mc-server は受信・復元した `cookTicks` がレシピの所要時間の範囲内かを検査してから simulation に渡す。

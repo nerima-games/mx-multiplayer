@@ -43,7 +43,7 @@ const commandId = CommandId.make('command-1')
 const GLOBAL_FRAME_CODE_UNIT_LIMIT = 1_048_576
 const GLOBAL_FRAME_UTF8_LIMIT = 4_194_304
 const GLOBAL_JSON_DEPTH_LIMIT = 13
-const GLOBAL_JSON_COLLECTION_LIMIT = 31_149
+const GLOBAL_JSON_COLLECTION_LIMIT = 31_148
 const OLD_GLOBAL_FRAME_BASELINE = 1_048_576
 const commandHeader = { commandId, expectedRevision: 12, player: alice, world: overworld }
 const item = { count: 2, durability: { current: 63, max: 64 }, item: 'stone' }
@@ -126,14 +126,14 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   },
   BlockPlace: { _tag: 'BlockPlace', at: { x: 1, y: 2, z: 3 }, block: 'stone', player: alice, state: Schema.decodeUnknownSync(EncodedBlockStateSchema)(0) },
   BowUseCommand: { _tag: 'BowUseCommand', ...commandHeader, action: 'release' },
-  BrewingCommand: { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: 0 }, at: { x: 1, y: 64, z: 1 } },
+  BrewingCommand: { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert-bottle', slot: 0, bottleIndex: 2 }, at: { x: 1, y: 64, z: 1 } },
   BrewingCommandAccepted: { _tag: 'BrewingCommandAccepted', commandId, revision: 13 },
   BrewingCommandRejected: { _tag: 'BrewingCommandRejected', commandId, reason: 'missing-ingredients', revision: 12 },
   BrewingStandDelta: {
     _tag: 'BrewingStandDelta',
     at: { x: 1, y: 64, z: 1 },
     revision: 13,
-    state: { bottle: 'water_bottle', brewing: { output: 'awkward', remainingSecs: 12 }, fuelUnits: 4, ingredient: 'nether_wart' },
+    state: { bottles: [{ count: 1, item: 'water_bottle' }, null, { count: 1, item: 'awkward_potion' }], brewProgressSecs: 12.125, fuel: { count: 2, item: 'blaze_powder' }, fuelCharges: 4, ingredient: { count: 3, item: 'nether_wart' } },
     world: overworld,
   },
   BucketUseCommand: { _tag: 'BucketUseCommand', ...commandHeader },
@@ -195,7 +195,7 @@ const SAMPLES: { readonly [Tag in NetworkMessage['_tag']]: Extract<NetworkMessag
   },
   FishingCommand: { _tag: 'FishingCommand', ...commandHeader, action: 'cast' },
   FurnaceCommand: { _tag: 'FurnaceCommand', ...commandHeader, furnaceId: 'furnace:1', action: { _tag: 'take-output', source: { _tag: 'furnace-slot', slot: 'output' }, destination: { _tag: 'player-slot', slot: 3 }, count: 1 } },
-  FurnaceDelta: { _tag: 'FurnaceDelta', revision: 13, state: { burnTicksRemaining: 10, cookTicks: 5, fuel: null, furnaceId: 'furnace:1', input: item, output: null }, world: overworld },
+  FurnaceDelta: { _tag: 'FurnaceDelta', revision: 13, state: { burnTicksRemaining: 10, burnTicksTotal: 20, station: 'smoker', cookTicks: 5, fuel: null, furnaceId: 'furnace:1', input: item, output: null }, world: overworld },
   IgniteTntCommand: { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 1, y: 64, z: 1 } },
   InsertEyeIntoEndPortalFrameCommand: {
     _tag: 'InsertEyeIntoEndPortalFrameCommand',
@@ -803,7 +803,7 @@ const maximumDomainMessage = (sample: NetworkMessage): NetworkMessage => {
     case 'PlayerDamageCommand':
       return sample
     case 'BrewingCommand':
-      return { ...sample, action: { _tag: 'insert', slot: 35 } }
+      return { ...sample, action: { _tag: 'insert-bottle', slot: 35, bottleIndex: 2 } }
     case 'EnchantingCommand':
       return { ...sample, offer: 2, slot: 35 }
     case 'PlayerEnchantmentsDelta': {
@@ -1279,7 +1279,7 @@ describe('frame round trip', () => {
         PlayerFishingDelta | 154 UTF-8 bytes | depth 3 | max collection 5
         WorldTimeWeatherDelta | 143 UTF-8 bytes | depth 3 | max collection 4
         ContainerDelta | 219 UTF-8 bytes | depth 6 | max collection 4
-        FurnaceDelta | 260 UTF-8 bytes | depth 5 | max collection 6
+        FurnaceDelta | 299 UTF-8 bytes | depth 5 | max collection 8
         VillagerTradeDelta | 298 UTF-8 bytes | depth 8 | max collection 5
         EntitySpawnDelta | 322 UTF-8 bytes | depth 4 | max collection 7
         EntityUpdateDelta | 323 UTF-8 bytes | depth 4 | max collection 7
@@ -1320,10 +1320,10 @@ describe('frame round trip', () => {
         PlayerDamageCommand | 146 UTF-8 bytes | depth 2 | max collection 5
         PlayerDamageCommandAccepted | 109 UTF-8 bytes | depth 2 | max collection 3
         PlayerDamageCommandRejected | 136 UTF-8 bytes | depth 2 | max collection 4
-        BrewingCommand | 203 UTF-8 bytes | depth 3 | max collection 7
+        BrewingCommand | 226 UTF-8 bytes | depth 3 | max collection 7
         BrewingCommandAccepted | 104 UTF-8 bytes | depth 2 | max collection 3
         BrewingCommandRejected | 135 UTF-8 bytes | depth 2 | max collection 4
-        BrewingStandDelta | 246 UTF-8 bytes | depth 4 | max collection 5
+        BrewingStandDelta | 347 UTF-8 bytes | depth 5 | max collection 5
         PlayerStatusEffectsDelta | 219 UTF-8 bytes | depth 5 | max collection 5
         EnchantingCommand | 163 UTF-8 bytes | depth 2 | max collection 7
         EnchantingCommandAccepted | 107 UTF-8 bytes | depth 2 | max collection 3
@@ -1430,90 +1430,90 @@ describe('frame round trip', () => {
       expect(GLOBAL_JSON_DEPTH_LIMIT).toBe(Math.ceil(
         Math.max(MAXIMUM_FIXTURE_OBSERVED_DEPTH, MAXIMUM_ARRAY_FIXTURE_OBSERVED_DEPTH) * 1.25,
       ))
-      expect(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION).toBe(24_919)
+      expect(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION).toBe(24_918)
       expect(GLOBAL_JSON_COLLECTION_LIMIT).toBe(Math.ceil(MAXIMUM_ARRAY_FIXTURE_OBSERVED_COLLECTION * 1.25))
       expect(measurements.join('\n')).toMatchInlineSnapshot(`
-        "PlayerJoin | observed 3145384 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerLeave | observed 3145594 UTF-8 bytes/1048576 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerMove | observed 3145210 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BlockPlace | observed 3145364 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BlockBreak | observed 3145416 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        Chat | observed 3145076 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        WorldInfo | observed 3145552 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        WorldSnapshot | observed 3144732 UTF-8 bytes/1048576 code units, depth 5, collection 8 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays blocks: 9703 items | 1048506 UTF-8 bytes | depth 5; levers: 12044 items | 1048536 UTF-8 bytes | depth 5; players: 4616 items | 1048400 UTF-8 bytes | depth 5; poweredRails: 11907 items | 1048523 UTF-8 bytes | depth 5
-        BlockMutationRejected | observed 3145258 UTF-8 bytes/1048576 code units, depth 3, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        AuthoritativeSnapshot | observed 3143674 UTF-8 bytes/1048576 code units, depth 8, collection 10 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays maximum global collection fixture: RealmTransferSnapshot.worldSnapshot.levers
-        RealmTransferSnapshot | observed 3144168 UTF-8 bytes/1048576 code units, depth 9, collection 10 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays worldSnapshot.levers: 24919 items | 1048555 UTF-8 bytes | depth 10
-        EyeOfEnderThrown | observed 3145086 UTF-8 bytes/1048576 code units, depth 3, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerInventoryDelta | observed 3145170 UTF-8 bytes/1048576 code units, depth 6, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.slots: 9798 items | 1048567 UTF-8 bytes | depth 6
-        PlayerVitalsDelta | observed 3145268 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerFishingDelta | observed 3145410 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        WorldTimeWeatherDelta | observed 3145408 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        ContainerDelta | observed 3145194 UTF-8 bytes/1048576 code units, depth 6, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.slots: 9798 items | 1048555 UTF-8 bytes | depth 6
-        FurnaceDelta | observed 3145054 UTF-8 bytes/1048576 code units, depth 5, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        VillagerTradeDelta | observed 3144946 UTF-8 bytes/1048576 code units, depth 8, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.offers: 4314 items | 1048459 UTF-8 bytes | depth 8; state.offers[].input: 9797 items | 1048572 UTF-8 bytes | depth 8
-        EntitySpawnDelta | observed 3144772 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EntityUpdateDelta | observed 3144770 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EntityDespawnDelta | observed 3145482 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        LightningStrikeDelta | observed 3145340 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerInventoryCommand | observed 3145196 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerVitalsCommand | observed 3145302 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        WorldTimeWeatherCommand | observed 3145302 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        ContainerCommand | observed 3145034 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        FurnaceCommand | observed 3145060 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        VillagerTradeCommand | observed 3145282 UTF-8 bytes/1048576 code units, depth 2, collection 8 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EntityAttackCommand | observed 3145356 UTF-8 bytes/1048576 code units, depth 2, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EntityPickupCommand | observed 3145382 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BowUseCommand | observed 3145400 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        IgniteTntCommand | observed 3145292 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EndPortalUseCommand | observed 3145278 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        ThrowEyeOfEnderCommand | observed 3145420 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        InsertEyeIntoEndPortalFrameCommand | observed 3145250 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        NetherPortalUseCommand | observed 3145272 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        ToggleLeverCommand | observed 3145282 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EnderPearlCommand | observed 3145430 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BucketUseCommand | observed 3145432 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        VehicleUseCommand | observed 3145430 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        FishingCommand | observed 3145404 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        VehicleCommand | observed 3145296 UTF-8 bytes/1048576 code units, depth 3, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        AuthoritativeCommandAccepted | observed 3145458 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        AuthoritativeCommandRejected | observed 3145350 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        AuthoritativeResyncRequest | observed 3145492 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        Ping | observed 73 UTF-8 bytes/73 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | schema | arrays no array fields in valid domain sample
-        Pong | observed 73 UTF-8 bytes/73 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | schema | arrays no array fields in valid domain sample
-        AnvilCommand | observed 5716 UTF-8 bytes/2048 code units, depth 2, collection 7 | cap 8192 UTF-8 bytes/2048 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        AnvilCommandAccepted | observed 3145514 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        AnvilCommandRejected | observed 3145444 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerAnvilNamesDelta | observed 3140274 UTF-8 bytes/1048576 code units, depth 4, collection 36 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays names: 14561 items | 1048532 UTF-8 bytes | depth 4
-        CraftingCommand | observed 2554 UTF-8 bytes/1024 code units, depth 4, collection 9 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays grid.cells: 9 items | 268 UTF-8 bytes | depth 4
-        CraftingCommandAccepted | observed 3145508 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        CraftingCommandRejected | observed 3145446 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerDamageCommand | observed 2770 UTF-8 bytes/1024 code units, depth 2, collection 5 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        PlayerDamageCommandAccepted | observed 3145500 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerDamageCommandRejected | observed 3145438 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BrewingCommand | observed 24070 UTF-8 bytes/8192 code units, depth 3, collection 7 | cap 32768 UTF-8 bytes/8192 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        BrewingCommandAccepted | observed 3145510 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BrewingCommandRejected | observed 3145448 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        BrewingStandDelta | observed 3145066 UTF-8 bytes/1048576 code units, depth 4, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerStatusEffectsDelta | observed 3145160 UTF-8 bytes/1048576 code units, depth 5, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays state.effects: 7824 items | 1048571 UTF-8 bytes | depth 5
-        EnchantingCommand | observed 97966 UTF-8 bytes/32768 code units, depth 2, collection 7 | cap 131072 UTF-8 bytes/32768 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        EnchantingCommandAccepted | observed 3145504 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EnchantingCommandRejected | observed 3145434 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        PlayerEnchantmentsDelta | observed 3133392 UTF-8 bytes/1048576 code units, depth 7, collection 36 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays items: 6277 items | 1048425 UTF-8 bytes | depth 7; items[].item.enchantments: 23691 items | 1048538 UTF-8 bytes | depth 7
-        DamageEnderDragonCommand | observed 48880 UTF-8 bytes/16384 code units, depth 2, collection 4 | cap 65536 UTF-8 bytes/16384 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        DamageEnderDragonCommandAccepted | observed 3145490 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        DamageEnderDragonCommandRejected | observed 3145436 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        EnderDragonSnapshotDelta | observed 204 UTF-8 bytes/204 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | schema | arrays no array fields in valid domain sample
-        SummonWitherCommand | observed 3145236 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        DamageWitherCommand | observed 3145384 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | legacy | arrays no array fields in valid domain sample
-        WitherCommandAccepted | observed 3145512 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        WitherCommandRejected | observed 3145458 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        WitherSnapshotDelta | observed 3144458 UTF-8 bytes/1048576 code units, depth 7, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays snapshot.skulls: 4077 items | 1048426 UTF-8 bytes | depth 7; snapshot.withers: 2344 items | 1048215 UTF-8 bytes | depth 7
-        ReplicatedWorldDelta | observed 65689 UTF-8 bytes/65689 code units, depth 6, collection 320 | cap 65689 UTF-8 bytes/1048576 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/256 unique blocks 42040 bytes; count-limit 4 owners/320 blocks 52551 bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blockChanges: 320 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members; changes: 4 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members; changes[].state.labels: 3 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members
-        ReplicatedWorldSnapshot | observed 3610259 UTF-8 bytes/3610259 code units, depth 6, collection 18750 | cap 3610259 UTF-8 bytes/3610259 code units, depth 8 (global 13), collection 18750 (global 31149) | C4 typed | profile 3 owners/15000 logical reads 2310564 transferred bytes; count-limit 4 owners/18750 reads 2888207 transferred bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blocks: 18750 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members; owners: 4 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members; owners[].state.labels: 3 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members
-        ReplicatedWorldSnapshotStart | observed 3145184 UTF-8 bytes/1048576 code units, depth 2, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        ReplicatedWorldSnapshotChunk | observed 3145474 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample
-        ReplicatedWorldSnapshotEnd | observed 3145556 UTF-8 bytes/1048576 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31149 (global 31149) | global | arrays no array fields in valid domain sample"
+        "PlayerJoin | observed 3145384 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerLeave | observed 3145594 UTF-8 bytes/1048576 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerMove | observed 3145210 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        BlockPlace | observed 3145364 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        BlockBreak | observed 3145416 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        Chat | observed 3145076 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        WorldInfo | observed 3145552 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        WorldSnapshot | observed 3144732 UTF-8 bytes/1048576 code units, depth 5, collection 8 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays blocks: 9703 items | 1048506 UTF-8 bytes | depth 5; levers: 12044 items | 1048536 UTF-8 bytes | depth 5; players: 4616 items | 1048400 UTF-8 bytes | depth 5; poweredRails: 11907 items | 1048523 UTF-8 bytes | depth 5
+        BlockMutationRejected | observed 3145258 UTF-8 bytes/1048576 code units, depth 3, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        AuthoritativeSnapshot | observed 3143674 UTF-8 bytes/1048576 code units, depth 8, collection 10 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays maximum global collection fixture: RealmTransferSnapshot.worldSnapshot.levers
+        RealmTransferSnapshot | observed 3144168 UTF-8 bytes/1048576 code units, depth 9, collection 10 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays worldSnapshot.levers: 24918 items | 1048552 UTF-8 bytes | depth 10
+        EyeOfEnderThrown | observed 3145086 UTF-8 bytes/1048576 code units, depth 3, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerInventoryDelta | observed 3145170 UTF-8 bytes/1048576 code units, depth 6, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays state.slots: 9798 items | 1048567 UTF-8 bytes | depth 6
+        PlayerVitalsDelta | observed 3145268 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerFishingDelta | observed 3145410 UTF-8 bytes/1048576 code units, depth 3, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        WorldTimeWeatherDelta | observed 3145408 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        ContainerDelta | observed 3145194 UTF-8 bytes/1048576 code units, depth 6, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays state.slots: 9798 items | 1048555 UTF-8 bytes | depth 6
+        FurnaceDelta | observed 3144976 UTF-8 bytes/1048576 code units, depth 5, collection 8 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        VillagerTradeDelta | observed 3144946 UTF-8 bytes/1048576 code units, depth 8, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays state.offers: 4314 items | 1048459 UTF-8 bytes | depth 8; state.offers[].input: 9797 items | 1048572 UTF-8 bytes | depth 8
+        EntitySpawnDelta | observed 3144772 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EntityUpdateDelta | observed 3144770 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EntityDespawnDelta | observed 3145482 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        LightningStrikeDelta | observed 3145340 UTF-8 bytes/1048576 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerInventoryCommand | observed 3145196 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerVitalsCommand | observed 3145302 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        WorldTimeWeatherCommand | observed 3145302 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        ContainerCommand | observed 3145034 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        FurnaceCommand | observed 3145060 UTF-8 bytes/1048576 code units, depth 4, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        VillagerTradeCommand | observed 3145282 UTF-8 bytes/1048576 code units, depth 2, collection 8 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EntityAttackCommand | observed 3145356 UTF-8 bytes/1048576 code units, depth 2, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EntityPickupCommand | observed 3145382 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        BowUseCommand | observed 3145400 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        IgniteTntCommand | observed 3145292 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EndPortalUseCommand | observed 3145278 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        ThrowEyeOfEnderCommand | observed 3145420 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        InsertEyeIntoEndPortalFrameCommand | observed 3145250 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        NetherPortalUseCommand | observed 3145272 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        ToggleLeverCommand | observed 3145282 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EnderPearlCommand | observed 3145430 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        BucketUseCommand | observed 3145432 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        VehicleUseCommand | observed 3145430 UTF-8 bytes/1048576 code units, depth 2, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        FishingCommand | observed 3145404 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        VehicleCommand | observed 3145296 UTF-8 bytes/1048576 code units, depth 3, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        AuthoritativeCommandAccepted | observed 3145458 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        AuthoritativeCommandRejected | observed 3145350 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        AuthoritativeResyncRequest | observed 3145492 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        Ping | observed 73 UTF-8 bytes/73 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | schema | arrays no array fields in valid domain sample
+        Pong | observed 73 UTF-8 bytes/73 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | schema | arrays no array fields in valid domain sample
+        AnvilCommand | observed 5716 UTF-8 bytes/2048 code units, depth 2, collection 7 | cap 8192 UTF-8 bytes/2048 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays no array fields in valid domain sample
+        AnvilCommandAccepted | observed 3145514 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        AnvilCommandRejected | observed 3145444 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerAnvilNamesDelta | observed 3140274 UTF-8 bytes/1048576 code units, depth 4, collection 36 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays names: 14561 items | 1048532 UTF-8 bytes | depth 4
+        CraftingCommand | observed 2554 UTF-8 bytes/1024 code units, depth 4, collection 9 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays grid.cells: 9 items | 268 UTF-8 bytes | depth 4
+        CraftingCommandAccepted | observed 3145508 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        CraftingCommandRejected | observed 3145446 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerDamageCommand | observed 2770 UTF-8 bytes/1024 code units, depth 2, collection 5 | cap 4096 UTF-8 bytes/1024 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays no array fields in valid domain sample
+        PlayerDamageCommandAccepted | observed 3145500 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerDamageCommandRejected | observed 3145438 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        BrewingCommand | observed 24024 UTF-8 bytes/8192 code units, depth 3, collection 7 | cap 32768 UTF-8 bytes/8192 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays no array fields in valid domain sample
+        BrewingCommandAccepted | observed 3145510 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        BrewingCommandRejected | observed 3145448 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        BrewingStandDelta | observed 3144820 UTF-8 bytes/1048576 code units, depth 5, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays state.bottles: 3 items | 508 UTF-8 bytes | depth 5
+        PlayerStatusEffectsDelta | observed 3145160 UTF-8 bytes/1048576 code units, depth 5, collection 5 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays state.effects: 7824 items | 1048571 UTF-8 bytes | depth 5
+        EnchantingCommand | observed 97966 UTF-8 bytes/32768 code units, depth 2, collection 7 | cap 131072 UTF-8 bytes/32768 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays no array fields in valid domain sample
+        EnchantingCommandAccepted | observed 3145504 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EnchantingCommandRejected | observed 3145434 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        PlayerEnchantmentsDelta | observed 3133392 UTF-8 bytes/1048576 code units, depth 7, collection 36 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays items: 6277 items | 1048425 UTF-8 bytes | depth 7; items[].item.enchantments: 23691 items | 1048538 UTF-8 bytes | depth 7
+        DamageEnderDragonCommand | observed 48880 UTF-8 bytes/16384 code units, depth 2, collection 4 | cap 65536 UTF-8 bytes/16384 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays no array fields in valid domain sample
+        DamageEnderDragonCommandAccepted | observed 3145490 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        DamageEnderDragonCommandRejected | observed 3145436 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        EnderDragonSnapshotDelta | observed 204 UTF-8 bytes/204 code units, depth 3, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | schema | arrays no array fields in valid domain sample
+        SummonWitherCommand | observed 3145236 UTF-8 bytes/1048576 code units, depth 3, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays no array fields in valid domain sample
+        DamageWitherCommand | observed 3145384 UTF-8 bytes/1048576 code units, depth 2, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | legacy | arrays no array fields in valid domain sample
+        WitherCommandAccepted | observed 3145512 UTF-8 bytes/1048576 code units, depth 2, collection 3 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        WitherCommandRejected | observed 3145458 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        WitherSnapshotDelta | observed 3144458 UTF-8 bytes/1048576 code units, depth 7, collection 6 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays snapshot.skulls: 4077 items | 1048426 UTF-8 bytes | depth 7; snapshot.withers: 2344 items | 1048215 UTF-8 bytes | depth 7
+        ReplicatedWorldDelta | observed 65689 UTF-8 bytes/65689 code units, depth 6, collection 320 | cap 65689 UTF-8 bytes/1048576 code units, depth 8 (global 13), collection 18750 (global 31148) | C4 typed | profile 3 owners/256 unique blocks 42040 bytes; count-limit 4 owners/320 blocks 52551 bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blockChanges: 320 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members; changes: 4 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members; changes[].state.labels: 3 typed-max items | 52551 UTF-8 bytes | depth 6 | unique members
+        ReplicatedWorldSnapshot | observed 3610259 UTF-8 bytes/3610259 code units, depth 6, collection 18750 | cap 3610259 UTF-8 bytes/3610259 code units, depth 8 (global 13), collection 18750 (global 31148) | C4 typed | profile 3 owners/15000 logical reads 2310564 transferred bytes; count-limit 4 owners/18750 reads 2888207 transferred bytes; owner-state 108 bytes/depth 4/collection 3 | arrays blocks: 18750 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members; owners: 4 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members; owners[].state.labels: 3 typed-max items | 2888207 UTF-8 bytes | depth 6 | unique members
+        ReplicatedWorldSnapshotStart | observed 3145184 UTF-8 bytes/1048576 code units, depth 2, collection 7 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        ReplicatedWorldSnapshotChunk | observed 3145474 UTF-8 bytes/1048576 code units, depth 2, collection 4 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample
+        ReplicatedWorldSnapshotEnd | observed 3145556 UTF-8 bytes/1048576 code units, depth 2, collection 2 | cap 4194304 UTF-8 bytes/1048576 code units, depth 13 (global 13), collection 31148 (global 31148) | global | arrays no array fields in valid domain sample"
       `)
     }),
   )
@@ -1621,6 +1621,15 @@ describe('frame round trip', () => {
   it.effect('preserves executable payloads for every authoritative operation', () =>
     Effect.sync(() => {
       const commands: ReadonlyArray<NetworkMessage> = [
+        ...[
+          { _tag: 'open' as const },
+          { _tag: 'insert-fuel' as const, slot: 35 },
+          { _tag: 'insert-ingredient' as const, slot: 0 },
+          { _tag: 'insert-bottle' as const, slot: 35, bottleIndex: 2 },
+          { _tag: 'collect' as const, bottleIndex: 0 },
+          { _tag: 'drink' as const, slot: 35 },
+        ].map((action): NetworkMessage => ({ ...SAMPLES.BrewingCommand, action })),
+        { ...SAMPLES.AuthoritativeSnapshot, furnaces: [SAMPLES.FurnaceDelta.state] },
         { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'select-slot', slot: 4 } },
         { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'move-item', count: 2, destination: 7, source: 1 } },
         { _tag: 'PlayerInventoryCommand', ...commandHeader, action: { _tag: 'swap-items', destination: 7, source: 1 } },
@@ -2106,7 +2115,7 @@ describe('registered C4 owner messages', () => {
     }),
   )
 
-  it.effect('rejects extra fields in protocol-11 C4 messages and the version envelope', () =>
+  it.effect('rejects extra fields in protocol-12 C4 messages and the version envelope', () =>
     Effect.sync(() => {
       const c4ExtraField = JSON.stringify({
         message: { ...emptyWorldDelta, future: true },
@@ -2777,6 +2786,15 @@ describe('malformed input', () => {
   it.effect('rejects malformed gameplay extension payloads', () =>
     Effect.sync(() => {
       const invalidMessages = [
+        ...[2, 4].map((length) => ({ ...SAMPLES.BrewingStandDelta, state: { ...SAMPLES.BrewingStandDelta.state, bottles: Array.from({ length }, () => null) } })),
+        ...[20, -1].map((brewProgressSecs) => ({ ...SAMPLES.BrewingStandDelta, state: { ...SAMPLES.BrewingStandDelta.state, brewProgressSecs } })),
+        { ...SAMPLES.BrewingStandDelta, state: { ...SAMPLES.BrewingStandDelta.state, fuelCharges: 21 } },
+        { ...SAMPLES.BrewingCommand, action: { _tag: 'insert-bottle', slot: 0, bottleIndex: 3 } },
+        { ...SAMPLES.BrewingCommand, action: { _tag: 'collect', bottleIndex: 3 } },
+        { ...SAMPLES.BrewingCommand, action: { _tag: 'drink', slot: 36 } },
+        { ...SAMPLES.FurnaceDelta, state: { ...SAMPLES.FurnaceDelta.state, burnTicksRemaining: 21 } },
+        { ...SAMPLES.FurnaceDelta, state: { ...SAMPLES.FurnaceDelta.state, station: 'campfire' } },
+        { ...SAMPLES.FurnaceDelta, state: { ...SAMPLES.FurnaceDelta.state, fuel: { item: 'coal', count: 1, components: {} } } },
         { _tag: 'BowUseCommand', ...commandHeader, action: 'draw' },
         { _tag: 'IgniteTntCommand', ...commandHeader, at: { x: 0.5, y: 64, z: 1 } },
           { _tag: 'FishingCommand', ...commandHeader, action: 'wait' },
@@ -2825,43 +2843,41 @@ describe('malformed input', () => {
     }),
   )
 
-  // REGRESSION (Wave 1 lowering): `BrewingStandState` and `StatusEffectState`
-  // are mirrored locally (see `protocol/brewing.ts`'s file header), and a
-  // mirror that drifted from what it mirrors would show up exactly here — as
-  // a shape this build's own schema silently accepted or wrongly rejected.
+  // Brewing and status-effect payloads use strict wire schemas, including nested stacks.
   it.effect('rejects malformed brewing and status-effect payloads', () =>
     Effect.sync(() => {
       const invalidMessages = [
-        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: 36 }, at: { x: 1, y: 64, z: 1 } },
-        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: -1 }, at: { x: 1, y: 64, z: 1 } },
-        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert', slot: 0, extra: true }, at: { x: 1, y: 64, z: 1 } },
+        { ...SAMPLES.BrewingStandDelta, state: { ...SAMPLES.BrewingStandDelta.state, fuel: { item: 'blaze_powder', count: 1, components: {} } } },
+        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert-fuel', slot: 36 }, at: { x: 1, y: 64, z: 1 } },
+        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert-ingredient', slot: -1 }, at: { x: 1, y: 64, z: 1 } },
+        { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'insert-bottle', slot: 0, bottleIndex: 0, extra: true }, at: { x: 1, y: 64, z: 1 } },
         { _tag: 'BrewingCommand', ...commandHeader, action: { _tag: 'brew' }, at: { x: 1, y: 64, z: 1 } },
         {
           _tag: 'BrewingStandDelta',
           at: { x: 1, y: 64, z: 1 },
           revision: 13,
-          state: { bottle: { potion: 'not-a-real-potion' }, fuelUnits: 4 },
+          state: { ...SAMPLES.BrewingStandDelta.state, bottles: [{ count: 1, item: 'water_bottle', extra: true }, null, null] },
           world: overworld,
         },
         {
           _tag: 'BrewingStandDelta',
           at: { x: 1, y: 64, z: 1 },
           revision: 13,
-          state: { fuelUnits: -1 },
+          state: { ...SAMPLES.BrewingStandDelta.state, fuelCharges: -1 },
           world: overworld,
         },
         {
           _tag: 'BrewingStandDelta',
           at: { x: 1, y: 64, z: 1 },
           revision: 13,
-          state: { brewing: { output: 'awkward', remainingSecs: -1 }, fuelUnits: 4 },
+          state: { ...SAMPLES.BrewingStandDelta.state, brewProgressSecs: -1 },
           world: overworld,
         },
         {
           _tag: 'BrewingStandDelta',
           at: { x: 1, y: 64, z: 1 },
           revision: 13,
-          state: { bottle: { potion: 'awkward', extra: true }, fuelUnits: 4 },
+          state: { ...SAMPLES.BrewingStandDelta.state, ingredient: { count: 1, item: 'nether_wart', extra: true } },
           world: overworld,
         },
         {

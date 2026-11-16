@@ -12,7 +12,7 @@ import { PROTOCOL_VERSION } from '../src/domain/protocol'
 
 // Mirror the limits enforced by codec until those constants are public exports.
 const MAX_FRAME_CODE_UNITS = 1_048_576
-const MAX_JSON_COLLECTION_ITEMS = 31_149
+const MAX_JSON_COLLECTION_ITEMS = 31_148
 const MAX_JSON_DEPTH = 13
 
 describe('unknownRecord', () => {

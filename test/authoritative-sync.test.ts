@@ -118,7 +118,7 @@ const replicatedDelta = (
 const asciiBytes = (text: string): Uint8Array => Uint8Array.from(text, (character) => character.charCodeAt(0))
 
 const MAXIMUM_FRAME_JSON_DEPTH = 13
-const MAXIMUM_FRAME_COLLECTION_ITEMS = 31_149
+const MAXIMUM_FRAME_COLLECTION_ITEMS = 31_148
 const MAXIMUM_AOI_PROFILE_OWNER_COUNT = 3
 const MAXIMUM_AOI_PROFILE_DELTA_BLOCK_CHANGES = 256
 const MAXIMUM_AOI_PROFILE_SNAPSHOT_BLOCK_READS = 15_000

@@ -10,26 +10,26 @@ const messageRoundTrip = reference(
 const legacyWireFixture = reference(
   'test/wire-fixtures.test.ts',
   124,
-  'rejects old golden bytes and checks the protocol-11 envelope for each representative family',
+  'rejects old golden bytes and checks the protocol-12 envelope for each representative family',
 )
 const malformedInventoryAction = reference(
   'test/codec.test.ts',
-  2704,
+  2713,
   'rejects command actions whose discriminant and payload cannot be executed',
 )
 const malformedInventoryDelta = reference(
   'test/codec.test.ts',
-  2777,
+  2786,
   'rejects malformed gameplay extension payloads',
 )
 const malformedDamage = reference(
   'test/codec.test.ts',
-  2803,
+  2821,
   'rejects malformed anvil, crafting and player-damage payloads',
 )
 const malformedStatusEffects = reference(
   'test/codec.test.ts',
-  2832,
+  2847,
   'rejects malformed brewing and status-effect payloads',
 )
 const malformedVitalsAndDamageResults = reference(

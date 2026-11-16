@@ -72,7 +72,7 @@ import {
 } from '../src/stages/stage-ids'
 
 const MAXIMUM_FRAME_JSON_DEPTH = 13
-const MAXIMUM_FRAME_COLLECTION_ITEMS = 31_149
+const MAXIMUM_FRAME_COLLECTION_ITEMS = 31_148
 
 const EMPTY_C4_OWNER_LIMITS: ReplicatedOwnerRegistryLimits = Schema.decodeUnknownSync(ReplicatedOwnerRegistryLimitsSchema)({
   maxRegisteredOwners: 0,
@@ -494,7 +494,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
       const stages = multiplayerStages(state, local, sync)
 
       yield* Ref.set(state.connection, connected)
-      yield* peer.send('{"protocolVersion":11,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":1,"changes":[]}}')
+      yield* peer.send(JSON.stringify({ protocolVersion: PROTOCOL_VERSION, message: { _tag: 'ReplicatedWorldDelta', world: 'overworld', revision: 1, changes: [] } }))
       yield* runStage(stages[0])
 
       expect(yield* Ref.get(state.inbound)).toStrictEqual([])
@@ -631,7 +631,7 @@ describe('multiplayer:inbound — decode, do not interpret', () => {
 
       yield* Ref.set(state.connection, connected)
       yield* sendMessages(peer, [baseline, start], sync)
-      yield* peer.send('{"protocolVersion":11,"message":{"_tag":"ReplicatedWorldDelta","world":"overworld","revision":4,"changes":[]}}')
+      yield* peer.send(JSON.stringify({ protocolVersion: PROTOCOL_VERSION, message: { _tag: 'ReplicatedWorldDelta', world: 'overworld', revision: 4, changes: [] } }))
       yield* runStage(stages[0])
 
       expect(sync.transfers.isReceiving).toBe(false)
