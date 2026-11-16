@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as fc from 'fast-check'
-import { FixedDurationSecs, isBrewingState, ItemDamage, ITEM_TYPES, itemComponents, itemStackFromUnknown, MaxStackSize, maxStackCountForItem, NonNegativeTickCount, RepairCost, secondsForTicks, type ItemSlot } from '@nerima-games/mc-kernel'
-import { brewingState, BrewingStateSchema, furnaceState, FurnaceStateSchema, validateBrewingSnapshot } from '@nerima-games/mc-sim'
+import { FixedDurationSecs, isBrewingState, ItemDamage, ITEM_TYPES, itemComponents, itemStackFromUnknown, MaxStackSize, maxStackCountForItem, NonNegativeTickCount, RepairCost, secondsForTicks, smeltingCookTimeForStation, type ItemSlot } from '@nerima-games/mc-kernel'
+import { brewingState, BrewingStateSchema, furnaceState, FurnaceStateSchema, validateBrewingSnapshot, VANILLA_SMELTING_RECIPES } from '@nerima-games/mc-sim'
 import { Result, Schema } from 'effect'
 import {
   brewingStateFromWire,
@@ -215,7 +215,13 @@ describe('protocol state conversion', () => {
           fuelTimeTotalSecs: Result.getOrThrow(secondsForTicks(Result.getOrThrow(NonNegativeTickCount.result(total)))),
           cookProgressSecs: Result.getOrThrow(secondsForTicks(Result.getOrThrow(NonNegativeTickCount.result(cookTicks)))),
         }))
-        const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:roundtrip'))
+        const converted = furnaceStateToWire(state, 'furnace:roundtrip')
+        const matched = VANILLA_SMELTING_RECIPES.find((recipe) => recipe.input === input?.item && recipe.stations.includes(station))
+        if (matched !== undefined && state.cookProgressSecs >= Result.getOrThrow(smeltingCookTimeForStation(matched, station))) {
+          expect(converted).toMatchObject({ _tag: 'Failure', failure: { path: 'cookProgressSecs', reason: 'invalid-state' } })
+          return
+        }
+        const wire = Result.getOrThrow(converted)
         expect(wire).toStrictEqual({
           furnaceId: 'furnace:roundtrip', station, input: wireSlot(input), fuel: wireSlot(fuel), output: wireSlot(output),
           burnTicksRemaining: remaining, burnTicksTotal: total, cookTicks,

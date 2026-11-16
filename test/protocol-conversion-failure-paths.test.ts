@@ -2,13 +2,14 @@ import { describe, expect, it } from '@effect/vitest'
 import { Result } from 'effect'
 import { afterEach, vi } from 'vitest'
 import { brewingState, furnaceState } from '@nerima-games/mc-sim'
-import { itemStackFromUnknown } from '@nerima-games/mc-kernel'
+import { FixedDurationSecs, itemStackFromUnknown, RecipeExperience, RecipeId } from '@nerima-games/mc-kernel'
 import { brewingStateFromWire, brewingStateToWire } from '../src/domain/protocol/brewing-conversion.js'
 import { furnaceStateFromWire, furnaceStateToWire } from '../src/domain/protocol/furnace-conversion.js'
 
 const controls = vi.hoisted(() => ({
   rejectBrewing: false, rejectFurnace: false, rejectComponents: false, rejectStack: false,
   defaultsRequested: false, rejectTickBrand: false, rejectTickSeconds: false, rejectBrewingWire: false,
+  tickBrandCalls: 0, rejectTickBrandAt: 0, tickSecondsCalls: 0, rejectTickSecondsAt: 0, invalidMatchedDuration: false,
 }))
 
 vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
@@ -31,11 +32,17 @@ vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
     NonNegativeTickCount: Object.assign(
       (...args: Parameters<typeof actual.NonNegativeTickCount>) => actual.NonNegativeTickCount(...args),
       actual.NonNegativeTickCount,
-      { result: (...args: Parameters<typeof actual.NonNegativeTickCount.result>) =>
-        controls.rejectTickBrand ? actual.NonNegativeTickCount.result(-1) : actual.NonNegativeTickCount.result(...args) },
+      { result: (...args: Parameters<typeof actual.NonNegativeTickCount.result>) => {
+        controls.tickBrandCalls += 1
+        return controls.rejectTickBrand || controls.tickBrandCalls === controls.rejectTickBrandAt
+          ? actual.NonNegativeTickCount.result(-1) : actual.NonNegativeTickCount.result(...args)
+      } },
     ),
-    secondsForTicks: (...args: Parameters<typeof actual.secondsForTicks>): ReturnType<typeof actual.secondsForTicks> =>
-      controls.rejectTickSeconds ? EffectResult.fail({ _tag: 'TimeOverflow' }) : actual.secondsForTicks(...args),
+    secondsForTicks: (...args: Parameters<typeof actual.secondsForTicks>): ReturnType<typeof actual.secondsForTicks> => {
+      controls.tickSecondsCalls += 1
+      return controls.rejectTickSeconds || controls.tickSecondsCalls === controls.rejectTickSecondsAt
+        ? EffectResult.fail({ _tag: 'TimeOverflow' }) : actual.secondsForTicks(...args)
+    },
   }
 })
 
@@ -50,7 +57,8 @@ vi.mock('../src/domain/protocol/brewing.js', async (importOriginal) => {
 
 vi.mock('@nerima-games/mc-sim', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nerima-games/mc-sim')>()
-  const { Schema } = await import('effect')
+  const { Schema, Result: EffectResult } = await import('effect')
+  const kernel = await import('@nerima-games/mc-kernel')
   return {
     ...actual,
     validateBrewingSnapshot: vi.fn((value: unknown): ReturnType<typeof actual.validateBrewingSnapshot> =>
@@ -59,6 +67,11 @@ vi.mock('@nerima-games/mc-sim', async (importOriginal) => {
         : actual.validateBrewingSnapshot(value),
     ),
     FurnaceStateSchema: actual.FurnaceStateSchema.check(Schema.makeFilter(() => !controls.rejectFurnace)),
+    matchSmeltingRecipe: (...args: Parameters<typeof actual.matchSmeltingRecipe>): ReturnType<typeof actual.matchSmeltingRecipe> =>
+      controls.invalidMatchedDuration ? EffectResult.succeed({
+        id: 'test:dependency-invalid-duration', input: 'stone',
+        output: EffectResult.getOrThrow(kernel.itemStackFromUnknown('glass', 1)), cookDurationSecs: NaN,
+      }) : actual.matchSmeltingRecipe(...args),
   }
 })
 
@@ -71,6 +84,11 @@ afterEach(() => {
   controls.rejectTickBrand = false
   controls.rejectTickSeconds = false
   controls.rejectBrewingWire = false
+  controls.tickBrandCalls = 0
+  controls.rejectTickBrandAt = 0
+  controls.tickSecondsCalls = 0
+  controls.rejectTickSecondsAt = 0
+  controls.invalidMatchedDuration = false
 })
 
 describe('state conversion validation failures', () => {
@@ -143,4 +161,41 @@ describe('state conversion validation failures', () => {
       _tag: 'FurnaceWireConversionFailure', path: 'state', reason: 'invalid-state',
     }))
   })
+
+  it('returns a recipe failure when matching returns a starter recipe with invalid duration', () => {
+    const state = Result.getOrThrow(furnaceState({ input: Result.getOrThrow(itemStackFromUnknown('stone', 1)) }))
+    const recipe = { id: 'test:starter', input: 'stone' as const, output: Result.getOrThrow(itemStackFromUnknown('glass', 1)), cookDurationSecs: 1 }
+    expect(Result.isSuccess(furnaceStateToWire(state, 'furnace:1', [recipe]))).toBe(true)
+    controls.invalidMatchedDuration = true
+    expect(furnaceStateToWire(state, 'furnace:1', [recipe])).toStrictEqual(Result.fail({
+      _tag: 'FurnaceWireConversionFailure', path: 'recipes', reason: 'invalid-state',
+    }))
+  })
+
+  for (const refusal of [
+    { dependency: 'brand', call: 4 }, { dependency: 'brand', call: 5 },
+    { dependency: 'seconds', call: 1 }, { dependency: 'seconds', call: 2 },
+  ]) {
+    it(`returns a recipe failure when the ${refusal.dependency} dependency refuses cap calculation call ${refusal.call}`, () => {
+      const duration = Result.getOrThrow(FixedDurationSecs.result(0.15000000000000002))
+      const recipe = {
+        _tag: 'Smelting' as const, id: Result.getOrThrow(RecipeId.result('test:cap-failure')),
+        input: 'stone' as const, output: Result.getOrThrow(itemStackFromUnknown('glass', 1)),
+        cookTimeSecs: duration, cookTimeSecsByStation: { furnace: duration },
+        experience: Result.getOrThrow(RecipeExperience.result(0)), stations: ['furnace' as const],
+      }
+      const state = Result.getOrThrow(furnaceState({ input: Result.getOrThrow(itemStackFromUnknown('stone', 1)), cookProgressSecs: 0.149 }))
+      expect(Result.isSuccess(furnaceStateToWire(state, 'furnace:1', [recipe]))).toBe(true)
+      controls.tickBrandCalls = 0
+      controls.tickSecondsCalls = 0
+      if (refusal.dependency === 'brand') {
+        controls.rejectTickBrandAt = refusal.call
+      } else {
+        controls.rejectTickSecondsAt = refusal.call
+      }
+      expect(furnaceStateToWire(state, 'furnace:1', [recipe])).toStrictEqual(Result.fail({
+        _tag: 'FurnaceWireConversionFailure', path: 'recipes', reason: 'invalid-state',
+      }))
+    })
+  }
 })
