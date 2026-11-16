@@ -28,6 +28,8 @@ const runTwoSmelts = (
   recipe: SmeltingRecipe,
   recipeTable: ReadonlyArray<SmeltingRecipeInput>,
   sequence: readonly [Step, Step, Step],
+  phase: number,
+  phaseCount: number,
 ): void => {
   let state = Result.getOrThrow(furnaceState({
     station,
@@ -38,12 +40,16 @@ const runTwoSmelts = (
   const maxSteps = Math.ceil(3 * duration / Math.min(...sequence.map(stepSeconds))) + 3
   let smelted = 0
   let observed = 0
+  let checked = 0
   for (let index = 0; index < maxSteps && smelted < 2; index += 1) {
     const step = index % 3 === 0 ? sequence[0] : index % 3 === 1 ? sequence[1] : sequence[2]
-    const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:simulation', recipeTable))
-    const restored = Result.getOrThrow(furnaceStateFromWire(wire))
-    strictEqual(Result.isSuccess(advance(restored, step, recipeTable)), true)
-    deepStrictEqual(Result.getOrThrow(furnaceStateToWire(restored, 'furnace:simulation', recipeTable)), wire)
+    if (index % phaseCount === phase) {
+      const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:simulation', recipeTable))
+      const restored = Result.getOrThrow(furnaceStateFromWire(wire))
+      strictEqual(Result.isSuccess(advance(restored, step, recipeTable)), true)
+      deepStrictEqual(Result.getOrThrow(furnaceStateToWire(restored, 'furnace:simulation', recipeTable)), wire)
+      checked += 1
+    }
     const outcome = Result.getOrThrow(advance(state, step, recipeTable))
     smelted += outcome.smeltedCount
     observed += 1
@@ -51,6 +57,7 @@ const runTwoSmelts = (
     state = outcome.smeltedCount > 0 ? { ...outcome.state, output: undefined } : outcome.state
   }
   expect(observed).toBeGreaterThan(0)
+  expect(checked).toBeGreaterThan(0)
   expect(smelted).toBeGreaterThanOrEqual(2)
   expect(state.fuelTimeRemainingSecs).toBeGreaterThan(0)
   const wire = Result.getOrThrow(furnaceStateToWire(state, 'furnace:simulation', recipeTable))
@@ -74,22 +81,25 @@ describe('furnace wire states advanced by the real simulation', () => {
     if (regressionRecipe === undefined) {
       throw new Error(`missing regression recipe for ${station}`)
     }
-    for (const step of steps) {
-      it(`keeps ${station} restorable through two smelts with ${step.kind === 'ticks' ? 'one tick' : step.seconds + ' seconds'} steps`, () => {
-        runTwoSmelts(station, regressionRecipe, VANILLA_SMELTING_RECIPES, [step, step, step])
+    // Every phase advances the same native trace; together they check every step once.
+    for (const phase of [0, 1, 2, 3]) {
+      for (const step of steps) {
+        it(`keeps ${station} restorable through two smelts with ${step.kind === 'ticks' ? 'one tick' : step.seconds + ' seconds'} steps (phase ${phase})`, () => {
+          runTwoSmelts(station, regressionRecipe, VANILLA_SMELTING_RECIPES, [step, step, step], phase, 4)
+        })
+      }
+
+      it(`keeps generated ${station} recipes and frame sequences restorable through two smelts (phase ${phase})`, () => {
+        fc.assert(fc.property(fc.constantFrom(...supported), fc.tuple(fc.constantFrom(...steps), fc.constantFrom(...steps), fc.constantFrom(...steps)), (recipe, sequence) => {
+          runTwoSmelts(station, recipe, VANILLA_SMELTING_RECIPES, sequence, phase, 4)
+        }), { seed: 0x51c0ffee, numRuns: 4 })
       })
     }
-
-    it(`keeps generated ${station} recipes and frame sequences restorable through two smelts`, () => {
-      fc.assert(fc.property(fc.constantFrom(...supported), fc.tuple(fc.constantFrom(...steps), fc.constantFrom(...steps), fc.constantFrom(...steps)), (recipe, sequence) => {
-        runTwoSmelts(station, recipe, VANILLA_SMELTING_RECIPES, sequence)
-      }), { seed: 0x51c0ffee, numRuns: 4 })
-    })
 
     it(`uses supplied non-tick cooking durations for ${station}`, () => {
       fc.assert(fc.property(fc.constantFrom(0.075, 0.117, 0.15000000000000002, 1.013), fc.tuple(fc.constantFrom(...steps), fc.constantFrom(...steps), fc.constantFrom(...steps)), (duration, sequence) => {
         const recipe = customRecipe(station, duration)
-        runTwoSmelts(station, recipe, [recipe], sequence)
+        runTwoSmelts(station, recipe, [recipe], sequence, 0, 1)
       }), { seed: 0x51c0ffee, numRuns: 4 })
     })
   }
